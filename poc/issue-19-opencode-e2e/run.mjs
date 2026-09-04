@@ -5,16 +5,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import {
   mkdir,
   mkdtemp,
   readFile,
   realpath,
-  rm,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { OpenCode } from "@opencode-ai/client";
@@ -24,24 +23,17 @@ const execFile = promisify(execFileCallback);
 
 const POC_DIR = fileURLToPath(new URL(".", import.meta.url));
 const ATLAS_DIR = resolve(POC_DIR, "../..");
+const PERSISTENCE_DIR = resolve(POC_DIR, "..", "persistence");
 const ARTIFACT_DIR = join(POC_DIR, "artifacts");
 const SERVICE_FILE =
   process.env.OPENCODE_SERVICE_FILE ??
   join(process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "opencode", "service.json");
 
 const TARGET_AGENT = process.env.OPENCODE_AGENT_ID ?? "build";
-const TARGET_MODEL = process.env.OPENCODE_MODEL
-  ? (() => {
-      const separator = process.env.OPENCODE_MODEL.indexOf("/");
-      if (separator < 1 || separator === process.env.OPENCODE_MODEL.length - 1) {
-        throw new Error("OPENCODE_MODEL must use providerID/modelID, for example google/gemini-3-flash-preview");
-      }
-      return {
-        providerID: process.env.OPENCODE_MODEL.slice(0, separator),
-        id: process.env.OPENCODE_MODEL.slice(separator + 1),
-      };
-    })()
-  : undefined;
+const TARGET_MODEL = {
+  providerID: "opencode",
+  id: "muse-spark-1.3-contributor-free",
+};
 const REQUEST_TIMEOUT_MS = 30_000;
 const EVENT_TIMEOUT_MS = 15_000;
 const INTERRUPT_TIMEOUT_MS = 5_000;
@@ -81,7 +73,6 @@ const report = {
       "session.message",
       "session.get",
       "session.interrupt",
-      "session.remove",
     ],
     endpoints: [
       "GET /api/health",
@@ -96,11 +87,11 @@ const report = {
       "GET /api/session/:sessionID/message/:messageID",
       "GET /api/session/:sessionID",
       "POST /api/session/:sessionID/interrupt",
-      "DELETE /api/session/:sessionID",
     ],
   },
   service: {},
   authentication: {},
+  persistenceDirectory: PERSISTENCE_DIR,
   runDirectory: undefined,
   sessions: [],
   events: [],
@@ -113,8 +104,8 @@ const report = {
   interruption: undefined,
   errors: [],
   cleanup: {
-    sessionRemovals: [],
-    runDirectoryRemoved: false,
+    runDirectoryPreserved: false,
+    sessionsPreserved: [],
     launcherUnchanged: undefined,
   },
   outcome: "running",
@@ -279,6 +270,16 @@ function isSessionEvent(sessionID, eventType) {
   return (event) => event.sessionID === sessionID && (!eventType || event.type === eventType);
 }
 
+async function createPersistentRunDirectory() {
+  await mkdir(PERSISTENCE_DIR, { recursive: true });
+  runDirectory = await realpath(
+    await mkdtemp(join(PERSISTENCE_DIR, "issue-19-opencode-e2e-")),
+  );
+  report.persistenceDirectory = await realpath(PERSISTENCE_DIR);
+  report.runDirectory = runDirectory;
+  process.stdout.write(`Persistent run directory: ${runDirectory}\n`);
+}
+
 async function startEventCollector() {
   eventController = new AbortController();
   eventCollector = (async () => {
@@ -350,11 +351,6 @@ async function discoverEndpoint() {
 }
 
 async function createThrowawayRepository() {
-  const sandboxRoot = process.env.OPENCODE_POC_TMP_ROOT ?? join(tmpdir(), "opencode");
-  await mkdir(sandboxRoot, { recursive: true });
-  runDirectory = await realpath(await mkdtemp(join(sandboxRoot, "atlas-issue-19-")));
-  report.runDirectory = runDirectory;
-
   const files = {
     "package.json": `${JSON.stringify(
       {
@@ -456,7 +452,7 @@ async function runHappyPath(repository) {
   const session = await client.session.create({
     title: "Atlas issue #19 POC happy path",
     agent: TARGET_AGENT,
-    ...(TARGET_MODEL ? { model: TARGET_MODEL } : {}),
+    model: TARGET_MODEL,
     location: { directory: runDirectory },
   });
   createdSessions.push({ id: session.id, kind: "happy" });
@@ -481,6 +477,15 @@ async function runHappyPath(repository) {
     requestedAgent: TARGET_AGENT,
     observedAgent: session.agent,
   });
+  check(
+    "sessionModelBinding",
+    session.model?.providerID === TARGET_MODEL.providerID && session.model?.id === TARGET_MODEL.id,
+    {
+      sessionID: session.id,
+      requestedModel: TARGET_MODEL,
+      observedModel: session.model,
+    },
+  );
 
   const spec = `Inspect this tiny repository and implement this bounded spec.
 
@@ -655,7 +660,7 @@ async function runControlledInterruptionProbe() {
   const session = await client.session.create({
     title: "Atlas issue #19 POC interruption probe",
     agent: TARGET_AGENT,
-    ...(TARGET_MODEL ? { model: TARGET_MODEL } : {}),
+    model: TARGET_MODEL,
     location: { directory: runDirectory },
   });
   createdSessions.push({ id: session.id, kind: "interruption" });
@@ -664,6 +669,8 @@ async function runControlledInterruptionProbe() {
     kind: "interruption",
     requestedDirectory: runDirectory,
     observedDirectory: session.location.directory,
+    requestedModel: TARGET_MODEL,
+    observedModel: session.model,
     promptAccepted: false,
     interruptRequested: false,
   };
@@ -730,33 +737,14 @@ async function runControlledInterruptionProbe() {
 }
 
 async function cleanup() {
-  for (const session of [...createdSessions].reverse()) {
-    if (!client) {
-      report.cleanup.sessionRemovals.push({ id: session.id, ok: false, error: "client unavailable" });
-      continue;
-    }
-    try {
-      await client.session.remove(
-        { sessionID: session.id },
-        { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) },
-      );
-      report.cleanup.sessionRemovals.push({ id: session.id, ok: true });
-    } catch (error) {
-      report.cleanup.sessionRemovals.push({ id: session.id, ok: false, error: errorRecord(error) });
-    }
-  }
-
   if (eventController) eventController.abort();
   if (eventCollector) await eventCollector.catch(() => undefined);
 
   if (runDirectory) {
-    try {
-      await rm(runDirectory, { recursive: true, force: true });
-      report.cleanup.runDirectoryRemoved = true;
-    } catch (error) {
-      report.cleanup.runDirectoryError = errorRecord(error);
-    }
+    report.cleanup.runDirectoryPreserved = true;
+    report.cleanup.preservedRunDirectory = runDirectory;
   }
+  report.cleanup.sessionsPreserved = createdSessions;
 }
 
 async function writeReport() {
@@ -770,6 +758,8 @@ async function writeReport() {
 }
 
 try {
+  await createPersistentRunDirectory();
+
   const launcherBefore = await command("git", ["status", "--porcelain", "--untracked-files=all"], ATLAS_DIR);
   report.cleanup.launcherStatusBefore = launcherBefore.stdout;
 
@@ -812,9 +802,14 @@ try {
   }
 
   const repository = await createThrowawayRepository();
+  const persistencePrefix = `${report.persistenceDirectory}${sep}`;
   report.checks.runDirectoryIsolated = {
-    passed: runDirectory !== ATLAS_DIR && resolve(runDirectory) !== resolve(ATLAS_DIR),
+    passed:
+      runDirectory !== ATLAS_DIR &&
+      resolve(runDirectory) !== resolve(ATLAS_DIR) &&
+      runDirectory.startsWith(persistencePrefix),
     runDirectory,
+    persistenceDirectory: report.persistenceDirectory,
     launcherDirectory: ATLAS_DIR,
   };
   check("runDirectoryIsolated", report.checks.runDirectoryIsolated.passed, report.checks.runDirectoryIsolated);
@@ -834,5 +829,5 @@ try {
   report.cleanup.launcherStatusAfter = launcherAfter.stdout;
   await writeReport();
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  process.exitCode = report.outcome === "passed" && report.cleanup.runDirectoryRemoved ? 0 : 1;
+  process.exitCode = report.outcome === "passed" ? 0 : 1;
 }
