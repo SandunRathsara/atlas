@@ -2,19 +2,18 @@
 // This intentionally has no Atlas abstractions. Delete or rewrite it after the
 // client/server assumptions are captured in the engineering plan.
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
 import {
   mkdir,
-  mkdtemp,
   readFile,
   realpath,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { OpenCode } from "@opencode-ai/client";
 import { Service } from "@opencode-ai/client/service";
@@ -24,6 +23,7 @@ const execFile = promisify(execFileCallback);
 const POC_DIR = fileURLToPath(new URL(".", import.meta.url));
 const ATLAS_DIR = resolve(POC_DIR, "../..");
 const PERSISTENCE_DIR = resolve(POC_DIR, "..", "persistence");
+const RUN_DIRECTORY = resolve(PERSISTENCE_DIR, "issue-19-opencode-e2e");
 const ARTIFACT_DIR = join(POC_DIR, "artifacts");
 const SERVICE_FILE =
   process.env.OPENCODE_SERVICE_FILE ??
@@ -38,6 +38,7 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const EVENT_TIMEOUT_MS = 15_000;
 const INTERRUPT_TIMEOUT_MS = 5_000;
 const MAX_OUTPUT = 5_000;
+const initialPrompt = process.argv[2];
 
 const packageManifest = JSON.parse(await readFile(join(POC_DIR, "package.json"), "utf8"));
 const clientVersion = packageManifest.dependencies["@opencode-ai/client"];
@@ -185,10 +186,6 @@ async function command(file, args, cwd, timeout = REQUEST_TIMEOUT_MS) {
   }
 }
 
-async function sha256(file) {
-  return createHash("sha256").update(await readFile(file)).digest("hex");
-}
-
 async function withTimeout(promise, milliseconds, label) {
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -270,11 +267,14 @@ function isSessionEvent(sessionID, eventType) {
   return (event) => event.sessionID === sessionID && (!eventType || event.type === eventType);
 }
 
-async function createPersistentRunDirectory() {
-  await mkdir(PERSISTENCE_DIR, { recursive: true });
-  runDirectory = await realpath(
-    await mkdtemp(join(PERSISTENCE_DIR, "issue-19-opencode-e2e-")),
-  );
+async function bindTargetDirectory() {
+  try {
+    runDirectory = await realpath(RUN_DIRECTORY);
+  } catch (error) {
+    throw new Error(
+      `Target directory must already exist at ${RUN_DIRECTORY}: ${errorRecord(error).message}`,
+    );
+  }
   report.persistenceDirectory = await realpath(PERSISTENCE_DIR);
   report.runDirectory = runDirectory;
   process.stdout.write(`Persistent run directory: ${runDirectory}\n`);
@@ -350,72 +350,6 @@ async function discoverEndpoint() {
   };
 }
 
-async function createThrowawayRepository() {
-  const files = {
-    "package.json": `${JSON.stringify(
-      {
-        name: "issue-19-target",
-        private: true,
-        type: "module",
-        scripts: { test: "node verify.mjs" },
-      },
-      null,
-      2,
-    )}\n`,
-    "src/greeting.mjs": `export function greeting(name) {
-  return \`Hi, \${name ?? "there"}.\`;
-}
-`,
-    "verify.mjs": `import assert from "node:assert/strict";
-import { greeting } from "./src/greeting.mjs";
-
-assert.equal(greeting("Atlas"), "Hello, Atlas!");
-assert.equal(greeting(), "Hello, World!");
-assert.equal(greeting(""), "Hello, World!");
-assert.equal(greeting("   "), "Hello, World!");
-
-console.log("target verification passed");
-`,
-    "README.md": `# Issue 19 target repository
-
-This repository is intentionally tiny. The implementation target is
-src/greeting.mjs; verify.mjs is the immutable target-project verifier.
-`,
-  };
-
-  for (const [relativePath, contents] of Object.entries(files)) {
-    const file = join(runDirectory, relativePath);
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, contents);
-  }
-
-  for (const args of [
-    ["init", "--initial-branch=main"],
-    ["config", "user.name", "Atlas issue #19 POC"],
-    ["config", "user.email", "atlas-issue-19-poc@example.invalid"],
-    ["add", "."],
-    ["commit", "-m", "baseline target for issue 19 POC"],
-  ]) {
-    const result = await command("git", args, runDirectory);
-    if (!result.ok) throw new Error(`Target repository setup failed: ${JSON.stringify(result)}`);
-  }
-
-  const sourcePath = join(runDirectory, "src/greeting.mjs");
-  const verifyPath = join(runDirectory, "verify.mjs");
-  const packagePath = join(runDirectory, "package.json");
-  return {
-    sourcePath,
-    verifyPath,
-    packagePath,
-    baseline: {
-      head: (await command("git", ["rev-parse", "HEAD"], runDirectory)).stdout.trim(),
-      sourceHash: await sha256(sourcePath),
-      verifyHash: await sha256(verifyPath),
-      packageHash: await sha256(packagePath),
-    },
-  };
-}
-
 function assistantText(message) {
   return message.content
     .filter((part) => part.type === "text")
@@ -423,7 +357,7 @@ function assistantText(message) {
     .join("\n");
 }
 
-async function runHappyPath(repository) {
+async function runHappyPath() {
   const location = await client.location.get({ location: { directory: runDirectory } });
   report.checks.locationBinding = {
     passed: location.directory === runDirectory && location.project.directory === runDirectory,
@@ -450,7 +384,7 @@ async function runHappyPath(repository) {
 
   const sessionStarted = Date.now();
   const session = await client.session.create({
-    title: "Atlas issue #19 POC happy path",
+    title: "OpenCode POC happy path",
     agent: TARGET_AGENT,
     model: TARGET_MODEL,
     location: { directory: runDirectory },
@@ -487,20 +421,9 @@ async function runHappyPath(repository) {
     },
   );
 
-  const spec = `Inspect this tiny repository and implement this bounded spec.
-
-Change only src/greeting.mjs. Make its exported greeting(name) function return
-"Hello, <name>!" for a non-blank name. When name is missing or blank, use
-"World". Preserve the existing ESM export.
-
-Do not change verify.mjs, package.json, README.md, or any other file. Run the
-target project's verification command exactly as \`npm test\` after making the
-change. Do not ask a question; complete the work autonomously. In your final
-response, summarize the change and the verification result.`;
-
   const promptStarted = Date.now();
   const prompt = await client.session.prompt(
-    { sessionID: session.id, text: spec },
+    { sessionID: session.id, text: initialPrompt },
     { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) },
   );
   report.checks.promptSubmission = {
@@ -576,61 +499,33 @@ response, summarize the change and the verification result.`;
   return { session, current };
 }
 
-async function verifyChange(repository) {
-  const sourceHash = await sha256(repository.sourcePath);
-  const verifyHash = await sha256(repository.verifyPath);
-  const packageHash = await sha256(repository.packagePath);
-  const diff = await command("git", ["diff", "--no-ext-diff", "--no-color", "HEAD"], runDirectory);
-  const status = await command("git", ["status", "--short", "--untracked-files=all"], runDirectory);
-  const names = await command("git", ["diff", "--name-only", "HEAD"], runDirectory);
-  const targetVerification = await command("npm", ["test"], runDirectory);
-
-  report.commands.targetVerification = targetVerification;
-  report.diff = {
-    status: status.stdout.trim(),
-    changedFiles: names.stdout.split("\n").map((line) => line.trim()).filter(Boolean),
-    patch: diff.stdout,
+async function captureTargetState(label) {
+  const commands = {
+    gitRoot: await command("git", ["rev-parse", "--show-toplevel"], runDirectory),
+    head: await command("git", ["rev-parse", "HEAD"], runDirectory),
+    status: await command("git", ["status", "--short", "--untracked-files=all"], runDirectory),
+    diff: await command("git", ["diff", "--no-ext-diff", "--no-color"], runDirectory),
+    stagedDiff: await command("git", ["diff", "--cached", "--no-ext-diff", "--no-color"], runDirectory),
+    names: await command("git", ["diff", "--name-only"], runDirectory),
+    stagedNames: await command("git", ["diff", "--cached", "--name-only"], runDirectory),
   };
+  report.commands[`targetState${label}`] = commands;
 
-  check("sourceChanged", sourceHash !== repository.baseline.sourceHash, {
-    before: repository.baseline.sourceHash,
-    after: sourceHash,
-  });
-  check("immutableVerifierPreserved", verifyHash === repository.baseline.verifyHash, {
-    before: repository.baseline.verifyHash,
-    after: verifyHash,
-  });
-  check("immutablePackagePreserved", packageHash === repository.baseline.packageHash, {
-    before: repository.baseline.packageHash,
-    after: packageHash,
-  });
-  check("onlyExpectedFileChanged", report.diff.changedFiles.length === 1 && report.diff.changedFiles[0] === "src/greeting.mjs", {
-    changedFiles: report.diff.changedFiles,
-  });
-  check("targetVerificationPassed", targetVerification.ok, {
-    command: targetVerification.command,
-    exitCode: targetVerification.exitCode,
-    stdout: targetVerification.stdout,
-    stderr: targetVerification.stderr,
-  });
+  const root = commands.gitRoot.stdout.trim();
+  const changedFiles = [
+    ...commands.names.stdout.split("\n"),
+    ...commands.stagedNames.stdout.split("\n"),
+  ].map((line) => line.trim()).filter(Boolean);
 
-  const module = await import(`${pathToFileURL(repository.sourcePath).href}?poc=${randomUUID()}`);
-  const cases = [
-    ["Atlas", "Hello, Atlas!"],
-    [undefined, "Hello, World!"],
-    ["", "Hello, World!"],
-    ["   ", "Hello, World!"],
-  ];
-  const observed = cases.map(([input, expected]) => ({
-    input: input ?? "<missing>",
-    expected,
-    actual: module.greeting(input),
-  }));
-  const independentPassed = observed.every((item) => item.actual === item.expected);
-  check("independentBehaviorVerification", independentPassed, { cases: observed });
-  report.checks.independentBehaviorVerification = {
-    ...report.checks.independentBehaviorVerification,
-    verifier: "launcher-side dynamic import and assertions, separate from target verify.mjs",
+  return {
+    gitRoot: commands.gitRoot.ok && root ? await realpath(root) : undefined,
+    head: commands.head.ok ? commands.head.stdout.trim() : undefined,
+    status: commands.status.stdout.trim(),
+    changedFiles: [...new Set(changedFiles)],
+    patch: {
+      unstaged: commands.diff.stdout,
+      staged: commands.stagedDiff.stdout,
+    },
   };
 }
 
@@ -658,7 +553,7 @@ async function runControlledFailureProbe() {
 
 async function runControlledInterruptionProbe() {
   const session = await client.session.create({
-    title: "Atlas issue #19 POC interruption probe",
+    title: "OpenCode POC interruption probe",
     agent: TARGET_AGENT,
     model: TARGET_MODEL,
     location: { directory: runDirectory },
@@ -758,7 +653,11 @@ async function writeReport() {
 }
 
 try {
-  await createPersistentRunDirectory();
+  if (!initialPrompt?.trim()) {
+    throw new Error('Missing initial prompt. Usage: npm run poc "<prompt>"');
+  }
+
+  await bindTargetDirectory();
 
   const launcherBefore = await command("git", ["status", "--porcelain", "--untracked-files=all"], ATLAS_DIR);
   report.cleanup.launcherStatusBefore = launcherBefore.stdout;
@@ -801,23 +700,33 @@ try {
     throw new Error(`Service registration pid ${report.service.registrationPid} differs from health pid ${health.pid}`);
   }
 
-  const repository = await createThrowawayRepository();
+  const targetBefore = await captureTargetState("Before");
+  report.target = {
+    directory: runDirectory,
+    before: targetBefore,
+  };
   const persistencePrefix = `${report.persistenceDirectory}${sep}`;
   report.checks.runDirectoryIsolated = {
     passed:
       runDirectory !== ATLAS_DIR &&
       resolve(runDirectory) !== resolve(ATLAS_DIR) &&
-      runDirectory.startsWith(persistencePrefix),
+      runDirectory.startsWith(persistencePrefix) &&
+      targetBefore.gitRoot === runDirectory,
     runDirectory,
     persistenceDirectory: report.persistenceDirectory,
     launcherDirectory: ATLAS_DIR,
+    gitRoot: targetBefore.gitRoot,
   };
   check("runDirectoryIsolated", report.checks.runDirectoryIsolated.passed, report.checks.runDirectoryIsolated);
 
-  await runHappyPath(repository);
-  await verifyChange(repository);
+  await runHappyPath();
   await runControlledFailureProbe();
   await runControlledInterruptionProbe();
+  report.target.after = await captureTargetState("After");
+  report.diff = {
+    before: report.target.before,
+    after: report.target.after,
+  };
 
   report.outcome = "passed";
 } catch (error) {
@@ -825,6 +734,17 @@ try {
   report.errors.push({ stage: "main", error: errorRecord(error) });
 } finally {
   await cleanup();
+  if (runDirectory && report.target?.before && !report.target.after) {
+    try {
+      report.target.after = await captureTargetState("After");
+      report.diff = {
+        before: report.target.before,
+        after: report.target.after,
+      };
+    } catch (error) {
+      report.errors.push({ stage: "target-state-after", error: errorRecord(error) });
+    }
+  }
   const launcherAfter = await command("git", ["status", "--porcelain", "--untracked-files=all"], ATLAS_DIR);
   report.cleanup.launcherStatusAfter = launcherAfter.stdout;
   await writeReport();

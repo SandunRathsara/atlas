@@ -4,8 +4,8 @@ This is throwaway code for issue #19, not Atlas production code. It answers one
 question:
 
 > Can the pinned `@opencode-ai/client` connect to the already-running,
-> matching `opencode2` server, run one real implementation spec in an isolated
-> Git repository, observe completion, collect the result, and leave the run
+> matching `opencode2` server, send an initial prompt to an isolated Git
+> repository, observe completion, collect the result, and leave the session
 > available for inspection without human interaction?
 
 ## Run it
@@ -13,9 +13,13 @@ question:
 The local OpenCode service must already be running and must match the exact
 client version pinned in `package.json`.
 
+Prepare `poc/persistence/issue-19-opencode-e2e/` yourself before running the
+POC. It must already be a standalone Git repository. The POC does not create,
+initialize, seed, reset, test, or delete anything in that target directory.
+
 ```sh
 npm install
-npm run poc
+npm run poc "<initial prompt>"
 ```
 
 The script:
@@ -23,13 +27,13 @@ The script:
 1. discovers the configured local service and uses its Basic Auth password
    without printing it;
 2. checks health/version and the `build` agent;
-3. always selects `opencode/muse-spark-1.3-contributor-free` and creates a new
-   persistent absolute Git repository under `poc/persistence/`;
-4. creates a session, submits a bounded implementation spec, subscribes to
-   live events, waits with `session.wait`, and retrieves the final assistant
-   message;
-5. independently runs the target repository's `npm test`, checks the source
-   change, and checks that the verifier itself was not changed;
+3. always selects `opencode/muse-spark-1.3-contributor-free` and uses the
+   existing absolute Git repository at
+   `poc/persistence/issue-19-opencode-e2e/`;
+4. creates a session, submits the supplied initial prompt, subscribes to live
+   events, waits with `session.wait`, and retrieves the final assistant message;
+5. records the target repository's Git state and diff before and after the
+   session without assuming any project files, commands, or expected changes;
 6. exercises a deterministic missing-session failure probe and attempts a
    controlled interrupt probe; and
 7. stops its event stream while preserving the sessions and repository for
@@ -42,9 +46,9 @@ terminal, open that directory with the matching TUI while the POC is running:
 opencode2 /absolute/path/printed/by/the/poc
 ```
 
-Each run gets its own `poc/persistence/issue-19-opencode-e2e-*` directory. The
-directory and its OpenCode sessions are intentionally not deleted; remove old
-runs manually when finished.
+All runs use `poc/persistence/issue-19-opencode-e2e/`, so their OpenCode
+sessions are easy to find together in the TUI. The directory and sessions are
+intentionally not deleted or reset; manage the directory manually.
 
 The JSON report is written to `artifacts/` (ignored by Git) and also printed as
 the final output. It contains event summaries, command output, the diff,
@@ -54,8 +58,8 @@ written to the report.
 Useful overrides:
 
 ```sh
-OPENCODE_AGENT_ID=build npm run poc
-OPENCODE_SERVICE_FILE="$HOME/.local/state/opencode/service.json" npm run poc
+OPENCODE_AGENT_ID=build npm run poc "<initial prompt>"
+OPENCODE_SERVICE_FILE="$HOME/.local/state/opencode/service.json" npm run poc "<initial prompt>"
 ```
 
 The model is intentionally fixed to `opencode/muse-spark-1.3-contributor-free`
