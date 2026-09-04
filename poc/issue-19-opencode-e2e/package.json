@@ -1,0 +1,14 @@
+{
+  "name": "atlas-issue-19-opencode-e2e-poc",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "poc": "node run.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@opencode-ai/client": "0.0.0-beta-19086"
+  }
+}
