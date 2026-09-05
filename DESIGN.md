@@ -12,7 +12,7 @@ This is an application guide, not a copy of the Google DESIGN.md token schema. T
 
 Use **Tailwind CSS 4 + daisyUI 5, with an Atlas palette override of `dim` and one shared Glassmorphism treatment**, and HTMX for server-rendered interactions. This is the planned frontend baseline, not a claim that dependencies are installed. Lock resolved versions when implementing the asset pipeline; recheck theme and component behavior on upgrades.
 
-The visual direction is **dark Glassmorphism**: translucent blue-black panels, frosted background blur, cool pale edges, and restrained depth. **`#012B68` (deep navy) is the exact, sole primary brand color.** Lighter blue tones are functional shades of that same brand family, not independent accents. Keep daisyUI's maintained components and `dim` sizing/radii; override the palette centrally rather than rebuilding the component system.
+The visual direction is **clear, tinted dark Glassmorphism**: see-through blue-black panels, light background softening, crisp pale edges, softly rounded corners, and restrained reflective highlights. Aim for polished smoked glass, not milky or heavily frosted panes. **`#012B68` (deep navy) is the exact, sole primary brand color.** Lighter blue tones are functional shades of that same brand family, not independent accents. Keep daisyUI's maintained components and `dim` sizing; override the palette and corner radii centrally rather than rebuilding the component system.
 
 Compile the stylesheet using the project's eventual asset pipeline:
 
@@ -45,6 +45,8 @@ Compile the stylesheet using the project's eventual asset pipeline:
   --color-warning-content: #08101E;
   --color-error: #F49AA6;
   --color-error-content: #08101E;
+  --radius-field: 0.75rem;
+  --radius-box: 1.25rem;
 }
 @theme {
   --color-brand-readable: #8BB8FF;
@@ -53,7 +55,7 @@ Compile the stylesheet using the project's eventual asset pipeline:
 }
 ```
 
-This uses daisyUI's documented same-name theme customization; unspecified sizing, radii, and effects inherit from `dim`. `secondary` and `accent` intentionally alias the primary value so upstream defaults cannot introduce extra brand hues. Do not use those aliases as separate action hierarchies.
+This uses daisyUI's documented same-name theme customization; unspecified sizing, selector radii, and effects inherit from `dim`. Fields/buttons use a 0.75rem radius (12px at the default root size); cards, glass panels, and dialogs use 1.25rem (20px). Use the same theme radius tokens for custom containers; reserve fully rounded shapes for naturally circular controls and existing badges. `secondary` and `accent` intentionally alias the primary value so upstream defaults cannot introduce extra brand hues. Do not use those aliases as separate action hierarchies.
 
 ### Approved palette
 
@@ -93,7 +95,7 @@ Use complete, literal class names in server templates and state mappings, includ
 | Attention or freshness warning | `warning` and `warning-content` |
 | Error or destructive action | `error` and `error-content` |
 
-Use daisyUI's paired foregrounds on colored surfaces, e.g. `bg-primary text-primary-content`; component modifiers already pair them. Keep raw hex/OKLCH colors out of page templates. Preserve upstream radii; use only the shared surface elevation below, not per-page shadows or corner styles.
+Use daisyUI's paired foregrounds on colored surfaces, e.g. `bg-primary text-primary-content`; component modifiers already pair them. Keep raw hex/OKLCH colors out of page templates. Use the shared theme radii and surface elevation below, not per-page shadows or corner styles.
 
 Use neutral styling for secondary actions. Supporting `info`, `success`, `warning`, and `error` roles are reserved for actual state/feedback, in small labelled badges, icons, or messages. Special attention uses `warning`, not an extra accent. Ordinary notices can stay neutral. The informational blue intentionally shares the brand-readable shade; wording and icons distinguish status from navigation.
 
@@ -110,14 +112,16 @@ Implement this once in the shared stylesheet/template layer, not as separately t
 | Property | Shared value |
 | --- | --- |
 | Fallback background | Opaque `base-100` |
-| Enhanced background | `base-100` at 85% opacity (`bg-base-100/85`) |
-| Backdrop blur | 12px (`backdrop-blur-md`) |
-| Decorative edge | 1px solid ice white at 12% opacity (`border border-base-content/12`) |
-| Elevation | One subtle neutral shadow (`shadow-sm`), no colored glow |
-| Corners | Existing daisyUI component radius |
+| Enhanced background | `base-100` at 60% opacity (`bg-base-100/60`) |
+| Backdrop blur | 4px (`backdrop-blur-xs`); keep backdrop shapes discernible |
+| Decorative edge | 1px solid ice white at 16% opacity (`border border-base-content/16`) |
+| Reflection | One inset top-edge highlight, `inset 0 1px 0 rgb(244 247 252 / 0.10)`, in the shared surface style |
+| Elevation | Combine the inset highlight with one subtle neutral outer shadow; no colored glow |
+| Corners | Shared box radius: 1.25rem (20px); internal buttons/fields: 0.75rem (12px) |
 
 - Use glass for the header, sidebar/mobile navigation, and top-level summary panels. Keep tables, Session output, form fields, menus, and dialog bodies opaque so text is stable and underlying content cannot compete with it.
-- Apply transparency and blur together only inside a CSS `@supports (backdrop-filter: blur(12px))` enhancement. Without support, retain the opaque fallback. Apply alpha to the background color, never `opacity` to the whole panel and its text.
+- Apply transparency and blur together only inside a CSS `@supports (backdrop-filter: blur(4px))` enhancement. Without support, retain the opaque fallback. Apply alpha to the background color, never `opacity` to the whole panel and its text.
+- Let the quiet blue backdrop show through. Keep highlights confined to edges rather than a white overlay across the pane; avoid haze, grain, heavy blur, and animated reflections. Use this same 60%/4px recipe across glass surfaces instead of inventing clearer or frostier variants per page.
 - Use only one glass layer at any point; children of a glass panel use opaque or unstyled surfaces. Avoid blur on every card/row, full-viewport filtered layers, and animated blur for mobile performance.
 - Keep the backdrop quiet: blue-black base colors with at most one static radial wash of `primary` at 20% opacity fading to transparent in the shared shell. This restrained tonal variation makes the glass visible without adding another hue. No photographs, moving blobs, neon glows, or multicolor gradients. Glass should frame the work, not obscure it.
 - For `prefers-reduced-transparency: reduce`, `prefers-contrast: more`, or forced colors, remove translucency and blur. Reduced-transparency detection has limited browser support; readability must not depend on that query working. Preserve system colors in forced-colors mode.

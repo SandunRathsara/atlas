@@ -16,4 +16,8 @@ Single-context layout: root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domai
 
 ### UI design
 
-Before planning, implementing, or reviewing UI changes, read root `DESIGN.md`. Use its shared design system and interaction rules; verify its applicable acceptance checks.
+- Before UI planning, implementation, debugging, or review—including templates, styles, components, and HTMX interactions—use the read tool to load [`DESIGN.md`](DESIGN.md) from the repository root. This link is a read instruction, not an automatic file import. Load it on demand rather than for unrelated backend work.
+- Treat `DESIGN.md` as the authoritative visual and interaction guide. Use `CONTEXT.md` for domain meaning and the originating issue for feature scope; flag conflicts rather than silently overriding either.
+- Reuse shared theme tokens, layouts, and components. Change design rules only when the task explicitly authorizes a design change; keep the guide and implementation synchronized.
+- When delegating UI work, include the requirement to read `DESIGN.md` in the handoff; do not assume the other agent has read it.
+- Before reporting UI work complete, run the applicable acceptance checks in `DESIGN.md`. Report what was verified and any gaps; source inspection alone is not visual verification.
