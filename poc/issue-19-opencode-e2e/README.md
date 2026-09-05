@@ -10,8 +10,8 @@ question:
 
 ## Run it
 
-The local OpenCode service must already be running and must match the exact
-client version pinned in `package.json`.
+The local OpenCode service must already be running and healthy. The POC connects
+to the currently registered service, regardless of its exact beta build.
 
 Prepare `poc/persistence/issue-19-opencode-e2e/` yourself before running the
 POC. It must already be a standalone Git repository. The POC does not create,
@@ -67,4 +67,6 @@ The model is intentionally fixed to `opencode/muse-spark-1.3-contributor-free`
 
 The service discovery fallback understands the legacy beta registration file
 shape (`url`, `version`, `pid`, `password`) as well as the newer wrapped shape.
-The POC refuses a server version different from the exact client dependency.
+The POC records both client and server versions but does not reject a build
+mismatch. If a beta build changes the API incompatibly, update the client
+dependency and rerun `npm install`.

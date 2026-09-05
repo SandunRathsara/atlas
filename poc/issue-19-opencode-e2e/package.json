@@ -9,6 +9,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@opencode-ai/client": "0.0.0-beta-19086"
+    "@opencode-ai/client": "0.0.0-beta-19135"
   }
 }

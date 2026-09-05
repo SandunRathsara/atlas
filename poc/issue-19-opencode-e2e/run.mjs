@@ -54,7 +54,6 @@ const report = {
   launcherDirectory: ATLAS_DIR,
   pocDirectory: POC_DIR,
   clientVersion,
-  expectedServerVersion: clientVersion,
   targetAgent: TARGET_AGENT,
   targetModel: TARGET_MODEL,
   serviceFile: SERVICE_FILE,
@@ -308,13 +307,13 @@ async function startEventCollector() {
 async function discoverEndpoint() {
   let serviceDiscoverResult = "not-found";
   try {
-    const discovered = await Service.discover({ version: clientVersion });
+    // ponytail: accept any healthy beta service; update the SDK only when its API breaks.
+    const discovered = await Service.discover();
     if (discovered) {
       serviceDiscoverResult = "matched";
       return {
         endpoint: discovered,
         source: "@opencode-ai/client/service Service.discover",
-        registrationVersion: clientVersion,
       };
     }
   } catch (error) {
@@ -326,9 +325,6 @@ async function discoverEndpoint() {
   const info = raw.service ?? raw;
   if (!info.url || !info.pid) {
     throw new Error(`Service registration at ${SERVICE_FILE} has no usable url/pid (${serviceDiscoverResult})`);
-  }
-  if (info.version && info.version !== clientVersion) {
-    throw new Error(`Service version ${info.version} does not match client ${clientVersion}`);
   }
   if (!info.password) {
     throw new Error("The configured service has no Basic Auth password; refusing an unauthenticated POC run");
@@ -688,10 +684,10 @@ try {
 
   const health = await client.health.get({ signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   const server = await client.server.get({ signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-  check("healthAndVersion", health.healthy === true && health.version === clientVersion, {
+  check("health", health.healthy === true, {
     healthy: health.healthy,
     serverVersion: health.version,
-    expectedVersion: clientVersion,
+    clientVersion,
     pid: health.pid,
   });
   report.service.health = health;
