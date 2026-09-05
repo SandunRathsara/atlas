@@ -4,7 +4,7 @@ Verified 2026-09-05 against official documentation and upstream theme source. Do
 
 ## Recommendation: unchanged `dim`
 
-**Design amendment:** the user subsequently requested frosted glass and one brand color. `DESIGN.md` now governs a shared translucent surface treatment over unchanged `dim` tokens, with green `primary` as the sole brand color and other hues restricted to semantic feedback. The original flat-surface recommendation below is historical; its token/source findings still apply.
+**Design amendment:** the user subsequently selected exact navy `#012B68` as the sole primary brand color and requested Glassmorphism. `DESIGN.md` now governs an Atlas palette override of `dim`, blue-toned translucent surfaces, readable lighter blue shades, and supporting semantic colors. The stock palette, green branding, and flat-surface recommendation below are historical, not current implementation instructions. daisyUI supports [same-name theme overrides](https://daisyui.com/docs/themes/#how-to-customize-an-existing-theme), preserving unspecified component tokens.
 
 Use **daisyUI `dim`, dark only**, with restrained accent usage. Its slate surfaces, softer foreground, rounded controls and zero depth/noise suit a calm, modern internal tool. Keep the theme's colors, radii and effects unchanged; establish density through layout and component sizes instead. This is a design judgment, not an upstream accessibility endorsement.
 

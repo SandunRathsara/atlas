@@ -6,13 +6,13 @@ Atlas is an internal tool for browsing Repositories and starting autonomous Sess
 
 This file governs visual and interaction decisions. `CONTEXT.md` governs terminology and domain meaning; the originating GitHub issue governs feature scope. Design guidelines do not introduce features or change business rules. If these sources conflict, report the conflict before implementing it.
 
-This is an application guide, not a copy of the Google DESIGN.md token schema. The installed design system owns raw tokens; this document owns their usage. Keep shared styles and templates authoritative rather than duplicating theme values here.
+This is an application guide, not a copy of the Google DESIGN.md token schema. The palette below defines Atlas's approved overrides; daisyUI supplies component primitives. Implement the palette once in the shared stylesheet and keep it synchronized with this document, never copied into page templates.
 
 ## Selected design system
 
-Use **Tailwind CSS 4 + daisyUI 5, with the built-in `dim` tokens and one shared frosted-glass surface treatment**, and HTMX for server-rendered interactions. This is the planned frontend baseline, not a claim that dependencies are installed. Lock resolved versions when implementing the asset pipeline; recheck theme and component behavior on upgrades.
+Use **Tailwind CSS 4 + daisyUI 5, with an Atlas palette override of `dim` and one shared Glassmorphism treatment**, and HTMX for server-rendered interactions. This is the planned frontend baseline, not a claim that dependencies are installed. Lock resolved versions when implementing the asset pipeline; recheck theme and component behavior on upgrades.
 
-The visual direction is **frosted dark glass**: translucent slate panels, soft background blur, fine pale edges, and restrained depth. Keep `dim`'s maintained palette and rounded controls rather than creating a replacement theme. Its green `primary` is the **only brand color**; the glass treatment is neutral, not another accent palette.
+The visual direction is **dark Glassmorphism**: translucent blue-black panels, frosted background blur, cool pale edges, and restrained depth. **`#012B68` (deep navy) is the exact, sole primary brand color.** Lighter blue tones are functional shades of that same brand family, not independent accents. Keep daisyUI's maintained components and `dim` sizing/radii; override the palette centrally rather than rebuilding the component system.
 
 Compile the stylesheet using the project's eventual asset pipeline:
 
@@ -21,7 +21,58 @@ Compile the stylesheet using the project's eventual asset pipeline:
 @plugin "daisyui" {
   themes: dim --default;
 }
+@plugin "daisyui/theme" {
+  name: "dim";
+  default: true;
+  color-scheme: dark;
+  --color-base-100: #132238;
+  --color-base-200: #0B1628;
+  --color-base-300: #08101E;
+  --color-base-content: #F4F7FC;
+  --color-primary: #012B68;
+  --color-primary-content: #F4F7FC;
+  --color-secondary: #012B68;
+  --color-secondary-content: #F4F7FC;
+  --color-accent: #012B68;
+  --color-accent-content: #F4F7FC;
+  --color-neutral: #1D304A;
+  --color-neutral-content: #F4F7FC;
+  --color-info: #8BB8FF;
+  --color-info-content: #08101E;
+  --color-success: #6ED6B5;
+  --color-success-content: #08101E;
+  --color-warning: #F2C66D;
+  --color-warning-content: #08101E;
+  --color-error: #F49AA6;
+  --color-error-content: #08101E;
+}
+@theme {
+  --color-brand-readable: #8BB8FF;
+  --color-muted: #A9B8CC;
+  --color-control-border: #7086A5;
+}
 ```
+
+This uses daisyUI's documented same-name theme customization; unspecified sizing, radii, and effects inherit from `dim`. `secondary` and `accent` intentionally alias the primary value so upstream defaults cannot introduce extra brand hues. Do not use those aliases as separate action hierarchies.
+
+### Approved palette
+
+| Role | Exact color | Character |
+| --- | --- | --- |
+| Brand / primary fill | `#012B68` | Deep navy |
+| Brand-readable / information | `#8BB8FF` | Frost blue for links, selection indicators, focus, and information |
+| App background (`base-200`) | `#0B1628` | Blue-black |
+| Panel (`base-100`) | `#132238` | Midnight blue; translucent only for glass |
+| Deep surface (`base-300`) | `#08101E` | Ink blue |
+| Neutral control | `#1D304A` | Muted steel navy |
+| Main text | `#F4F7FC` | Ice white |
+| Supporting text (`muted`) | `#A9B8CC` | Cool blue-gray |
+| Essential control edge | `#7086A5` | Steel blue |
+| Success | `#6ED6B5` | Cool mint |
+| Warning / special attention | `#F2C66D` | Soft amber |
+| Error / destructive action | `#F49AA6` | Soft rose |
+
+The CSS block defines foreground pairings: ice white on primary/neutral, ink blue on filled semantic colors. These are Atlas choices, not stock `dim` tokens.
 
 Set `<html lang="en" data-theme="dim">` in the shared document layout and include a viewport meta tag. Enable only `dim`; it supplies a dark native `color-scheme`. No light theme, theme switcher, or system-preference theme branching. Avoid duplicating styles with `dark:` variants.
 
@@ -35,7 +86,8 @@ Use complete, literal class names in server templates and state mappings, includ
 | Shell chrome / elevated panels | Shared frosted-glass treatment below, with `text-base-content` |
 | Dense content / form controls | Opaque `bg-base-100 text-base-content` |
 | Decorative divider/card border | `border-base-300`; not sufficient by itself for essential control boundaries |
-| Brand / main action / selected navigation | `primary`; filled `btn-primary` for the main action, small indicators for selection |
+| Brand / main action | Exact `primary` fill with `primary-content` text and a visible `control-border` edge |
+| Links / focus / selected navigation | `brand-readable` text or indicators; selected navigation may also have a primary-tinted background |
 | Informational state | `info` and its paired `info-content` foreground |
 | Confirmed success | `success` and `success-content` |
 | Attention or freshness warning | `warning` and `warning-content` |
@@ -43,27 +95,31 @@ Use complete, literal class names in server templates and state mappings, includ
 
 Use daisyUI's paired foregrounds on colored surfaces, e.g. `bg-primary text-primary-content`; component modifiers already pair them. Keep raw hex/OKLCH colors out of page templates. Preserve upstream radii; use only the shared surface elevation below, not per-page shadows or corner styles.
 
-Use neutral styling for secondary actions. Do not use `secondary` or `accent` as additional brand colors, even though the upstream theme defines them. Supporting `info`, `success`, `warning`, and `error` colors are reserved for actual state/feedback, in small labelled badges, icons, or messages. Special attention uses `warning`, not a new purple/orange accent. Ordinary notices can stay neutral. Green branding alone never implies success.
+Use neutral styling for secondary actions. Supporting `info`, `success`, `warning`, and `error` roles are reserved for actual state/feedback, in small labelled badges, icons, or messages. Special attention uses `warning`, not an extra accent. Ordinary notices can stay neutral. The informational blue intentionally shares the brand-readable shade; wording and icons distinguish status from navigation.
+
+**Dark-brand contrast rule:** `#012B68` is a fill/logo color, not body text, a focus outline, or the only selected-state indicator on dark surfaces. Use `text-brand-readable` for links and `outline-brand-readable` for visible keyboard focus. Give primary buttons and essential control boundaries a shared `border-control-border` treatment; fine glass edges are not a substitute. Keep the primary button's default fill exactly `#012B68`; do not silently replace it with the lighter blue to solve contrast.
+
+Calculated opaque sRGB pairings: primary text on primary is **12.64:1**; main text on `base-100` **14.89:1**; muted text **7.93:1** and brand-readable **7.92:1** on `base-100`. The control edge is **3.65:1** against primary and **4.30:1** against `base-100`; semantic fill/text pairings exceed **9:1**. These checks do not certify composited glass, hover states, or rendered components; measure those separately.
 
 Use full-strength `text-base-content` for important text; distinguish metadata first through size and placement. Any reduced-opacity text needs measured contrast. Avoid neutral outline/dash button and badge variants: upstream documents their dark foreground as intended for light backgrounds. Use the default button or a verified semantic alternative.
 
-### Frosted-glass surface recipe
+### Glassmorphism surface recipe
 
-Implement this once in the shared stylesheet/template layer, not as separately tuned effects per page. These are Atlas surface conventions, not changes to upstream color tokens:
+Implement this once in the shared stylesheet/template layer, not as separately tuned effects per page. Glass uses the Atlas palette above:
 
 | Property | Shared value |
 | --- | --- |
 | Fallback background | Opaque `base-100` |
 | Enhanced background | `base-100` at 85% opacity (`bg-base-100/85`) |
 | Backdrop blur | 12px (`backdrop-blur-md`) |
-| Decorative edge | 1px solid white at 10% opacity (`border border-white/10`) |
+| Decorative edge | 1px solid ice white at 12% opacity (`border border-base-content/12`) |
 | Elevation | One subtle neutral shadow (`shadow-sm`), no colored glow |
 | Corners | Existing daisyUI component radius |
 
 - Use glass for the header, sidebar/mobile navigation, and top-level summary panels. Keep tables, Session output, form fields, menus, and dialog bodies opaque so text is stable and underlying content cannot compete with it.
 - Apply transparency and blur together only inside a CSS `@supports (backdrop-filter: blur(12px))` enhancement. Without support, retain the opaque fallback. Apply alpha to the background color, never `opacity` to the whole panel and its text.
 - Use only one glass layer at any point; children of a glass panel use opaque or unstyled surfaces. Avoid blur on every card/row, full-viewport filtered layers, and animated blur for mobile performance.
-- Keep the backdrop quiet: base colors only, with at most one static, subtle neutral gradient in the shared shell. No photographs, moving blobs, neon glows, or multicolor gradients. Frosting should frame the work, not obscure it.
+- Keep the backdrop quiet: blue-black base colors with at most one static radial wash of `primary` at 20% opacity fading to transparent in the shared shell. This restrained tonal variation makes the glass visible without adding another hue. No photographs, moving blobs, neon glows, or multicolor gradients. Glass should frame the work, not obscure it.
 - For `prefers-reduced-transparency: reduce`, `prefers-contrast: more`, or forced colors, remove translucency and blur. Reduced-transparency detection has limited browser support; readability must not depend on that query working. Preserve system colors in forced-colors mode.
 - Fine glass edges are decorative, not sufficient focus or input boundaries. Measure text and control contrast over the actual composited backdrop, including while scrolling. If it fails, make that surface opaque rather than weakening the accessibility rule.
 
@@ -170,7 +226,7 @@ For implementation details and primary-source links, read [the interaction resea
 For every changed screen or workflow, verify applicable items:
 
 - [ ] Uses the shared theme, shell, components, spacing, and typography; no page-specific palette.
-- [ ] Uses only `primary` for branding; supporting colors convey real states rather than decoration.
+- [ ] Uses exact `#012B68` for primary branding; lighter brand-blue shades provide readable links/focus, and supporting colors convey real states rather than decoration.
 - [ ] Glass uses the shared recipe without nested blur; opaque fallbacks, transparency/contrast preferences, and scrolling readability are verified on phone and desktop.
 - [ ] Domain terms, Session state, freshness, and action eligibility match `CONTEXT.md` and backend rules.
 - [ ] Works at 320, 375, 768, 1024, and 1440 CSS px; no page overflow or inaccessible mobile actions.
@@ -187,9 +243,10 @@ For every changed screen or workflow, verify applicable items:
 Researched 2026-09-05. These rules are Atlas conventions built on upstream components, not an upstream accessibility certification.
 
 - [Theme research](docs/research/design-theme.md): comparison of `dim`, `dark`, `business`, and `night`, verified tokens, configuration, and contrast caveats.
-- The original flat-surface recommendation is superseded by this document's frosted-glass treatment and single-brand-color policy; upstream `dim` tokens remain unchanged.
+- The original stock `dim` palette and flat-surface recommendation are superseded by this document's Atlas navy palette and Glassmorphism treatment. Historical research is not the current palette authority.
 - [Interaction research](docs/research/design-interactions.md): HTMX forms, loading, focus, history, mobile tables, and native dialogs, with official HTMX/W3C/MDN citations.
 - [daisyUI configuration](https://daisyui.com/docs/config/) and [semantic colors](https://daisyui.com/docs/colors/).
+- [daisyUI theme customization](https://daisyui.com/docs/themes/#how-to-customize-an-existing-theme): same-name overrides inherit unspecified values from the built-in theme.
 - [Tailwind source detection](https://tailwindcss.com/docs/detecting-classes-in-source-files) and [responsive design](https://tailwindcss.com/docs/responsive-design).
 - [Heroicons](https://heroicons.com/): the selected SVG icon family.
 - [Tailwind backdrop blur](https://tailwindcss.com/docs/backdrop-filter-blur) and [background opacity](https://tailwindcss.com/docs/background-color): glass surface primitives.
