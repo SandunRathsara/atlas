@@ -14,3 +14,6 @@ Use the default triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, 
 
 Single-context layout: root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
 
+### UI design
+
+Before planning, implementing, or reviewing UI changes, read root `DESIGN.md`. Use its shared design system and interaction rules; verify its applicable acceptance checks.
