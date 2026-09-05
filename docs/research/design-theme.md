@@ -4,6 +4,8 @@ Verified 2026-09-05 against official documentation and upstream theme source. Do
 
 ## Recommendation: unchanged `dim`
 
+**Design amendment:** the user subsequently requested frosted glass and one brand color. `DESIGN.md` now governs a shared translucent surface treatment over unchanged `dim` tokens, with green `primary` as the sole brand color and other hues restricted to semantic feedback. The original flat-surface recommendation below is historical; its token/source findings still apply.
+
 Use **daisyUI `dim`, dark only**, with restrained accent usage. Its slate surfaces, softer foreground, rounded controls and zero depth/noise suit a calm, modern internal tool. Keep the theme's colors, radii and effects unchanged; establish density through layout and component sizes instead. This is a design judgment, not an upstream accessibility endorsement.
 
 Atlas centers on **Repositories, Specs, Sessions and PRs**. Prioritize scanning their titles, states and next actions—not decorative dashboards. Preserve the distinctions in [CONTEXT.md](../../CONTEXT.md): **Idle is not completed**, **Active Session is not necessarily executing**, and **Stale is a separate freshness warning**.

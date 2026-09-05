@@ -10,9 +10,9 @@ This is an application guide, not a copy of the Google DESIGN.md token schema. T
 
 ## Selected design system
 
-Use **Tailwind CSS 4 + daisyUI 5, with the built-in `dim` theme unchanged**, and HTMX for server-rendered interactions. This is the planned frontend baseline, not a claim that dependencies are installed. Lock resolved versions when implementing the asset pipeline; recheck theme and component behavior on upgrades.
+Use **Tailwind CSS 4 + daisyUI 5, with the built-in `dim` tokens and one shared frosted-glass surface treatment**, and HTMX for server-rendered interactions. This is the planned frontend baseline, not a claim that dependencies are installed. Lock resolved versions when implementing the asset pipeline; recheck theme and component behavior on upgrades.
 
-`dim` provides soft slate backgrounds, a restrained foreground, rounded controls, and no decorative depth/noise. Its green primary action supplies a small amount of color. Use its other accents only for meaningful states, not to give each page its own identity.
+The visual direction is **frosted dark glass**: translucent slate panels, soft background blur, fine pale edges, and restrained depth. Keep `dim`'s maintained palette and rounded controls rather than creating a replacement theme. Its green `primary` is the **only brand color**; the glass treatment is neutral, not another accent palette.
 
 Compile the stylesheet using the project's eventual asset pipeline:
 
@@ -32,17 +32,40 @@ Use complete, literal class names in server templates and state mappings, includ
 | Role | Default |
 | --- | --- |
 | App background | `bg-base-200 text-base-content` |
-| Content surface | `bg-base-100 text-base-content` |
+| Shell chrome / elevated panels | Shared frosted-glass treatment below, with `text-base-content` |
+| Dense content / form controls | Opaque `bg-base-100 text-base-content` |
 | Decorative divider/card border | `border-base-300`; not sufficient by itself for essential control boundaries |
-| Main action | `btn-primary`; reserve green emphasis for the main action rather than decoration |
+| Brand / main action / selected navigation | `primary`; filled `btn-primary` for the main action, small indicators for selection |
 | Informational state | `info` and its paired `info-content` foreground |
 | Confirmed success | `success` and `success-content` |
 | Attention or freshness warning | `warning` and `warning-content` |
 | Error or destructive action | `error` and `error-content` |
 
-Use daisyUI's paired foregrounds on colored surfaces, e.g. `bg-primary text-primary-content`; component modifiers already pair them. Keep raw hex/OKLCH colors out of page templates. Preserve upstream radii and flat elevation rather than introducing custom shadows or per-page corner styles.
+Use daisyUI's paired foregrounds on colored surfaces, e.g. `bg-primary text-primary-content`; component modifiers already pair them. Keep raw hex/OKLCH colors out of page templates. Preserve upstream radii; use only the shared surface elevation below, not per-page shadows or corner styles.
+
+Use neutral styling for secondary actions. Do not use `secondary` or `accent` as additional brand colors, even though the upstream theme defines them. Supporting `info`, `success`, `warning`, and `error` colors are reserved for actual state/feedback, in small labelled badges, icons, or messages. Special attention uses `warning`, not a new purple/orange accent. Ordinary notices can stay neutral. Green branding alone never implies success.
 
 Use full-strength `text-base-content` for important text; distinguish metadata first through size and placement. Any reduced-opacity text needs measured contrast. Avoid neutral outline/dash button and badge variants: upstream documents their dark foreground as intended for light backgrounds. Use the default button or a verified semantic alternative.
+
+### Frosted-glass surface recipe
+
+Implement this once in the shared stylesheet/template layer, not as separately tuned effects per page. These are Atlas surface conventions, not changes to upstream color tokens:
+
+| Property | Shared value |
+| --- | --- |
+| Fallback background | Opaque `base-100` |
+| Enhanced background | `base-100` at 85% opacity (`bg-base-100/85`) |
+| Backdrop blur | 12px (`backdrop-blur-md`) |
+| Decorative edge | 1px solid white at 10% opacity (`border border-white/10`) |
+| Elevation | One subtle neutral shadow (`shadow-sm`), no colored glow |
+| Corners | Existing daisyUI component radius |
+
+- Use glass for the header, sidebar/mobile navigation, and top-level summary panels. Keep tables, Session output, form fields, menus, and dialog bodies opaque so text is stable and underlying content cannot compete with it.
+- Apply transparency and blur together only inside a CSS `@supports (backdrop-filter: blur(12px))` enhancement. Without support, retain the opaque fallback. Apply alpha to the background color, never `opacity` to the whole panel and its text.
+- Use only one glass layer at any point; children of a glass panel use opaque or unstyled surfaces. Avoid blur on every card/row, full-viewport filtered layers, and animated blur for mobile performance.
+- Keep the backdrop quiet: base colors only, with at most one static, subtle neutral gradient in the shared shell. No photographs, moving blobs, neon glows, or multicolor gradients. Frosting should frame the work, not obscure it.
+- For `prefers-reduced-transparency: reduce`, `prefers-contrast: more`, or forced colors, remove translucency and blur. Reduced-transparency detection has limited browser support; readability must not depend on that query working. Preserve system colors in forced-colors mode.
+- Fine glass edges are decorative, not sufficient focus or input boundaries. Measure text and control contrast over the actual composited backdrop, including while scrolling. If it fails, make that surface opaque rather than weakening the accessibility rule.
 
 ## Agent workflow
 
@@ -61,7 +84,7 @@ Changes to the theme or these rules require explicit design scope or human appro
 - Each page has one H1, an optional short description, and one visually dominant primary action. Wrap actions on small screens without changing reading order.
 - Use the standard spacing scale: 4px for tightly related details, 8px for compact groups, 12–16px within components, 24px between groups, and 32px between major sections. Express these through Tailwind utilities.
 - Stack columns on phones. Introduce columns only when content fits; never shrink labels and controls to preserve a desktop arrangement.
-- Use bordered sections only to group meaningful content. Prefer whitespace and headings to nested cards. Avoid decorative heroes, gradients, glass effects, and ornamental dashboard metrics.
+- Use bordered sections only to group meaningful content. Prefer whitespace and headings to nested cards. Use glass only as defined above; avoid decorative heroes and ornamental dashboard metrics.
 
 ## Typography and iconography
 
@@ -85,7 +108,7 @@ Use daisyUI components for controls and Tailwind utilities for layout. Preserve 
 | Forms | Visible labels, helper/error text, and daisyUI `input`, `select`, `textarea`, `checkbox`, or `radio` components. |
 | Status | Compact text-labelled `badge`; color reinforces the wording rather than replacing it. |
 | Feedback | Local inline message or `alert`; use a toast only for nonessential, supplementary confirmation. |
-| Grouped content | Plain section first; `card` with a subtle border when grouping needs emphasis. |
+| Grouped content | Plain section first; top-level summary `card` may use the shared glass treatment; dense or nested content remains opaque. |
 | Lists of records | Table when comparison matters; stacked records on narrow screens when the same information works better that way. |
 | Short confirmation | Native `dialog` styled with daisyUI `modal`; use a full page for complex editing. |
 
@@ -147,6 +170,8 @@ For implementation details and primary-source links, read [the interaction resea
 For every changed screen or workflow, verify applicable items:
 
 - [ ] Uses the shared theme, shell, components, spacing, and typography; no page-specific palette.
+- [ ] Uses only `primary` for branding; supporting colors convey real states rather than decoration.
+- [ ] Glass uses the shared recipe without nested blur; opaque fallbacks, transparency/contrast preferences, and scrolling readability are verified on phone and desktop.
 - [ ] Domain terms, Session state, freshness, and action eligibility match `CONTEXT.md` and backend rules.
 - [ ] Works at 320, 375, 768, 1024, and 1440 CSS px; no page overflow or inaccessible mobile actions.
 - [ ] Keyboard-only navigation works, focus is visible, and overlays return focus correctly.
@@ -162,7 +187,10 @@ For every changed screen or workflow, verify applicable items:
 Researched 2026-09-05. These rules are Atlas conventions built on upstream components, not an upstream accessibility certification.
 
 - [Theme research](docs/research/design-theme.md): comparison of `dim`, `dark`, `business`, and `night`, verified tokens, configuration, and contrast caveats.
+- The original flat-surface recommendation is superseded by this document's frosted-glass treatment and single-brand-color policy; upstream `dim` tokens remain unchanged.
 - [Interaction research](docs/research/design-interactions.md): HTMX forms, loading, focus, history, mobile tables, and native dialogs, with official HTMX/W3C/MDN citations.
 - [daisyUI configuration](https://daisyui.com/docs/config/) and [semantic colors](https://daisyui.com/docs/colors/).
 - [Tailwind source detection](https://tailwindcss.com/docs/detecting-classes-in-source-files) and [responsive design](https://tailwindcss.com/docs/responsive-design).
 - [Heroicons](https://heroicons.com/): the selected SVG icon family.
+- [Tailwind backdrop blur](https://tailwindcss.com/docs/backdrop-filter-blur) and [background opacity](https://tailwindcss.com/docs/background-color): glass surface primitives.
+- [MDN reduced transparency](https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-transparency): preference handling and browser-support limitations.
