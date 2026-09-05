@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "scripts": {
+    "prototype": "bun prototype/atlas-phase-1.ts"
+  }
+}
