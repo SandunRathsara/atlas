@@ -52,23 +52,38 @@ const document = (title: string, content: string) => `<!doctype html>
 
 const skipLink = `<a class="atlas-skip-link" href="#main-content">Skip to main content</a>`;
 
+export type PendingStartSession = {
+  action: string;
+  submissionId: string;
+  prompt: string;
+};
+
 export const renderLoginForm = ({
   csrfToken,
   error,
   returnTo,
+  pending,
 }: {
   csrfToken: string;
   error?: string;
   returnTo: string;
+  pending?: PendingStartSession;
 }) => {
   const errorMarkup = error
     ? `<p id="login-error" class="alert alert-error mt-6 leading-normal" tabindex="-1" data-focus-on-swap>${escapeHtml(error)}</p>`
     : "";
   const errorAttribute = error ? ' aria-describedby="login-error" aria-invalid="true"' : "";
+  const pendingMarkup = pending
+    ? `<input type="hidden" name="pending_action" value="${escapeHtml(pending.action)}">
+    <input type="hidden" name="pending_submission_id" value="${escapeHtml(pending.submissionId)}">
+    <textarea hidden name="pending_prompt">${escapeHtml(pending.prompt)}</textarea>
+    <div class="alert alert-info mt-6 leading-normal" role="status">Sign in to review and retry the preserved Start Session form. Atlas will not resubmit it automatically.</div>`
+    : "";
 
   return `<form id="login-form" class="mt-8 max-w-md" action="/login" method="post" autocomplete="on" hx-post="/login" hx-target="#login-form" hx-swap="outerHTML" hx-indicator="#login-progress" hx-disabled-elt="button[type='submit']">
     <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
     <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}">
+    ${pendingMarkup}
     <div>
       <label class="label mb-2 block p-0" for="shared-token">Shared access credential</label>
       <input id="shared-token" class="input input-bordered min-h-11 w-full border-control-border bg-base-100 text-base-content" name="token" type="password" autocomplete="current-password" required${errorAttribute}>
@@ -87,6 +102,7 @@ export const renderLoginPage = (options: {
   csrfToken: string;
   error?: string;
   returnTo: string;
+  pending?: PendingStartSession;
 }) =>
   document(
     "Sign in",
@@ -587,6 +603,7 @@ export const renderStartSessionPage = ({
   submissionId,
   prompt,
   error,
+  notice,
   existingSession,
   accessRefresh,
   specsRefresh,
@@ -598,6 +615,7 @@ export const renderStartSessionPage = ({
   submissionId: string;
   prompt: string;
   error?: string;
+  notice?: string;
   existingSession?: Session;
   accessRefresh?: RefreshState;
   specsRefresh?: RefreshState;
@@ -625,6 +643,7 @@ export const renderStartSessionPage = ({
         <div><dt class="font-medium text-muted">Spec</dt><dd class="mt-1">${githubUrl ? `<a class="text-brand-readable underline underline-offset-4" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open issue on GitHub</a>` : "Snapshot retained"}</dd></div>
         <div><dt class="font-medium text-muted">Queueing</dt><dd class="mt-1">Default branch only; preparation is deferred.</dd></div>
       </dl>
+      ${notice ? `<div class="alert alert-info mt-8 leading-normal" role="status" tabindex="-1" data-focus-on-swap>${escapeHtml(notice)}</div>` : ""}
       ${renderStartSessionForm({ action: formAction, csrfToken, submissionId, prompt, error, existingSession })}
       <details class="mt-8 max-w-prose rounded-box bg-base-100 p-5 sm:p-6">
         <summary class="min-h-11 cursor-pointer text-lg font-semibold">View Spec context</summary>
@@ -634,6 +653,39 @@ export const renderStartSessionPage = ({
     </section>`,
   });
 };
+
+export const renderPendingStartSessionFragment = ({
+  action,
+  csrfToken,
+  submissionId,
+  prompt,
+}: PendingStartSession & { csrfToken: string }) => `<div id="login-form">
+  <div class="alert alert-info mt-8 leading-normal" role="status" tabindex="-1" data-focus-on-swap>Signed in. Review the preserved form, then choose Start Session to retry it.</div>
+  ${renderStartSessionForm({ action, csrfToken, submissionId, prompt })}
+</div>`;
+
+export const renderPendingStartSessionPage = ({
+  action,
+  csrfToken,
+  submissionId,
+  prompt,
+}: PendingStartSession & { csrfToken: string }) => document(
+  "Retry Start Session",
+  `${skipLink}
+  <header class="atlas-glass border-b border-base-content/16">
+    <div class="mx-auto flex min-h-20 max-w-7xl items-center px-4 sm:px-6 lg:px-8">
+      <div><p class="text-lg font-semibold tracking-tight">Atlas</p><p class="text-sm text-muted">Private sign-in</p></div>
+    </div>
+  </header>
+  <main id="main-content" class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+    <section class="atlas-glass w-full rounded-box p-6 sm:p-10 lg:max-w-2xl">
+      <p class="text-sm font-medium uppercase tracking-[0.18em] text-brand-readable">Sign-in complete</p>
+      <h1 class="mt-4 text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Review and retry Start Session</h1>
+      <p class="mt-4 max-w-prose leading-relaxed text-muted">Your original prompt and submission identity are preserved below. Choose Start Session when you are ready; Atlas will not resubmit automatically.</p>
+      ${renderStartSessionForm({ action, csrfToken, submissionId, prompt })}
+    </section>
+  </main>`,
+);
 
 const sessionFilterLabel = (filter: SessionFilter) => {
   if (filter === "active") return "Active";

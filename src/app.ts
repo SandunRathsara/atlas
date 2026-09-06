@@ -23,6 +23,8 @@ import {
   renderAddRepositoryPage,
   renderLoginForm,
   renderLoginPage,
+  renderPendingStartSessionFragment,
+  renderPendingStartSessionPage,
   renderRepositoriesPage,
   renderSessionDetailPage,
   renderSessionsPage,
@@ -31,15 +33,17 @@ import {
   renderSpecDetailPage,
   renderSpecUnavailablePage,
   renderSpecsPage,
+  type PendingStartSession,
 } from "./views.ts";
 
-const MAX_FORM_BYTES = 64 * 1024;
+const MAX_FORM_BYTES = 512 * 1024;
 const MAX_TOKEN_LENGTH = 8 * 1024;
 const MAX_PROMPT_CHARACTERS = 20_000;
 const repositoryIdPattern = /^[1-9]\d{0,19}$/;
 const issueNumberPattern = /^[1-9]\d{0,9}$/;
 const submissionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const sessionIdPattern = /^ses_[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const startSessionPathPattern = /^\/repositories\/([1-9]\d{0,19})\/specs\/([1-9]\d{0,9})\/sessions$/;
 const sessionFilters = new Set<SessionFilter>([
   "active",
   "all",
@@ -195,6 +199,16 @@ const isEligibleRepository = (repository: Repository) =>
 const promptCharacterCount = (prompt: string) => Array.from(prompt).length;
 
 const sessionLocation = (session: Pick<Session, "atlasId">) => `/sessions/${encodeURIComponent(session.atlasId)}`;
+
+const pendingStartSession = (form: Record<string, unknown>): PendingStartSession | undefined => {
+  const action = stringField(form.pending_action);
+  const submissionId = stringField(form.pending_submission_id);
+  const prompt = stringField(form.pending_prompt);
+  if (!action || !startSessionPathPattern.test(action) || !submissionId || !submissionIdPattern.test(submissionId) || prompt === undefined) {
+    return undefined;
+  }
+  return { action, submissionId, prompt };
+};
 
 const redirectToSession = (c: Context, session: Pick<Session, "atlasId">) => {
   const destination = sessionLocation(session);
@@ -387,9 +401,13 @@ export const createApp = (options: AppOptions) => {
     }
 
     const returnTo = safeReturnTo(stringField(form.returnTo));
+    const pending = pendingStartSession(form);
     const csrf = stringField(form.csrf);
     if (!auth.validateLogin(c, csrf)) {
-      return c.text("Request rejected", 403);
+      const nextCsrf = auth.issueCsrf();
+      const error = "This sign-in form expired or was rejected. Try again.";
+      if (isHtmx(c)) return c.html(renderLoginForm({ csrfToken: nextCsrf, error, returnTo, pending }), 403);
+      return c.html(renderLoginPage({ csrfToken: nextCsrf, error, returnTo, pending }), 403);
     }
 
     const token = stringField(form.token) ?? "";
@@ -399,14 +417,38 @@ export const createApp = (options: AppOptions) => {
         csrfToken: nextCsrf,
         error: "The shared credential was not accepted.",
         returnTo,
+        pending,
       });
 
       if (isHtmx(c)) return c.html(content, 422);
-      return c.html(renderLoginPage({ csrfToken: nextCsrf, error: "The shared credential was not accepted.", returnTo }), 422);
+      return c.html(renderLoginPage({ csrfToken: nextCsrf, error: "The shared credential was not accepted.", returnTo, pending }), 422);
     }
 
     const session = auth.createSession();
     c.header("Set-Cookie", session.cookie);
+
+    if (pending) {
+      const match = startSessionPathPattern.exec(pending.action);
+      const repository = match ? persistence.getRepository(match[1]) : undefined;
+      const spec = repository && match ? persistence.getSpec(match[1], match[2]) : undefined;
+      const retryOptions = {
+        ...pending,
+        csrfToken: auth.issueCsrf(session.identity.sessionId),
+      };
+
+      if (isHtmx(c)) return c.html(renderPendingStartSessionFragment(retryOptions), 200);
+      if (repository && spec) {
+        return c.html(renderStartSessionPage({
+          ...retryOptions,
+          repository,
+          spec,
+          notice: "Signed in. Review the preserved form, then choose Start Session to retry it.",
+          accessRefresh: persistence.getRefreshState(repository.githubId, "access"),
+          specsRefresh: persistence.getRefreshState(repository.githubId, "specs"),
+        }), 200);
+      }
+      return c.html(renderPendingStartSessionPage(retryOptions), 200);
+    }
 
     if (isHtmx(c)) {
       c.header("HX-Redirect", returnTo);
@@ -415,6 +457,43 @@ export const createApp = (options: AppOptions) => {
 
     return c.redirect(returnTo, 303);
   });
+
+  const preserveUnauthenticatedStart: MiddlewareHandler = async (c, next) => {
+    const path = new URL(c.req.url).pathname;
+    if (c.req.method !== "POST" || isHtmx(c) || !startSessionPathPattern.test(path) || auth.authenticate(c)) {
+      await next();
+      return;
+    }
+
+    let form: Record<string, unknown>;
+    try {
+      form = await parseForm(c.req.raw);
+    } catch (error) {
+      if (error instanceof FormBodyTooLarge) return c.text("Request body is too large", 413);
+      return c.text("Malformed Session request", 400);
+    }
+
+    const submittedSubmissionId = stringField(form.submission_id);
+    const pending: PendingStartSession = {
+      action: path,
+      submissionId: submittedSubmissionId && submissionIdPattern.test(submittedSubmissionId)
+        ? submittedSubmissionId
+        : crypto.randomUUID(),
+      prompt: stringField(form.prompt) ?? "",
+    };
+    const csrfToken = auth.issueCsrf();
+    setPrivateHtmlHeaders(c);
+    c.header("WWW-Authenticate", 'Bearer realm="Atlas"');
+    return c.html(renderLoginPage({
+      csrfToken,
+      returnTo: path,
+      pending,
+      error: "Your sign-in is required. Sign in, then review and retry this preserved form.",
+    }), 401);
+  };
+
+  app.use("/repositories", preserveUnauthenticatedStart);
+  app.use("/repositories/*", preserveUnauthenticatedStart);
 
   app.use("/repositories", auth.middleware);
   app.use("/repositories/*", auth.middleware);
@@ -679,6 +758,18 @@ export const createApp = (options: AppOptions) => {
       return renderError(403, "This form expired or was rejected. Reload the form and try again.");
     }
 
+    const priorSubmission = submittedSubmissionId && submissionIdPattern.test(submittedSubmissionId)
+      ? persistence.getSessionBySubmissionId(submittedSubmissionId)
+      : undefined;
+    if (priorSubmission) {
+      const sameSubmission = priorSubmission.repositoryId === repositoryId &&
+        priorSubmission.specGithubId === knownSpec.githubId &&
+        priorSubmission.specIssueNumber === issueNumber &&
+        priorSubmission.prompt === prompt;
+      if (sameSubmission) return redirectToSession(c, priorSubmission);
+      return renderError(409, "This submission identity was already used with different Session content.", existing, knownSpec);
+    }
+
     if (!submittedSubmissionId || !submissionIdPattern.test(submittedSubmissionId)) {
       return renderError(422, "Refresh the Start Session form before submitting again.");
     }
@@ -687,16 +778,6 @@ export const createApp = (options: AppOptions) => {
     }
     if (promptCharacterCount(prompt) > MAX_PROMPT_CHARACTERS) {
       return renderError(422, `The initial prompt must be ${MAX_PROMPT_CHARACTERS.toLocaleString()} characters or fewer.`);
-    }
-
-    const priorSubmission = persistence.getSessionBySubmissionId(submittedSubmissionId);
-    if (priorSubmission) {
-      const sameSubmission = priorSubmission.repositoryId === repositoryId &&
-        priorSubmission.specGithubId === knownSpec.githubId &&
-        priorSubmission.specIssueNumber === issueNumber &&
-        priorSubmission.prompt === prompt;
-      if (sameSubmission) return redirectToSession(c, priorSubmission);
-      return renderError(409, "This submission identity was already used with different Session content.", existing, knownSpec);
     }
 
     let refreshResult: SyncResult;
