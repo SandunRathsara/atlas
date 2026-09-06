@@ -175,6 +175,14 @@ const migrations = [
         ON specs (repository_id, is_current, state, has_spec_label, is_pull_request);
     `,
   },
+  {
+    version: 2,
+    sql: `
+      ALTER TABLE specs ADD COLUMN was_spec INTEGER NOT NULL DEFAULT 0 CHECK (was_spec IN (0, 1));
+      UPDATE specs
+      SET was_spec = CASE WHEN is_pull_request = 0 AND has_spec_label = 1 THEN 1 ELSE 0 END;
+    `,
+  },
 ];
 
 const isoNow = (now: () => number) => new Date(now()).toISOString();
@@ -412,8 +420,8 @@ export const createPersistence = (options: PersistenceOptions) => {
       const upsert = database.query(`
         INSERT INTO specs (
           github_id, repository_id, issue_number, title, body, html_url, state,
-          labels_json, is_pull_request, has_spec_label, updated_at, observed_at, is_current
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+          labels_json, is_pull_request, has_spec_label, updated_at, observed_at, is_current, was_spec
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         ON CONFLICT (github_id) DO UPDATE SET
           repository_id = excluded.repository_id,
           issue_number = excluded.issue_number,
@@ -426,7 +434,8 @@ export const createPersistence = (options: PersistenceOptions) => {
           has_spec_label = excluded.has_spec_label,
           updated_at = excluded.updated_at,
           observed_at = excluded.observed_at,
-          is_current = 1
+          is_current = 1,
+          was_spec = CASE WHEN was_spec = 1 OR excluded.was_spec = 1 THEN 1 ELSE 0 END
       `);
 
       for (const spec of specs) {
@@ -443,6 +452,7 @@ export const createPersistence = (options: PersistenceOptions) => {
           spec.hasSpecLabel ? 1 : 0,
           spec.updatedAt,
           spec.observedAt ?? observedAt,
+          spec.state === "open" && spec.hasSpecLabel && !spec.isPullRequest ? 1 : 0,
         );
       }
 
@@ -462,7 +472,7 @@ export const createPersistence = (options: PersistenceOptions) => {
   const listSpecs = (repositoryId: string, currentOnly = true) => {
     const rows = database.query(`
       SELECT * FROM specs
-      WHERE repository_id = ? AND (? = 0 OR (
+      WHERE repository_id = ? AND was_spec = 1 AND (? = 0 OR (
         is_current = 1 AND state = 'open' AND has_spec_label = 1 AND is_pull_request = 0
       ))
       ORDER BY CAST(issue_number AS INTEGER), issue_number
@@ -472,7 +482,7 @@ export const createPersistence = (options: PersistenceOptions) => {
 
   const getSpec = (repositoryId: string, issueNumber: string) => {
     const row = database.query(`
-      SELECT * FROM specs WHERE repository_id = ? AND issue_number = ?
+      SELECT * FROM specs WHERE repository_id = ? AND issue_number = ? AND was_spec = 1
     `).get(repositoryId, issueNumber) as SpecRow | null;
     return row ? toSpec(row) : undefined;
   };

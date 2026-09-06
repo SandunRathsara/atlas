@@ -410,12 +410,13 @@ export const renderSpecsPage = ({
   accessRefresh?: RefreshState;
   specsRefresh?: RefreshState;
 }) => {
+  const canShowEmptyState = specsRefresh?.availability === "available";
   const list = specs.length > 0
     ? `<ul class="mt-8 grid gap-4" aria-label="Open Specs">${specs.map(specRow).join("")}</ul>`
-    : `<div class="mt-8 rounded-box bg-base-100 p-6">
+    : canShowEmptyState ? `<div class="mt-8 rounded-box bg-base-100 p-6">
         <p class="text-lg font-semibold">No open Specs</p>
         <p class="mt-2 max-w-prose leading-relaxed text-muted">Open, non-PR GitHub issues carrying the exact <code class="font-mono text-base-content">spec</code> label appear here.</p>
-      </div>`;
+      </div>` : "";
 
   return renderShell({
     title: `${repository.fullName} Specs`,
@@ -446,7 +447,7 @@ export const renderSpecDetailPage = ({
   specsRefresh?: RefreshState;
 }) => {
   const githubUrl = safeExternalUrl(spec.htmlUrl);
-  const retained = !spec.isCurrent;
+  const retained = !(spec.isCurrent && spec.state === "open" && spec.hasSpecLabel && !spec.isPullRequest);
   const labels = spec.labels.length > 0
     ? spec.labels.map((label) => `<span class="badge ${label === "spec" ? "badge-info" : ""}">${escapeHtml(label)}</span>`).join(" ")
     : `<span class="text-sm text-muted">No labels recorded</span>`;
