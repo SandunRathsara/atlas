@@ -152,6 +152,10 @@
 }
 
 @layer utilities {
+  .btn {
+    height: auto;
+  }
+
   .atlas-backdrop {
     background-image: radial-gradient(circle at top left, rgb(1 43 104 / 0.2), transparent 36rem);
   }
