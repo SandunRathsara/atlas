@@ -258,6 +258,8 @@ export type Session = {
   reservationId: string | null;
   reservationState: "held" | "released" | null;
   reservationReason: string | null;
+  reservationConflictCount?: number;
+  admissionBlocked?: boolean;
   updatedAt: string;
 };
 
@@ -284,6 +286,11 @@ export type ReservationReleaseResult =
   | { kind: "already_released"; session: Session }
   | { kind: "not_found"; session: Session }
   | { kind: "not_terminal"; session: Session };
+
+export type TargetReconfirmationResult =
+  | { kind: "updated"; session: Session }
+  | { kind: "not_queued"; session: Session }
+  | { kind: "not_found"; session: undefined };
 
 export type PreparationIntent = {
   directory: string;
@@ -448,6 +455,8 @@ type SessionRow = {
   reservation_id?: string | null;
   reservation_state?: "held" | "released" | null;
   reservation_reason?: string | null;
+  reservation_conflict_count?: number;
+  admission_blocked: number;
   updated_at: string;
 };
 
@@ -897,6 +906,15 @@ const migrations = [
       CREATE INDEX sessions_result_pull_request_idx
         ON sessions (result_pull_request_id)
         WHERE result_pull_request_id IS NOT NULL;
+      `,
+  },
+  {
+    version: 12,
+    sql: `
+      ALTER TABLE stack_reservations ADD COLUMN evidence_unknown INTEGER NOT NULL DEFAULT 0
+        CHECK (evidence_unknown IN (0, 1));
+      ALTER TABLE stack_reservations ADD COLUMN evidence_reason TEXT;
+      DROP INDEX IF EXISTS pr_stacks_repository_number_unique;
     `,
   },
 ];
@@ -1083,6 +1101,8 @@ const toSession = (row: SessionRow): Session => ({
   reservationId: row.reservation_id ?? null,
   reservationState: row.reservation_state ?? null,
   reservationReason: row.reservation_reason ?? null,
+  reservationConflictCount: row.reservation_conflict_count ?? 0,
+  admissionBlocked: row.admission_blocked === 1,
   updatedAt: row.updated_at,
 });
 
@@ -1827,6 +1847,376 @@ export const createPersistence = (options: PersistenceOptions) => {
     }
   };
 
+  type ReservationTarget = {
+    kind: "native_stack" | "standalone_parent";
+    stackId: string | null;
+    stackNumber: string | null;
+    parentPullRequestId: string | null;
+    parentPullRequestNumber: string | null;
+  };
+
+  type ReservationRow = {
+    reservation_id: string;
+    session_id: string;
+    accepted_target_kind: "native_stack" | "standalone_parent";
+    accepted_stack_id: string | null;
+    accepted_stack_number: string | null;
+    accepted_parent_pull_request_id: string | null;
+    accepted_parent_pull_request_number: string | null;
+    state: "held" | "released";
+    evidence_unknown: number;
+    evidence_reason: string | null;
+  };
+
+  const reservationTargetKey = (target: ReservationTarget) => target.kind === "native_stack"
+    ? target.stackId ? `native_stack:${target.stackId}` : null
+    : target.parentPullRequestId ? `standalone_parent:${target.parentPullRequestId}` : null;
+
+  const reservationTargetFromRow = (row: ReservationRow): ReservationTarget => ({
+    kind: row.accepted_target_kind,
+    stackId: row.accepted_stack_id,
+    stackNumber: row.accepted_stack_number,
+    parentPullRequestId: row.accepted_parent_pull_request_id,
+    parentPullRequestNumber: row.accepted_parent_pull_request_number,
+  });
+
+  const reconcileReservations = (repositoryId: string, observedAt: string) => {
+    const reservations = database.query(`
+      SELECT reservation_id, session_id, accepted_target_kind, accepted_stack_id,
+             accepted_stack_number, accepted_parent_pull_request_id,
+             accepted_parent_pull_request_number, state, evidence_unknown, evidence_reason
+      FROM stack_reservations
+      WHERE repository_id = ? AND state = 'held'
+      ORDER BY held_at, reservation_id
+    `).all(repositoryId) as ReservationRow[];
+
+    const addHistory = database.query(`
+      INSERT INTO session_history (session_id, event_kind, occurred_at, reason, details_json)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    const parentStackRows = database.query(`
+      SELECT s.atlas_id, st.github_id AS stack_id, st.number AS stack_number,
+             top_pr.head_ref AS top_branch
+      FROM sessions s
+      JOIN stack_members parent_member ON parent_member.pull_request_id = s.target_parent_pull_request_id
+      JOIN pr_stacks st ON st.github_id = parent_member.stack_id AND st.is_current = 1
+      JOIN stack_members top_member ON top_member.stack_id = st.github_id
+      JOIN pull_requests top_pr ON top_pr.github_id = top_member.pull_request_id
+      WHERE s.repository_id = ?
+        AND s.state = 'queued'
+        AND s.target_kind = 'standalone_parent'
+        AND top_member.position = (
+          SELECT MAX(last_member.position)
+          FROM stack_members last_member
+          WHERE last_member.stack_id = st.github_id
+        )
+      ORDER BY s.submission_order, s.atlas_id
+    `).all(repositoryId) as Array<{
+      atlas_id: string;
+      stack_id: string;
+      stack_number: string;
+      top_branch: string;
+    }>;
+
+    // A standalone parent joining a verified stack is an explicit association,
+    // not branch-name inference. Keep the original target for history/FIFO.
+    for (const row of parentStackRows) {
+      const changed = database.query(`
+        UPDATE sessions
+        SET target_kind = 'native_stack',
+            target_stack_id = ?,
+            target_stack_number = ?,
+            target_parent_pull_request_id = NULL,
+            target_parent_pull_request_number = NULL,
+            target_branch = ?,
+            admission_blocked = 0,
+            state_reason = ?,
+            preparation_reason = ?,
+            updated_at = ?
+        WHERE atlas_id = ? AND state = 'queued' AND target_kind = 'standalone_parent'
+          AND NOT (admission_blocked = 1 AND COALESCE(state_reason, '') LIKE 'Waiting for explicit target reconfirmation%')
+      `).run(
+        row.stack_id,
+        row.stack_number,
+        row.top_branch,
+        `The selected standalone parent now belongs to native stack #${row.stack_number}; following its verified current top.`,
+        `The selected standalone parent now belongs to native stack #${row.stack_number}; following its verified current top.`,
+        isoNow(now),
+        row.atlas_id,
+      );
+      if (changed.changes > 0) {
+        addHistory.run(
+          row.atlas_id,
+          "target_associated",
+          observedAt,
+          `The standalone parent joined native stack #${row.stack_number}; the queued request now follows the actual stack identity and top.`,
+          JSON.stringify({ stackId: row.stack_id, stackNumber: row.stack_number }),
+        );
+      }
+    }
+
+    const currentStackTargets = database.query(`
+      SELECT s.atlas_id, st.number AS stack_number, top_pr.head_ref AS top_branch
+      FROM sessions s
+      JOIN pr_stacks st ON st.github_id = s.target_stack_id AND st.is_current = 1
+      JOIN stack_members top_member ON top_member.stack_id = st.github_id
+      JOIN pull_requests top_pr ON top_pr.github_id = top_member.pull_request_id AND top_pr.is_current = 1
+      WHERE s.repository_id = ?
+        AND s.state = 'queued'
+        AND s.target_kind = 'native_stack'
+        AND top_member.position = (
+          SELECT MAX(last_member.position)
+          FROM stack_members last_member
+          WHERE last_member.stack_id = st.github_id
+        )
+      ORDER BY s.submission_order, s.atlas_id
+    `).all(repositoryId) as Array<{
+      atlas_id: string;
+      stack_number: string;
+      top_branch: string;
+    }>;
+    for (const row of currentStackTargets) {
+      database.query(`
+        UPDATE sessions
+        SET target_stack_number = ?, target_branch = ?, updated_at = ?
+        WHERE atlas_id = ? AND state = 'queued'
+          AND (target_stack_number IS NOT ? OR target_branch IS NOT ?)
+      `).run(row.stack_number, row.top_branch, isoNow(now), row.atlas_id, row.stack_number, row.top_branch);
+    }
+
+    const vanishedTargets = database.query(`
+      SELECT atlas_id, target_kind, target_stack_id, target_parent_pull_request_id
+      FROM sessions
+      WHERE repository_id = ? AND state = 'queued' AND (
+        (target_kind = 'native_stack' AND NOT EXISTS (
+          SELECT 1 FROM pr_stacks WHERE github_id = sessions.target_stack_id AND repository_id = ? AND is_current = 1
+        ))
+        OR (target_kind = 'standalone_parent' AND NOT EXISTS (
+          SELECT 1 FROM pull_requests WHERE github_id = sessions.target_parent_pull_request_id AND repository_id = ? AND is_current = 1
+        ))
+      )
+        AND state_reason NOT LIKE 'Waiting for explicit target reconfirmation%'
+      ORDER BY submission_order, atlas_id
+    `).all(repositoryId, repositoryId, repositoryId) as Array<{
+      atlas_id: string;
+      target_kind: TargetKind;
+      target_stack_id: string | null;
+      target_parent_pull_request_id: string | null;
+    }>;
+    for (const target of vanishedTargets) {
+      const reason = target.target_kind === "native_stack"
+        ? "Waiting for explicit target reconfirmation; the selected native stack no longer exists in the complete GitHub projection."
+        : "Waiting for explicit target reconfirmation; the selected standalone parent no longer exists in the complete GitHub projection.";
+      database.query(`
+        UPDATE sessions
+        SET admission_blocked = 1, state_reason = ?, preparation_reason = ?, updated_at = ?
+        WHERE atlas_id = ? AND state = 'queued'
+      `).run(reason, reason, isoNow(now), target.atlas_id);
+      addHistory.run(target.atlas_id, "target_disappeared", observedAt, reason, JSON.stringify({
+        targetKind: target.target_kind,
+        stackId: target.target_stack_id,
+        parentPullRequestId: target.target_parent_pull_request_id,
+      }));
+    }
+
+    const reservationAssociation = database.query(`
+      SELECT r.reservation_id, r.session_id, r.accepted_parent_pull_request_id,
+             sm.stack_id, st.number AS stack_number
+      FROM stack_reservations r
+      JOIN stack_members sm ON sm.pull_request_id = r.accepted_parent_pull_request_id
+      JOIN pr_stacks st ON st.github_id = sm.stack_id AND st.is_current = 1
+      WHERE r.repository_id = ?
+        AND r.state = 'held'
+        AND r.accepted_target_kind = 'standalone_parent'
+    `).all(repositoryId) as Array<{
+      reservation_id: string;
+      session_id: string;
+      accepted_parent_pull_request_id: string;
+      stack_id: string;
+      stack_number: string;
+    }>;
+    for (const row of reservationAssociation) {
+      const changed = database.query(`
+        UPDATE stack_reservations
+        SET accepted_target_kind = 'native_stack',
+            accepted_stack_id = ?,
+            accepted_stack_number = ?
+        WHERE reservation_id = ? AND state = 'held' AND accepted_target_kind = 'standalone_parent'
+      `).run(row.stack_id, row.stack_number, row.reservation_id);
+      if (changed.changes > 0) {
+        const owner = reservations.find((candidate) => candidate.reservation_id === row.reservation_id);
+        if (owner) {
+          owner.accepted_target_kind = "native_stack";
+          owner.accepted_stack_id = row.stack_id;
+          owner.accepted_stack_number = row.stack_number;
+        }
+        addHistory.run(
+          row.session_id,
+          "reservation_target_associated",
+          observedAt,
+          `The reserved standalone parent joined native stack #${row.stack_number}; ownership follows the explicit stack identity.`,
+          JSON.stringify({ reservationId: row.reservation_id, stackId: row.stack_id, stackNumber: row.stack_number }),
+        );
+      }
+    }
+
+    const targetOwners = new Map<string, { target: ReservationTarget; reservations: Set<string> }>();
+    const unknownReservations = new Set<string>();
+    const updateEvidence = database.query(`
+      UPDATE stack_reservations
+      SET evidence_unknown = ?, evidence_reason = ?
+      WHERE reservation_id = ? AND state = 'held'
+    `);
+    const evidenceRows = database.query(`
+      SELECT rp.pull_request_id, p.is_current, p.number AS pull_request_number,
+             sm.stack_id, st.number AS stack_number
+      FROM reservation_prs rp
+      LEFT JOIN pull_requests p ON p.github_id = rp.pull_request_id AND p.repository_id = ?
+      LEFT JOIN stack_members sm ON sm.pull_request_id = p.github_id
+      LEFT JOIN pr_stacks st ON st.github_id = sm.stack_id AND st.is_current = 1
+      WHERE rp.reservation_id = ?
+    `);
+
+    for (const reservation of reservations) {
+      const targetSet = new Map<string, ReservationTarget>();
+      const accepted = reservationTargetFromRow(reservation);
+      const acceptedKey = reservationTargetKey(accepted);
+      if (acceptedKey) targetSet.set(acceptedKey, accepted);
+
+      let unknown = false;
+      const evidence = evidenceRows.all(repositoryId, reservation.reservation_id) as Array<{
+        pull_request_id: string;
+        is_current: number | null;
+        pull_request_number: string | null;
+        stack_id: string | null;
+        stack_number: string | null;
+      }>;
+      for (const row of evidence) {
+        if (row.is_current !== 1) {
+          unknown = true;
+          continue;
+        }
+        if (row.stack_id && row.stack_number) {
+          const target: ReservationTarget = {
+            kind: "native_stack",
+            stackId: row.stack_id,
+            stackNumber: row.stack_number,
+            parentPullRequestId: null,
+            parentPullRequestNumber: null,
+          };
+          const key = reservationTargetKey(target);
+          if (key) targetSet.set(key, target);
+        } else if (row.pull_request_number) {
+          const target: ReservationTarget = {
+            kind: "standalone_parent",
+            stackId: null,
+            stackNumber: null,
+            parentPullRequestId: row.pull_request_id,
+            parentPullRequestNumber: row.pull_request_number,
+          };
+          const key = reservationTargetKey(target);
+          if (key) targetSet.set(key, target);
+        }
+      }
+
+      const evidenceReason = unknown
+        ? "Waiting for GitHub verification of a retained reservation PR's current location; Atlas will not infer absence."
+        : null;
+      updateEvidence.run(unknown ? 1 : 0, evidenceReason, reservation.reservation_id);
+      if (unknown) unknownReservations.add(reservation.reservation_id);
+
+      for (const target of targetSet.values()) {
+        const key = reservationTargetKey(target);
+        if (!key) continue;
+        const owners = targetOwners.get(key) ?? { target, reservations: new Set<string>() };
+        owners.reservations.add(reservation.reservation_id);
+        targetOwners.set(key, owners);
+      }
+    }
+
+    // Clear only the scoped pause this reconciler owns; target disappearance and
+    // other eligibility decisions remain blocked until explicit reconfirmation.
+    database.query(`
+      UPDATE sessions
+      SET admission_blocked = 0, updated_at = ?
+      WHERE repository_id = ? AND state = 'queued' AND admission_blocked = 1
+        AND state_reason LIKE 'Waiting for GitHub verification of a retained reservation PR%'
+    `).run(isoNow(now), repositoryId);
+
+    const addHold = database.query(`
+      INSERT INTO reservation_conflict_holds (
+        reservation_id, repository_id, target_kind, stack_id, stack_number,
+        parent_pull_request_id, parent_pull_request_number, created_at, reason
+      )
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM reservation_conflict_holds
+        WHERE reservation_id = ? AND target_kind = ?
+          AND stack_id IS ? AND parent_pull_request_id IS ?
+      )
+    `);
+    const markQueuedConflict = (target: ReservationTarget, reason: string) => {
+      if (target.kind === "native_stack" && target.stackId) {
+        database.query(`
+          UPDATE sessions
+          SET admission_blocked = 1,
+              state_reason = CASE WHEN COALESCE(state_reason, '') LIKE 'Waiting for explicit target reconfirmation%' THEN state_reason ELSE ? END,
+              preparation_reason = CASE WHEN COALESCE(state_reason, '') LIKE 'Waiting for explicit target reconfirmation%' THEN preparation_reason ELSE ? END,
+              updated_at = ?
+          WHERE repository_id = ? AND state = 'queued' AND target_kind = 'native_stack' AND target_stack_id = ?
+        `).run(reason, reason, isoNow(now), repositoryId, target.stackId);
+      } else if (target.kind === "standalone_parent" && target.parentPullRequestId) {
+        database.query(`
+          UPDATE sessions
+          SET admission_blocked = 1,
+              state_reason = CASE WHEN COALESCE(state_reason, '') LIKE 'Waiting for explicit target reconfirmation%' THEN state_reason ELSE ? END,
+              preparation_reason = CASE WHEN COALESCE(state_reason, '') LIKE 'Waiting for explicit target reconfirmation%' THEN preparation_reason ELSE ? END,
+              updated_at = ?
+          WHERE repository_id = ? AND state = 'queued' AND target_kind = 'standalone_parent' AND target_parent_pull_request_id = ?
+        `).run(reason, reason, isoNow(now), repositoryId, target.parentPullRequestId);
+      }
+    };
+
+    for (const { target, reservations: owners } of targetOwners.values()) {
+      if (owners.size < 2) continue;
+      const reason = "Reservation conflict: multiple Atlas owners affect this target; new admission waits until every owner releases.";
+      for (const reservationId of owners) {
+        const values = target.kind === "native_stack"
+          ? ["native_stack", target.stackId, target.stackNumber, null, null]
+          : ["standalone_parent", null, null, target.parentPullRequestId, target.parentPullRequestNumber];
+        const result = addHold.run(
+          reservationId,
+          repositoryId,
+          ...values,
+          observedAt,
+          reason,
+          reservationId,
+          values[0],
+          values[1],
+          values[3],
+        );
+        if (result.changes > 0) {
+          const owner = reservations.find((candidate) => candidate.reservation_id === reservationId);
+          if (owner) addHistory.run(owner.session_id, "reservation_conflict", observedAt, reason, JSON.stringify({ target, reservationIds: [...owners] }));
+        }
+      }
+      markQueuedConflict(target, reason);
+    }
+
+    if (unknownReservations.size > 0) {
+      const reason = "Waiting for GitHub verification of a retained reservation PR's current location; Atlas will not infer absence.";
+      database.query(`
+        UPDATE sessions
+        SET admission_blocked = 1,
+            state_reason = CASE WHEN COALESCE(state_reason, '') LIKE 'Waiting for explicit target reconfirmation%' THEN state_reason ELSE ? END,
+            preparation_reason = CASE WHEN COALESCE(state_reason, '') LIKE 'Waiting for explicit target reconfirmation%' THEN preparation_reason ELSE ? END,
+            updated_at = ?
+        WHERE repository_id = ? AND state = 'queued' AND target_kind != 'default'
+      `).run(reason, reason, isoNow(now), repositoryId);
+    }
+
+  };
+
   const replacePullRequests = (
     repositoryId: string,
     pullRequests: PullRequestInput[],
@@ -1952,6 +2342,7 @@ export const createPersistence = (options: PersistenceOptions) => {
 
       // A complete Pull request read is the fresh publication evidence boundary.
       reconcilePublications(repositoryId, observedAt);
+      reconcileReservations(repositoryId, observedAt);
 
       ensureRefreshState(repositoryId, "pullRequests");
       if (generation === undefined) {
@@ -2046,7 +2437,9 @@ export const createPersistence = (options: PersistenceOptions) => {
            publication_pr.html_url AS publication_pr_url,
            r.reservation_id,
            r.state AS reservation_state,
-           r.release_reason AS reservation_reason
+           COALESCE(r.release_reason, r.evidence_reason) AS reservation_reason,
+           (SELECT COUNT(*) FROM reservation_conflict_holds h
+            WHERE h.reservation_id = r.reservation_id) AS reservation_conflict_count
     FROM sessions s
     LEFT JOIN pull_requests publication_pr ON publication_pr.github_id = s.result_pull_request_id
     LEFT JOIN stack_reservations r ON r.session_id = s.atlas_id
@@ -2204,6 +2597,60 @@ export const createPersistence = (options: PersistenceOptions) => {
     return rows.map(toSession);
   };
 
+  const reconfirmQueuedTarget = (
+    atlasId: string,
+    target: SessionTarget,
+    targetBranch: string,
+    reason = "Queued target was explicitly reconfirmed against a fresh GitHub projection.",
+  ): TargetReconfirmationResult => {
+    let result!: TargetReconfirmationResult;
+    const [targetKind, targetStackId, targetStackNumber, targetParentId, targetParentNumber] = targetColumns(target);
+    const reconfirm = database.transaction(() => {
+      const current = getSession(atlasId);
+      if (!current) {
+        result = { kind: "not_found", session: undefined };
+        return;
+      }
+      if (current.state !== "queued") {
+        result = { kind: "not_queued", session: current };
+        return;
+      }
+      const timestamp = isoNow(now);
+      database.query(`
+        UPDATE sessions
+        SET target_kind = ?,
+            target_branch = ?,
+            target_stack_id = ?,
+            target_stack_number = ?,
+            target_parent_pull_request_id = ?,
+            target_parent_pull_request_number = ?,
+            admission_blocked = 0,
+            state_reason = ?,
+            preparation_reason = ?,
+            updated_at = ?
+        WHERE atlas_id = ? AND state = 'queued'
+      `).run(
+        targetKind,
+        targetBranch,
+        targetStackId,
+        targetStackNumber,
+        targetParentId,
+        targetParentNumber,
+        reason,
+        reason,
+        timestamp,
+        atlasId,
+      );
+      database.query(`
+        INSERT INTO session_history (session_id, event_kind, occurred_at, reason, details_json)
+        VALUES (?, 'target_reconfirmed', ?, ?, ?)
+      `).run(atlasId, timestamp, reason, JSON.stringify({ target }));
+      result = { kind: "updated", session: getSession(atlasId)! };
+    });
+    reconfirm.immediate();
+    return result;
+  };
+
   const claimPreparation = (
     atlasId: string,
     intent: PreparationIntent,
@@ -2229,6 +2676,7 @@ export const createPersistence = (options: PersistenceOptions) => {
           UPDATE sessions
           SET admission_blocked = 0
           WHERE atlas_id = ? AND state = 'queued'
+            AND NOT (admission_blocked = 1 AND COALESCE(state_reason, '') LIKE 'Waiting for explicit target reconfirmation%')
         `).run(atlasId);
       }
 
@@ -2281,6 +2729,8 @@ export const createPersistence = (options: PersistenceOptions) => {
             AND r.state = 'held'
             AND r.session_id != ?
             AND (
+              r.evidence_unknown = 1
+              OR
               (${target.kind === "native_stack" ? "r.accepted_target_kind = 'native_stack' AND r.accepted_stack_id = ?" : "0"})
               OR (${target.kind === "standalone_parent" ? "r.accepted_target_kind = 'standalone_parent' AND r.accepted_parent_pull_request_id = ?" : "0"})
               OR (${target.kind === "native_stack" ? "sm.stack_id = ?" : "0"})
@@ -2288,7 +2738,6 @@ export const createPersistence = (options: PersistenceOptions) => {
               OR (${target.kind === "native_stack" ? "h.target_kind = 'native_stack' AND h.stack_id = ?" : "0"})
               OR (${target.kind === "standalone_parent" ? "h.target_kind = 'standalone_parent' AND h.parent_pull_request_id = ?" : "0"})
             )
-          LIMIT 1
         `).get(
           current.repositoryId,
           atlasId,
@@ -2506,6 +2955,7 @@ export const createPersistence = (options: PersistenceOptions) => {
       UPDATE sessions
       SET state_reason = ?, preparation_reason = ?, updated_at = ?
       WHERE atlas_id = ? AND state = 'queued'
+        AND NOT (admission_blocked = 1 AND COALESCE(state_reason, '') LIKE 'Waiting for explicit target reconfirmation%')
     `).run(reason, reason, isoNow(now), atlasId);
     return getSession(atlasId);
   };
@@ -2539,6 +2989,7 @@ export const createPersistence = (options: PersistenceOptions) => {
           preparation_reason = ?,
           updated_at = ?
       WHERE atlas_id = ? AND state = 'queued'
+        AND NOT (admission_blocked = 1 AND COALESCE(state_reason, '') LIKE 'Waiting for explicit target reconfirmation%')
     `).run(reason, reason, isoNow(now), atlasId);
     return getSession(atlasId);
   };
@@ -2908,6 +3359,7 @@ export const createPersistence = (options: PersistenceOptions) => {
     queueSession,
     listQueuedSessions,
     listPreparingSessions,
+    reconfirmQueuedTarget,
     claimPreparation,
     setPreparationCheckpoint,
     setQueuedSessionReason,
