@@ -53,7 +53,7 @@ const seed = (path: string) => {
   return persistence;
 };
 
-const prepareParent = (path: string, parent: "v4" | "26-v5" | "31-v5") => {
+const prepareParent = (path: string, parent: "v4" | "26-v5" | "31-v5" | "27-v7") => {
   const persistence = seed(path);
   if (parent === "v4") {
     persistence.database.exec(`
@@ -72,14 +72,22 @@ const prepareParent = (path: string, parent: "v4" | "26-v5" | "31-v5") => {
       DROP TABLE webhook_deliveries;
       DELETE FROM schema_migrations WHERE version = 6;
     `);
-  } else {
+  } else if (parent === "31-v5") {
     persistence.database.exec(`
       DROP INDEX IF EXISTS sessions_unfinished_spec_idx;
       DROP INDEX IF EXISTS sessions_repository_order_idx;
       DROP INDEX IF EXISTS sessions_spec_order_idx;
       DROP TABLE sessions;
       DROP INDEX IF EXISTS specs_repository_github_idx;
-      DELETE FROM schema_migrations WHERE version = 6;
+      DELETE FROM schema_migrations WHERE version >= 6;
+    `);
+  }
+  if (parent === "27-v7") {
+    persistence.database.exec(`
+      DROP INDEX IF EXISTS webhook_deliveries_received_idx;
+      DROP TABLE webhook_deliveries;
+      DELETE FROM schema_migrations WHERE version IN (6, 8);
+      INSERT INTO schema_migrations (version, applied_at) VALUES (6, '2026-01-01T00:00:00.000Z');
     `);
   }
   persistence.close();
@@ -90,7 +98,7 @@ const verify = (path: string, expectedSession: boolean, expectedDelivery: boolea
   const versions = (persistence.database.query(
     "SELECT version FROM schema_migrations ORDER BY version",
   ).all() as Array<{ version: number }>).map(({ version }) => version);
-  assert.deepEqual(versions, [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.equal(Boolean(persistence.getRepository(repository.githubId)), expectedData);
   assert.equal(Boolean(persistence.getSpec(repository.githubId, spec.issueNumber)), expectedData);
   assert.equal(Boolean(persistence.getSession(sessionId)), expectedSession);
@@ -122,6 +130,10 @@ try {
   const issue31 = join(root, "issue31-v5.sqlite");
   prepareParent(issue31, "31-v5");
   verify(issue31, false, true);
+
+  const issue27 = join(root, "issue27-v7.sqlite");
+  prepareParent(issue27, "27-v7");
+  verify(issue27, true, false);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

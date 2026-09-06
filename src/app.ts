@@ -17,6 +17,8 @@ import {
   type Session,
   type SessionFilter,
 } from "./persistence.ts";
+import { createPreparationService } from "./preparation.ts";
+import type { CredentialBoundary } from "./credentials.ts";
 import {
   createRefreshCoordinator,
   githubFailureMessage,
@@ -71,6 +73,15 @@ export type AppOptions = {
   githubOrganization?: string;
   githubToken?: () => string | undefined;
   now?: () => number;
+  sessionRoot?: string;
+  globalCapacity?: number;
+  credentialsPath?: string;
+  credentialRegistryPath?: string;
+  credentialSocketPath?: string;
+  credentialKeyPath?: string;
+  authorizedRepositories?: readonly string[];
+  gitBinary?: string;
+  credentials?: CredentialBoundary;
   persistence?: Persistence;
   refreshCoordinator?: RefreshCoordinator;
   sharedToken?: string;
@@ -256,6 +267,22 @@ export const createApp = (options: AppOptions) => {
     const result = await refreshRepository(repository);
     return { ...result, repository: persistence.getRepository(repository.githubId)! };
   };
+
+  const preparation = createPreparationService({
+    persistence,
+    github,
+    refreshRepository,
+    sessionRoot: options.sessionRoot,
+    globalCapacity: options.globalCapacity,
+    credentialsPath: options.credentialsPath,
+    credentialRegistryPath: options.credentialRegistryPath,
+    credentialSocketPath: options.credentialSocketPath,
+    credentialKeyPath: options.credentialKeyPath,
+    authorizedRepositories: options.authorizedRepositories,
+    gitBinary: options.gitBinary,
+    credentials: options.credentials,
+  });
+  preparation.start();
 
   const scopedInventory = async () => {
     const inventory = await github.listInstallationRepositories();
@@ -757,6 +784,7 @@ export const createApp = (options: AppOptions) => {
     }
 
     if (result.kind === "created" || result.kind === "existing") {
+      preparation.enqueue();
       return redirectToSession(c, result.session);
     }
     if (result.kind === "conflict") {

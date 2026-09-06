@@ -138,6 +138,16 @@ export type SessionState =
   | "interrupted"
   | "failed_setup";
 
+export type PreparationCheckpoint =
+  | "queued"
+  | "intent_saved"
+  | "clone_started"
+  | "clone_complete"
+  | "branch_started"
+  | "prepared"
+  | "start_unconfirmed"
+  | "failed_setup";
+
 export type SessionFilter = "active" | "all" | SessionState;
 
 export type Session = {
@@ -157,6 +167,12 @@ export type Session = {
   state: SessionState;
   stateReason: string | null;
   directory: string | null;
+  baseBranch: string | null;
+  baseSha: string | null;
+  workingBranch: string | null;
+  preparationCheckpoint: PreparationCheckpoint;
+  preparationReason: string | null;
+  preparedAt: string | null;
   openCodeSessionId: string | null;
   initialMessageId: string | null;
   exactMessage: string | null;
@@ -180,6 +196,13 @@ export type QueueSessionResult =
   | { kind: "existing"; session: Session }
   | { kind: "conflict"; session: Session }
   | { kind: "unfinished"; session: Session };
+
+export type PreparationIntent = {
+  directory: string;
+  baseBranch: string;
+  baseSha: string;
+  workingBranch: string;
+};
 
 type PersistenceOptions = {
   path: string;
@@ -291,6 +314,12 @@ type SessionRow = {
   state: SessionState;
   state_reason: string | null;
   directory: string | null;
+  base_branch: string | null;
+  base_sha: string | null;
+  working_branch: string | null;
+  preparation_checkpoint: PreparationCheckpoint;
+  preparation_reason: string | null;
+  prepared_at: string | null;
   opencode_session_id: string | null;
   initial_message_id: string | null;
   exact_message: string | null;
@@ -502,6 +531,28 @@ const migrations = [
     version: 6,
     sql: webhookMigrationSql,
   },
+  {
+    version: 7,
+    sql: `
+      ALTER TABLE sessions ADD COLUMN base_branch TEXT;
+      ALTER TABLE sessions ADD COLUMN base_sha TEXT;
+      ALTER TABLE sessions ADD COLUMN working_branch TEXT;
+      ALTER TABLE sessions ADD COLUMN preparation_checkpoint TEXT NOT NULL DEFAULT 'queued'
+        CHECK (preparation_checkpoint IN ('queued', 'intent_saved', 'clone_started', 'clone_complete', 'branch_started', 'prepared', 'start_unconfirmed', 'failed_setup'));
+      ALTER TABLE sessions ADD COLUMN preparation_reason TEXT;
+      ALTER TABLE sessions ADD COLUMN prepared_at TEXT;
+      CREATE UNIQUE INDEX sessions_repository_working_branch_idx
+        ON sessions (repository_id, working_branch)
+        WHERE working_branch IS NOT NULL;
+    `,
+  },
+  {
+    version: 8,
+    sql: `
+      ALTER TABLE sessions ADD COLUMN admission_blocked INTEGER NOT NULL DEFAULT 0
+        CHECK (admission_blocked IN (0, 1));
+    `,
+  },
 ];
 
 const isoNow = (now: () => number) => new Date(now()).toISOString();
@@ -628,6 +679,12 @@ const toSession = (row: SessionRow): Session => ({
   state: row.state,
   stateReason: row.state_reason,
   directory: row.directory,
+  baseBranch: row.base_branch,
+  baseSha: row.base_sha,
+  workingBranch: row.working_branch,
+  preparationCheckpoint: row.preparation_checkpoint,
+  preparationReason: row.preparation_reason,
+  preparedAt: row.prepared_at,
   openCodeSessionId: row.opencode_session_id,
   initialMessageId: row.initial_message_id,
   exactMessage: row.exact_message,
@@ -673,18 +730,44 @@ export const createPersistence = (options: PersistenceOptions) => {
     )
   `);
 
-  // Both parent branches recorded different schemas as migration 5.
+  // Parent branches recorded different schemas as migrations 5 and 6.
   const hasTable = (name: string) => Boolean(database.query(
     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
   ).get(name));
-  const repairCollidingVersionFive = database.transaction(() => {
+  const hasSessionColumn = (name: string) => hasTable("sessions") &&
+    (database.query("PRAGMA table_info(sessions)").all() as Array<{ name: string }>)
+      .some((column) => column.name === name);
+  const repairMigrationLineage = database.transaction(() => {
     const versionFiveApplied = Boolean(database.query(
       "SELECT 1 FROM schema_migrations WHERE version = 5",
     ).get());
-    if (!versionFiveApplied || hasTable("sessions") || !hasTable("webhook_deliveries")) return;
-    database.exec(sessionsMigrationSql);
+    if (versionFiveApplied && !hasTable("sessions") && hasTable("webhook_deliveries")) {
+      database.exec(sessionsMigrationSql);
+    }
+
+    const versionSixApplied = Boolean(database.query(
+      "SELECT 1 FROM schema_migrations WHERE version = 6",
+    ).get());
+    const preparationWasRecordedAtSix = versionSixApplied && hasSessionColumn("preparation_checkpoint");
+    if (!preparationWasRecordedAtSix) return;
+
+    if (!hasTable("webhook_deliveries")) database.exec(webhookMigrationSql);
+    const versionSevenApplied = Boolean(database.query(
+      "SELECT 1 FROM schema_migrations WHERE version = 7",
+    ).get());
+    if (!versionSevenApplied) {
+      database.query("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)")
+        .run(7, isoNow(now));
+    }
+    const versionEightApplied = Boolean(database.query(
+      "SELECT 1 FROM schema_migrations WHERE version = 8",
+    ).get());
+    if (hasSessionColumn("admission_blocked") && !versionEightApplied) {
+      database.query("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)")
+        .run(8, isoNow(now));
+    }
   });
-  repairCollidingVersionFive();
+  repairMigrationLineage();
 
   const appliedVersions = new Set(
     (database.query("SELECT version FROM schema_migrations ORDER BY version").all() as Array<{ version: number }>)
@@ -1342,6 +1425,195 @@ export const createPersistence = (options: PersistenceOptions) => {
     return result!;
   };
 
+  const listQueuedSessions = () => {
+    const rows = database.query(`
+      SELECT * FROM sessions
+      WHERE state = 'queued'
+      ORDER BY submission_order ASC
+    `).all() as SessionRow[];
+    return rows.map(toSession);
+  };
+
+  const listPreparingSessions = () => {
+    const rows = database.query(`
+      SELECT * FROM sessions
+      WHERE state = 'preparing'
+      ORDER BY submission_order ASC
+    `).all() as SessionRow[];
+    return rows.map(toSession);
+  };
+
+  const claimPreparation = (
+    atlasId: string,
+    intent: PreparationIntent,
+    globalCapacity: number,
+    freshlyVerified = false,
+  ) => {
+    if (!Number.isSafeInteger(globalCapacity) || globalCapacity < 1) {
+      throw new Error("Global Session capacity must be a positive safe integer");
+    }
+
+    let claimed: Session | undefined;
+    const claim = database.transaction(() => {
+      const held = database.query(`
+        SELECT COUNT(*) AS count
+        FROM sessions
+        WHERE execution_slot_held = 1
+          AND state IN ('preparing', 'running', 'waiting', 'idle')
+      `).get() as { count: number };
+      if (held.count >= globalCapacity) return;
+
+      if (freshlyVerified) {
+        database.query(`
+          UPDATE sessions
+          SET admission_blocked = 0
+          WHERE atlas_id = ? AND state = 'queued'
+        `).run(atlasId);
+      }
+
+      const eligible = database.query(`
+        WITH locally_eligible AS (
+          SELECT s.atlas_id, s.submission_order
+          FROM sessions s
+          JOIN repositories r ON r.github_id = s.repository_id
+          JOIN specs sp ON sp.repository_id = s.repository_id AND sp.github_id = s.spec_github_id
+            AND sp.issue_number = s.spec_issue_number
+          WHERE s.state = 'queued'
+            AND r.removed_at IS NULL
+            AND r.access_status = 'available'
+            AND r.archived = 0
+            AND r.disabled = 0
+            AND r.has_issues = 1
+            AND r.default_branch IS NOT NULL
+            AND r.default_branch = s.target_branch
+            AND sp.is_current = 1
+            AND sp.state = 'open'
+            AND sp.has_spec_label = 1
+            AND sp.is_pull_request = 0
+            AND s.admission_blocked = 0
+        )
+        SELECT s.*
+        FROM sessions s
+        JOIN locally_eligible candidate ON candidate.atlas_id = s.atlas_id
+        WHERE s.atlas_id = ?
+          AND NOT EXISTS (
+            SELECT 1
+            FROM locally_eligible older
+            WHERE older.submission_order < candidate.submission_order
+          )
+      `).get(atlasId) as SessionRow | null;
+      if (!eligible) return;
+
+      const timestamp = isoNow(now);
+      database.query(`
+        UPDATE sessions
+        SET state = 'preparing',
+            state_reason = ?,
+            directory = ?,
+            base_branch = ?,
+            base_sha = ?,
+            working_branch = ?,
+            preparation_checkpoint = 'intent_saved',
+            preparation_reason = ?,
+            prepared_at = NULL,
+            execution_slot_held = 1,
+            updated_at = ?
+        WHERE atlas_id = ? AND state = 'queued'
+      `).run(
+        "Preparation admitted; local clone has not started.",
+        intent.directory,
+        intent.baseBranch,
+        intent.baseSha,
+        intent.workingBranch,
+        "Preparation intent durably saved before filesystem work.",
+        timestamp,
+        atlasId,
+      );
+      claimed = getSession(atlasId);
+    });
+    claim.immediate();
+    return claimed;
+  };
+
+  const setPreparationCheckpoint = (
+    atlasId: string,
+    checkpoint: PreparationCheckpoint,
+    reason: string,
+    stateReason = reason,
+  ) => {
+    const preparedAt = checkpoint === "prepared" ? isoNow(now) : null;
+    database.query(`
+      UPDATE sessions
+      SET preparation_checkpoint = ?,
+          preparation_reason = ?,
+          state_reason = ?,
+          prepared_at = ?,
+          updated_at = ?
+      WHERE atlas_id = ? AND state = 'preparing'
+    `).run(checkpoint, reason, stateReason, preparedAt, isoNow(now), atlasId);
+    return getSession(atlasId);
+  };
+
+  const setQueuedSessionReason = (atlasId: string, reason: string) => {
+    database.query(`
+      UPDATE sessions
+      SET state_reason = ?, preparation_reason = ?, updated_at = ?
+      WHERE atlas_id = ? AND state = 'queued'
+    `).run(reason, reason, isoNow(now), atlasId);
+    return getSession(atlasId);
+  };
+
+  const requeuePreparation = (atlasId: string, reason: string) => {
+    const requeue = database.transaction(() => {
+      database.query(`
+        UPDATE sessions
+        SET state = 'queued',
+            state_reason = ?,
+            preparation_checkpoint = 'queued',
+            preparation_reason = ?,
+            prepared_at = NULL,
+            admission_blocked = 0,
+            execution_slot_held = 0,
+            updated_at = ?
+        WHERE atlas_id = ?
+          AND state = 'preparing'
+          AND preparation_checkpoint = 'intent_saved'
+      `).run(reason, reason, isoNow(now), atlasId);
+    });
+    requeue.immediate();
+    return getSession(atlasId);
+  };
+
+  const blockQueuedPreparation = (atlasId: string, reason: string) => {
+    database.query(`
+      UPDATE sessions
+      SET admission_blocked = 1,
+          state_reason = ?,
+          preparation_reason = ?,
+          updated_at = ?
+      WHERE atlas_id = ? AND state = 'queued'
+    `).run(reason, reason, isoNow(now), atlasId);
+    return getSession(atlasId);
+  };
+
+  const failPreparation = (atlasId: string, reason: string) => {
+    const fail = database.transaction(() => {
+      database.query(`
+        UPDATE sessions
+        SET state = 'failed_setup',
+            state_reason = ?,
+            preparation_checkpoint = 'failed_setup',
+            preparation_reason = ?,
+            prepared_at = NULL,
+            execution_slot_held = 0,
+            updated_at = ?
+        WHERE atlas_id = ? AND state = 'preparing'
+      `).run(reason, reason, isoNow(now), atlasId);
+    });
+    fail.immediate();
+    return getSession(atlasId);
+  };
+
   const listSessions = (repositoryId: string, filter: SessionFilter = "active") => {
     const activeStates = "('queued', 'preparing', 'running', 'waiting', 'idle')";
     if (filter === "active") {
@@ -1404,6 +1676,14 @@ export const createPersistence = (options: PersistenceOptions) => {
     getSession,
     getSessionBySubmissionId,
     queueSession,
+    listQueuedSessions,
+    listPreparingSessions,
+    claimPreparation,
+    setPreparationCheckpoint,
+    setQueuedSessionReason,
+    blockQueuedPreparation,
+    requeuePreparation,
+    failPreparation,
     listSessions,
     listSessionsForSpec,
   };
