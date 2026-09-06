@@ -45,6 +45,8 @@ import {
   renderSessionDetailPage,
   renderSessionViewerFragment,
   renderSessionsPage,
+  renderTargetReconfirmationForm,
+  renderTargetReconfirmationPage,
   renderStartSessionForm,
   renderStartTargetOptions,
   renderStartSessionPage,
@@ -299,6 +301,16 @@ const parseTargetSelection = (value: string | undefined): SessionTarget | undefi
     ? { kind: "native_stack", stackId: id }
     : { kind: "standalone_parent", parentPullRequestId: id };
 };
+
+const sessionTargetSelection = (session: Pick<Session, "targetKind" | "targetStackId" | "targetParentPullRequestId">) =>
+  session.targetKind === "native_stack"
+    ? `stack:${session.targetStackId ?? ""}`
+    : session.targetKind === "standalone_parent"
+      ? `parent:${session.targetParentPullRequestId ?? ""}`
+      : "default";
+
+const targetReconfirmationRequired = (session: Pick<Session, "state" | "admissionBlocked" | "stateReason">) =>
+  session.state === "queued" && session.admissionBlocked === true && session.stateReason?.startsWith("Waiting for explicit target reconfirmation") === true;
 
 const parseTargetObservations = (value: string | undefined) => {
   if (!value || value.length > MAX_FORM_BYTES) return undefined;
@@ -1225,6 +1237,172 @@ export const createApp = (options: AppOptions) => {
       viewer,
       pullRequestsRefresh,
     }));
+  });
+
+  app.get("/sessions/:sessionId/target", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    if (!sessionIdPattern.test(sessionId)) return c.text("Invalid Session ID", 400);
+    const session = persistence.getSession(sessionId);
+    if (!session) return c.text("Session not found", 404);
+    const repository = persistence.getRepository(session.repositoryId);
+    if (!repository) return c.text("Repository not found", 404);
+    if (!targetReconfirmationRequired(session)) {
+      return c.text(
+        session.state === "queued"
+          ? "Target reconfirmation is available only after the selected target disappears and Atlas requires explicit confirmation."
+          : "Only a queued Session can be assigned a replacement target.",
+        409,
+      );
+    }
+
+    let pullRequests = persistence.listPullRequests(repository.githubId);
+    let stacks = persistence.listPrStacks(repository.githubId);
+    let pullRequestsRefresh = persistence.getRefreshState(repository.githubId, "pullRequests");
+    let error: string | undefined;
+    let status = 200;
+    try {
+      const refreshed = await refreshPullRequests(repository);
+      pullRequests = persistence.listPullRequests(repository.githubId);
+      stacks = persistence.listPrStacks(repository.githubId);
+      pullRequestsRefresh = persistence.getRefreshState(repository.githubId, "pullRequests");
+      if (!refreshed.ok) {
+        error = "Current GitHub target verification is unavailable. Atlas retained the queued Session and will not infer a replacement.";
+        status = 503;
+      }
+    } catch {
+      error = "Current GitHub target verification is unavailable. Atlas retained the queued Session and will not infer a replacement.";
+      status = 503;
+    }
+
+    const identity = c.get("auth");
+    setPrivateHtmlHeaders(c);
+    return c.html(renderTargetReconfirmationPage({
+      csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
+      repository,
+      session,
+      targetOptions: renderStartTargetOptions(
+        repository,
+        pullRequests,
+        stacks,
+        persistence.getRefreshState(repository.githubId, "access"),
+        pullRequestsRefresh,
+        sessionTargetSelection(session),
+      ),
+      error,
+    }), status as 200 | 409 | 503);
+  });
+
+  app.post("/sessions/:sessionId/target", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    if (!sessionIdPattern.test(sessionId)) return c.text("Invalid Session ID", 400);
+    const session = persistence.getSession(sessionId);
+    if (!session) return c.text("Session not found", 404);
+    const repository = persistence.getRepository(session.repositoryId);
+    if (!repository) return c.text("Repository not found", 404);
+
+    let form: Record<string, unknown>;
+    try {
+      form = await parseForm(c.req.raw);
+    } catch (error) {
+      if (error instanceof FormBodyTooLarge) return c.text("Request body is too large", 413);
+      return c.text("Malformed target request", 400);
+    }
+    const identity = c.get("auth");
+    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return c.text("Request rejected", 403);
+
+    const targetValue = stringField(form.target) ?? "";
+    const target = parseTargetSelection(targetValue);
+    const observations = parseTargetObservations(stringField(form.target_observations));
+    let pullRequests = persistence.listPullRequests(repository.githubId);
+    let stacks = persistence.listPrStacks(repository.githubId);
+    let pullRequestsRefresh = persistence.getRefreshState(repository.githubId, "pullRequests");
+    const renderError = (message: string, status: 409 | 422 | 503) => {
+      setPrivateHtmlHeaders(c);
+      const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
+      const currentSession = persistence.getSession(sessionId) ?? session;
+      const action = `/sessions/${encodeURIComponent(sessionId)}/target`;
+      const targetOptions = renderStartTargetOptions(
+        repository,
+        pullRequests,
+        stacks,
+        persistence.getRefreshState(repository.githubId, "access"),
+        pullRequestsRefresh,
+        targetValue,
+      );
+      if (isHtmx(c)) return c.html(renderTargetReconfirmationForm({ action, csrfToken, targetOptions, error: message }), status);
+      return c.html(renderTargetReconfirmationPage({
+        csrfToken,
+        repository,
+        session: currentSession,
+        targetOptions,
+        error: message,
+      }), status);
+    };
+
+    if (session.state !== "queued") return c.text("Only a queued Session can be assigned a replacement target.", 409);
+    if (!targetReconfirmationRequired(session)) return c.text("Target reconfirmation is available only after the selected target disappears and Atlas requires explicit confirmation.", 409);
+    if (!target || !observations?.[targetValue]) return renderError("Choose a current target and confirm its fresh observation.", 422);
+
+    let refreshed: SyncResult;
+    try {
+      refreshed = await refreshRepository(repository);
+    } catch {
+      return renderError("Current GitHub access and Spec verification is unavailable. The queued Session remains unchanged.", 503);
+    }
+    const currentRepository = persistence.getRepository(repository.githubId)!;
+    if (!refreshed.ok || !isEligibleRepository(currentRepository)) {
+      return renderError("Current GitHub access and Spec verification is unavailable. The queued Session remains unchanged.", 503);
+    }
+
+    if (target.kind !== "default") {
+      try {
+        const pullResult = await refreshPullRequests(currentRepository);
+        pullRequests = persistence.listPullRequests(repository.githubId);
+        stacks = persistence.listPrStacks(repository.githubId);
+        pullRequestsRefresh = persistence.getRefreshState(repository.githubId, "pullRequests");
+        if (!pullResult.ok) return renderError("Current Pull request and native stack verification is unavailable. The queued Session remains unchanged.", 503);
+      } catch {
+        return renderError("Current Pull request and native stack verification is unavailable. The queued Session remains unchanged.", 503);
+      }
+    }
+
+    const option = startTargetOptions(
+      currentRepository,
+      pullRequests,
+      stacks,
+      persistence.getRefreshState(repository.githubId, "access"),
+      pullRequestsRefresh,
+    ).find((candidate) => candidate.value === targetValue);
+    if (!option || option.status.kind !== "eligible") return renderError(option?.status.reason ?? "The selected target is no longer eligible.", 409);
+    if (observations[targetValue] !== option.observation) return renderError("The selected target changed while this form was open. Review it and confirm again.", 409);
+
+    let targetBranch = currentRepository.defaultBranch!;
+    let acceptedTarget: SessionTarget = target;
+    if (target.kind === "native_stack") {
+      const stack = stacks.find((candidate) => candidate.githubId === target.stackId);
+      const members = stack ? [...stack.members].sort((left, right) => left.position - right.position) : [];
+      const top = members.length > 0 ? pullRequests.find((pullRequest) => pullRequest.githubId === members[members.length - 1]!.pullRequestId) : undefined;
+      if (!stack || !top) return renderError("The selected native stack top could not be verified. Choose a current target.", 409);
+      targetBranch = top.headRef;
+      acceptedTarget = { ...target, stackNumber: stack.number };
+    } else if (target.kind === "standalone_parent") {
+      const parent = pullRequests.find((pullRequest) => pullRequest.githubId === target.parentPullRequestId);
+      if (!parent) return renderError("The selected standalone parent could not be verified. Choose a current target.", 409);
+      targetBranch = parent.headRef;
+      acceptedTarget = { ...target, parentPullRequestNumber: parent.number };
+    }
+
+    let result: ReturnType<Persistence["reconfirmQueuedTarget"]>;
+    try {
+      result = persistence.reconfirmQueuedTarget(sessionId, acceptedTarget, targetBranch);
+    } catch {
+      return renderError("Atlas could not durably save the target reconfirmation. The queued Session remains unchanged.", 503);
+    }
+    if (result.kind === "not_found") return c.text("Session not found", 404);
+    if (result.kind === "not_queued") return c.text("Only a queued Session can be assigned a replacement target.", 409);
+    if (result.kind === "not_reconfirmation_required") return c.text("Target reconfirmation is no longer required for this Session.", 409);
+    preparation.enqueue();
+    return redirectToSession(c, result.session);
   });
 
   app.get("/sessions/:sessionId/reservation/release", (c) => {

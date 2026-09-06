@@ -537,13 +537,17 @@ const publicationRefreshMarkup = (refresh: RefreshState | undefined) => {
   return `<div class="alert alert-warning mt-4 leading-normal" role="status"><strong>Waiting for GitHub verification.</strong> ${escapeHtml(reason)} Ownership remains held until current publication evidence is confirmed.</div>`;
 };
 
-const publicationMarkup = (session: Session, pullRequestsRefresh?: RefreshState) => `<div class="mt-5 rounded-box border border-base-300 bg-base-100 p-4">
+const publicationMarkup = (session: Session, pullRequestsRefresh?: RefreshState) => {
+  const conflictCount = session.reservationConflictCount ?? 0;
+  return `<div class="mt-5 rounded-box border border-base-300 bg-base-100 p-4">
   <div class="flex flex-wrap items-center justify-between gap-3"><h2 class="font-medium">Publication</h2><span class="badge ${publicationStatusClass(session.publicationStatus)}">${escapeHtml(publicationStatusLabel(session.publicationStatus))}</span></div>
   <p class="mt-3 break-words">${publicationResultMarkup(session)}</p>
   ${publicationRefreshMarkup(pullRequestsRefresh)}
   ${session.publicationReason ? `<p class="mt-2 text-sm leading-normal text-muted">${escapeHtml(session.publicationReason)}</p>` : ""}
   <p class="mt-2 text-sm text-muted">Last publication evidence: ${escapeHtml(formatTime(session.publicationObservedAt))}</p>
-</div>`;
+  ${conflictCount > 0 ? `<div class="alert alert-warning mt-4 leading-normal" role="status"><div><strong>Reservation conflict hold recorded.</strong> ${conflictCount} durable hold${conflictCount === 1 ? "" : "s"} remain${conflictCount === 1 ? "s" : ""} until every involved owner releases. Existing execution is not cancelled.</div></div>` : ""}
+ </div>`;
+};
 
 const sessionHistoryRow = (session: Session) => `<li class="rounded-box bg-base-100 p-4 sm:p-5">
   <div class="flex flex-wrap items-start justify-between gap-4">
@@ -1245,6 +1249,57 @@ export const renderStartSessionPage = ({
   });
 };
 
+export const renderTargetReconfirmationPage = ({
+  csrfToken,
+  repository,
+  session,
+  targetOptions,
+  error,
+}: {
+  csrfToken: string;
+  repository: Repository;
+  session: Session;
+  targetOptions: string;
+  error?: string;
+}) => {
+  const action = `/sessions/${encodeURIComponent(session.atlasId)}/target`;
+  const form = renderTargetReconfirmationForm({ action, csrfToken, targetOptions, error });
+  return renderShell({
+    title: `Reconfirm target · ${session.atlasId}`,
+    active: "sessions",
+    repository,
+    csrfToken,
+    content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
+      <a class="inline-flex min-h-11 items-center rounded-field px-2 text-sm text-brand-readable underline underline-offset-4" href="/sessions/${encodeURIComponent(session.atlasId)}">← Back to Session</a>
+      <p class="mt-6 font-mono text-sm text-muted">${escapeHtml(repository.fullName)}</p>
+      <h1 id="page-title" class="mt-3 break-words text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Reconfirm queued target</h1>
+      <p class="mt-4 max-w-prose leading-relaxed text-muted">The previous target is no longer verified. Choose a current eligible target. Atlas keeps this Session, prompt, and original queue order; it does not release ownership or change GitHub.</p>
+      ${form}
+    </section>`,
+  });
+};
+
+export const renderTargetReconfirmationForm = ({
+  action,
+  csrfToken,
+  targetOptions,
+  error,
+}: {
+  action: string;
+  csrfToken: string;
+  targetOptions: string;
+  error?: string;
+}) => `<form class="mt-8 max-w-3xl" action="${action}" method="post" hx-post="${action}" hx-target="this" hx-swap="outerHTML" hx-disabled-elt="button[type='submit']">
+  <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
+  ${error ? `<div class="alert alert-error mb-6 leading-normal" role="alert" tabindex="-1" data-focus-on-swap>${escapeHtml(error)}</div>` : ""}
+  ${targetOptions}
+  <div class="mt-8 flex flex-wrap items-center gap-4">
+    <button class="btn btn-primary min-h-11 border border-control-border" type="submit">Confirm target</button>
+    <a class="btn btn-ghost min-h-11 border border-control-border" href="${action.replace(/\/target$/, "")}">Cancel</a>
+    <span class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Checking target…</span>
+  </div>
+</form>`;
+
 export const renderPendingStartSessionFragment = ({
   action,
   csrfToken,
@@ -1291,6 +1346,8 @@ const sessionTargetLabel = (session: Session) => {
   if (session.targetKind === "standalone_parent") return `Standalone parent #${session.targetParentPullRequestNumber ?? "unknown"}`;
   return `Default branch · ${session.targetBranch}`;
 };
+
+const targetReconfirmationNeeded = (session: Session) => session.state === "queued" && session.admissionBlocked && /reconfirmation|no longer exists|no longer available|disappeared/iu.test(session.stateReason ?? "");
 
 const sessionListRow = (session: Session, pullRequestsRefresh?: RefreshState) => `<li class="rounded-box bg-base-100 p-4 sm:p-6">
   <div class="flex flex-wrap items-start justify-between gap-4">
@@ -1612,8 +1669,9 @@ export const renderSessionDetailPage = ({
         <div class="mt-8 flex flex-wrap gap-4">
           <a class="btn btn-ghost min-h-11 border border-control-border" href="${specPath}">Back to Spec</a>
           <a class="btn btn-ghost min-h-11 border border-control-border" href="${sessionsLink(repository)}">Repository Sessions</a>
-          ${session.reservationState === "held" && ["succeeded", "failed", "interrupted"].includes(session.state) ? `<a class="btn btn-error min-h-11 border border-control-border" href="/sessions/${encodeURIComponent(session.atlasId)}/reservation/release">Review reservation release</a>` : ""}
-          ${repositoryAction(repository, csrfToken)}
+           ${session.reservationState === "held" && ["succeeded", "failed", "interrupted"].includes(session.state) ? `<a class="btn btn-error min-h-11 border border-control-border" href="/sessions/${encodeURIComponent(session.atlasId)}/reservation/release">Review reservation release</a>` : ""}
+           ${targetReconfirmationNeeded(session) ? `<a class="btn btn-primary min-h-11 border border-control-border" href="/sessions/${encodeURIComponent(session.atlasId)}/target">Review current target</a>` : ""}
+           ${repositoryAction(repository, csrfToken)}
         </div>
       <dl class="mt-8 grid gap-4 border-y border-base-300 py-5 text-sm sm:grid-cols-2">
         <div><dt class="font-medium text-muted">State</dt><dd class="mt-1">${escapeHtml(sessionStateLabel(session.state))}</dd></div>

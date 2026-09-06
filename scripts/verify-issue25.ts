@@ -102,7 +102,7 @@ persistence.replacePullRequests(repository.githubId, [pullRequest()], [{
   members: [],
 }]);
 persistence.upsertRepository({ ...repository, githubId: "2", name: "other", fullName: "Org/other" });
-assert.throws(
+assert.doesNotThrow(
   () => persistence.replacePullRequests(repository.githubId, [pullRequest({ githubId: "pr-2", number: "2" })], [{
     githubId: "stack-2",
     nodeId: null,
@@ -111,8 +111,8 @@ assert.throws(
     open: true,
     members: [],
   }]),
-  /UNIQUE|constraint/i,
 );
+assert.equal(persistence.listPrStacks(repository.githubId, false).length, 2, "recreated native stack identities may reuse a Repository-scoped number");
 assert.throws(() => persistence.replacePullRequests("2", [pullRequest()], []), /cannot move/i);
 assert.throws(
   () => persistence.replacePullRequests("2", [], [{
