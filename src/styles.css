@@ -54,10 +54,6 @@
     outline: 2px solid var(--color-brand-readable);
     outline-offset: 2px;
   }
-
-  body {
-    min-width: 320px;
-  }
 }
 
 @layer components {

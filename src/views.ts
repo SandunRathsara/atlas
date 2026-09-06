@@ -128,7 +128,7 @@ export const renderLoginPage = (options: {
 const renderLogoutForm = (csrfToken: string) => `<form id="logout-form" class="flex flex-wrap items-center gap-3" action="/logout" method="post" hx-post="/logout" hx-target="#logout-form" hx-swap="none" hx-indicator="#logout-progress" hx-disabled-elt="button[type='submit']">
   <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
   <span data-form-status class="sr-only" role="status" aria-live="polite"></span>
-  <button class="btn btn-ghost min-h-11 border border-control-border/60" type="submit">Sign out</button>
+  <button class="btn btn-ghost min-h-11 border border-control-border" type="submit">Sign out</button>
   <span id="logout-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Signing out...</span>
 </form>`;
 
@@ -180,8 +180,8 @@ const renderShell = ({
           <span class="hidden max-w-[18rem] truncate text-sm text-muted sm:inline" title="${escapeHtml(repositoryName)}">${escapeHtml(repositoryName)}</span>
         </div>
         <div class="relative flex flex-wrap items-center gap-3">
-          <details class="lg:hidden">
-            <summary class="btn btn-ghost min-h-11 list-none border border-control-border/60" aria-label="Open primary navigation">Navigation</summary>
+          <details class="lg:hidden" data-mobile-navigation>
+            <summary class="btn btn-ghost min-h-11 list-none border border-control-border" data-mobile-navigation-trigger aria-label="Open primary navigation">Navigation</summary>
             <nav class="absolute right-0 top-14 z-30 w-64 rounded-box border border-base-300 bg-base-100 p-3 shadow-xl" aria-label="Primary navigation">
               ${mobileLinks}
             </nav>
@@ -301,8 +301,8 @@ export const renderRepositoriesPage = (
            ${refreshWarning("Specs", specsRefresh)}
            <div class="mt-5 flex flex-wrap items-center gap-3">
             <a class="btn btn-primary min-h-11 border border-control-border" href="${repositoryLink(repository)}">Browse Specs</a>
-            <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${pullRequestsLink(repository)}">Browse Pull requests</a>
-            ${safeExternalUrl(repository.htmlUrl) ? `<a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(safeExternalUrl(repository.htmlUrl))}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
+            <a class="btn btn-ghost min-h-11 border border-control-border" href="${pullRequestsLink(repository)}">Browse Pull requests</a>
+            ${safeExternalUrl(repository.htmlUrl) ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(safeExternalUrl(repository.htmlUrl))}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
           </div>
         </li>`).join("")}</ul>`;
 
@@ -364,7 +364,7 @@ export const renderAddRepositoryPage = ({
               ${enrolled
                 ? `<a class="btn btn-primary min-h-11 border border-control-border" href="${repositoryLink({ githubId: repository.id })}">Open Specs</a><span class="text-sm text-muted">Already enrolled; adding again keeps the same Repository.</span>`
                 : `<form id="add-repository-${escapeHtml(repository.id)}" action="/repositories" method="post" hx-post="/repositories" hx-target="#add-repository-${escapeHtml(repository.id)}" hx-swap="none" hx-indicator="#add-progress-${escapeHtml(repository.id)}" hx-disabled-elt="button[type='submit']"><input type="hidden" name="csrf" value="${escapeHtml(repositoryCsrf || csrfToken)}"><input type="hidden" name="repository_id" value="${escapeHtml(repository.id)}"><span data-form-status class="sr-only" role="status" aria-live="polite"></span><button class="btn btn-primary min-h-11 border border-control-border" type="submit">Add Repository</button><span id="add-progress-${escapeHtml(repository.id)}" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Adding Repository...</span></form>`}
-              ${safeExternalUrl(repository.htmlUrl) ? `<a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(safeExternalUrl(repository.htmlUrl))}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
+              ${safeExternalUrl(repository.htmlUrl) ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(safeExternalUrl(repository.htmlUrl))}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
             </div>
           </li>`).join("")}</ul>`
       : "";
@@ -379,7 +379,7 @@ export const renderAddRepositoryPage = ({
       <p class="mt-4 max-w-prose leading-relaxed text-muted">Select a Repository that is available to the configured App installation. Atlas will save it before attempting its first Specs synchronization.</p>
       ${errorMarkup}
       ${list}
-      <a class="btn btn-ghost mt-8 min-h-11 border border-control-border/60" href="/repositories">Back to Repositories</a>
+      <a class="btn btn-ghost mt-8 min-h-11 border border-control-border" href="/repositories">Back to Repositories</a>
     </section>`,
   });
 };
@@ -431,7 +431,7 @@ const renderRepositoryHeading = (repository: Repository, title: string, descript
     </div>
     <div class="flex flex-wrap items-center gap-3">
       <span class="badge ${accessBadgeClass(repository)}">${accessLabel(repository)}</span>
-      ${githubUrl ? `<a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open Repository on GitHub</a>` : ""}
+      ${githubUrl ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open Repository on GitHub</a>` : ""}
     </div>
   </div>
   ${eligibility ? `<div class="alert alert-warning mt-6 leading-normal" role="status">${escapeHtml(eligibility)}</div>` : ""}`;
@@ -450,13 +450,31 @@ const sessionBadgeClass = (state: SessionState) => {
   return "badge-neutral";
 };
 
+const handoffCheckpointLabel = (checkpoint: Session["handoffCheckpoint"]) => {
+  if (checkpoint === "intent_saved") return "Intent saved";
+  if (checkpoint === "events_consuming") return "Events consuming";
+  if (checkpoint === "create_sent") return "Create sent once";
+  if (checkpoint === "create_confirmed") return "Create confirmed";
+  if (checkpoint === "associated") return "Association confirmed";
+  if (checkpoint === "prompt_sent") return "Prompt sent once";
+  if (checkpoint === "prompt_accepted") return "Prompt accepted";
+  return "Not started";
+};
+
+const sessionFreshnessMarkup = (session: Session) => {
+  const stale = session.opencodeFreshness === "stale";
+  const preparationUncertain = session.preparationCheckpoint === "start_unconfirmed";
+  const handoffUncertain = Boolean(session.handoffUncertainReason);
+  return `${stale ? `<span class="badge badge-warning">Stale</span>` : ""}${preparationUncertain ? `<span class="badge badge-warning">Preparation unconfirmed</span>` : handoffUncertain ? `<span class="badge badge-warning">Start unconfirmed</span>` : ""}`;
+};
+
 const sessionHistoryRow = (session: Session) => `<li class="rounded-box bg-base-100 p-4 sm:p-5">
   <div class="flex flex-wrap items-start justify-between gap-4">
     <div class="min-w-0">
       <p class="font-mono text-sm text-muted">Session ${escapeHtml(session.atlasId)}</p>
       <h3 class="mt-2 text-lg font-semibold"><a class="text-brand-readable underline decoration-brand-readable/50 underline-offset-4" href="${`/sessions/${encodeURIComponent(session.atlasId)}`}">${escapeHtml(sessionStateLabel(session.state))} Session</a></h3>
     </div>
-    <span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>
+    <span class="flex flex-wrap items-center gap-2"><span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>${sessionFreshnessMarkup(session)}</span>
   </div>
   <p class="mt-4 text-sm leading-normal text-muted">Submitted ${escapeHtml(formatTime(session.submittedAt))} · Queue order ${session.submissionOrder}</p>
 </li>`;
@@ -840,7 +858,7 @@ export const renderSpecDetailPage = ({
         </div>
         <div class="flex flex-wrap items-center gap-3">
           <span class="badge ${retained ? "badge-warning" : "badge-info"}">${retained ? "Retained snapshot" : "Open Spec"}</span>
-          ${githubUrl ? `<a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
+          ${githubUrl ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
           ${canStart ? `<a class="btn btn-primary min-h-11 border border-control-border" href="${`/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(spec.issueNumber)}/sessions/new`}">Start Session</a>` : ""}
         </div>
       </div>
@@ -908,7 +926,7 @@ export const renderStartSessionForm = ({
     ${errorMarkup}
     <div class="mt-8 flex flex-wrap items-center gap-4">
       <button class="btn btn-primary min-h-11 border border-control-border" type="submit">Start Session</button>
-      <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(action.replace(/\/sessions$/, ""))}">Cancel</a>
+      <a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(action.replace(/\/sessions$/, ""))}">Cancel</a>
       <span id="start-session-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Starting Session…</span>
     </div>
     <p data-form-status class="sr-only" role="status" aria-live="polite"></p>
@@ -1019,7 +1037,7 @@ const sessionListRow = (session: Session) => `<li class="rounded-box bg-base-100
       <p class="font-mono text-sm text-muted">Session ${escapeHtml(session.atlasId)}</p>
       <h2 class="mt-2 break-words text-lg font-semibold"><a class="text-brand-readable underline decoration-brand-readable/50 underline-offset-4" href="${`/sessions/${encodeURIComponent(session.atlasId)}`}">Spec #${escapeHtml(session.specIssueNumber)}: ${escapeHtml(session.specTitle)}</a></h2>
     </div>
-    <span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>
+    <span class="flex flex-wrap items-center gap-2"><span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>${sessionFreshnessMarkup(session)}</span>
   </div>
   <dl class="mt-5 grid gap-3 text-sm text-muted sm:grid-cols-2">
     <div><dt class="font-medium text-base-content">Submitted</dt><dd class="mt-1">${escapeHtml(formatTime(session.submittedAt))}</dd></div>
@@ -1028,7 +1046,8 @@ const sessionListRow = (session: Session) => `<li class="rounded-box bg-base-100
     <div><dt class="font-medium text-base-content">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : "Not held"}</dd></div>
   </dl>
   <p class="mt-5 max-w-prose truncate text-sm text-muted">Prompt: ${escapeHtml(session.prompt)}</p>
-  <a class="btn btn-ghost mt-5 min-h-11 border border-control-border/60" href="${`/sessions/${encodeURIComponent(session.atlasId)}`}">View Session</a>
+  ${session.stateReason ? `<p class="mt-3 max-w-prose text-sm leading-normal text-muted">${escapeHtml(session.stateReason)}</p>` : ""}
+  <a class="btn btn-ghost mt-5 min-h-11 border border-control-border" href="${`/sessions/${encodeURIComponent(session.atlasId)}`}">View Session</a>
 </li>`;
 
 export const renderSessionsPage = ({
@@ -1058,7 +1077,7 @@ export const renderSessionsPage = ({
     content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
       ${renderRepositoryHeading(repository, heading, "Atlas implementation attempts for this Repository. Active includes every unfinished Session, including Queued.")}
       <nav class="mt-8 flex flex-wrap gap-2" aria-label="Session status filters">
-        ${filters.map((value) => `<a class="btn ${value === filter ? "btn-primary border border-control-border" : "btn-ghost border border-control-border/60"} min-h-11" href="${value === "active" ? sessionsLink(repository) : `${sessionsLink(repository)}?status=${encodeURIComponent(value)}`}"${value === filter ? ' aria-current="page"' : ""}>${escapeHtml(sessionFilterLabel(value))}</a>`).join("")}
+        ${filters.map((value) => `<a class="btn ${value === filter ? "btn-primary border border-control-border" : "btn-ghost border border-control-border"} min-h-11" href="${value === "active" ? sessionsLink(repository) : `${sessionsLink(repository)}?status=${encodeURIComponent(value)}`}"${value === filter ? ' aria-current="page"' : ""}>${escapeHtml(sessionFilterLabel(value))}</a>`).join("")}
       </nav>
       ${sessions.length > 0
         ? `<ul class="mt-8 grid gap-4" aria-label="${escapeHtml(heading)}">${sessions.map(sessionListRow).join("")}</ul>`
@@ -1093,13 +1112,20 @@ export const renderSessionDetailPage = ({
               : session.preparationCheckpoint === "failed_setup"
                 ? "Setup failed"
                 : "Queued";
+  const handoffLabel = handoffCheckpointLabel(session.handoffCheckpoint);
+  const preparationUnconfirmed = session.preparationCheckpoint === "start_unconfirmed";
+  const handoffUnconfirmed = Boolean(session.handoffUncertainReason);
   const preparationNotice = session.state === "failed_setup"
     ? `<div class="alert alert-error mt-6 leading-normal" role="alert"><div><strong>Preparation failed before OpenCode execution.</strong> ${escapeHtml(session.stateReason ?? "The local setup did not complete.")} Partial resources are retained; Atlas will not delete or replay them.</div></div>`
-    : session.preparationCheckpoint === "prepared"
-      ? `<div class="alert alert-success mt-6 leading-normal" role="status"><div><strong>Local preparation complete.</strong> The full clone and working branch are ready. OpenCode creation and prompting intentionally stop at this boundary.</div></div>`
-      : session.preparationCheckpoint === "start_unconfirmed"
-        ? `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Start unconfirmed.</strong> Atlas will not replay an uncertain local operation. The recorded directory and checkpoint require manual recovery.</div></div>`
-        : `<div class="alert alert-info mt-6 leading-normal" role="status"><div><strong>${session.state === "queued" ? "Queued request accepted." : "Preparation in progress."}</strong> ${escapeHtml(session.stateReason ?? "Atlas is waiting for the next safe preparation step.")}</div></div>`;
+    : preparationUnconfirmed
+      ? `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Preparation unconfirmed.</strong> Atlas will not replay an uncertain local operation. ${escapeHtml(session.preparationReason ?? "The recorded directory and preparation checkpoint require manual recovery.")}</div></div>`
+      : handoffUnconfirmed
+        ? `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Start unconfirmed.</strong> Atlas will not replay an uncertain OpenCode create or prompt. ${escapeHtml(session.handoffUncertainReason ?? "The preserved handoff checkpoint requires reconciliation.")}</div></div>`
+        : session.handoffCheckpoint === "prompt_accepted"
+          ? `<div class="alert alert-success mt-6 leading-normal" role="status"><div><strong>OpenCode handoff accepted.</strong> The initial prompt was accepted once; execution state and outcome remain canonical OpenCode evidence.</div></div>`
+          : session.preparationCheckpoint === "prepared"
+            ? `<div class="alert alert-success mt-6 leading-normal" role="status"><div><strong>Local preparation complete.</strong> The full clone and working branch are ready. ${session.opencodeFreshness === "stale" ? "Atlas is waiting for a compatible OpenCode service or reconciliation." : "OpenCode handoff is proceeding through durable checkpoints."}</div></div>`
+            : `<div class="alert alert-info mt-6 leading-normal" role="status"><div><strong>${session.state === "queued" ? "Queued request accepted." : "Preparation in progress."}</strong> ${escapeHtml(session.stateReason ?? "Atlas is waiting for the next safe preparation step.")}</div></div>`;
 
   return renderShell({
     title: `Session ${session.atlasId}`,
@@ -1114,26 +1140,37 @@ export const renderSessionDetailPage = ({
           <h1 id="page-title" class="mt-3 break-words text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Session ${escapeHtml(session.atlasId)}</h1>
           <p class="mt-4 max-w-prose leading-relaxed text-muted">Spec #${escapeHtml(session.specIssueNumber)}: ${escapeHtml(session.specTitle)}</p>
         </div>
-        <span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>
+        <span class="flex flex-wrap items-center gap-2"><span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>${sessionFreshnessMarkup(session)}</span>
       </div>
-       ${preparationNotice}
+      ${preparationNotice}
       <div class="mt-8 flex flex-wrap gap-4">
-        <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${specPath}">Back to Spec</a>
-        <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${sessionsLink(repository)}">Repository Sessions</a>
+        <a class="btn btn-ghost min-h-11 border border-control-border" href="${specPath}">Back to Spec</a>
+        <a class="btn btn-ghost min-h-11 border border-control-border" href="${sessionsLink(repository)}">Repository Sessions</a>
       </div>
       <dl class="mt-8 grid gap-4 border-y border-base-300 py-5 text-sm sm:grid-cols-2">
         <div><dt class="font-medium text-muted">State</dt><dd class="mt-1">${escapeHtml(sessionStateLabel(session.state))}</dd></div>
         <div><dt class="font-medium text-muted">Submitted</dt><dd class="mt-1">${escapeHtml(formatTime(session.submittedAt))}</dd></div>
         <div><dt class="font-medium text-muted">Queue order</dt><dd class="mt-1 tabular-nums">${session.submissionOrder}</dd></div>
         <div><dt class="font-medium text-muted">Submission identity</dt><dd class="mt-1 break-all font-mono">${escapeHtml(session.submissionId)}</dd></div>
-         <div><dt class="font-medium text-muted">Preparation checkpoint</dt><dd class="mt-1">${escapeHtml(preparationLabel)}</dd></div>
-         <div><dt class="font-medium text-muted">Starting base</dt><dd class="mt-1 break-words font-mono">Default branch · ${escapeHtml(session.baseBranch ?? session.targetBranch)}${session.baseSha ? ` · ${escapeHtml(session.baseSha)}` : " · waiting for verified SHA"}</dd></div>
+        <div><dt class="font-medium text-muted">Preparation checkpoint</dt><dd class="mt-1">${escapeHtml(preparationLabel)}</dd></div>
+        <div><dt class="font-medium text-muted">OpenCode handoff</dt><dd class="mt-1">${escapeHtml(handoffLabel)}</dd></div>
+        <div><dt class="font-medium text-muted">Starting base</dt><dd class="mt-1 break-words font-mono">Default branch · ${escapeHtml(session.baseBranch ?? session.targetBranch)}${session.baseSha ? ` · ${escapeHtml(session.baseSha)}` : " · waiting for verified SHA"}</dd></div>
          <div><dt class="font-medium text-muted">Working branch</dt><dd class="mt-1 break-words font-mono">${session.workingBranch ? escapeHtml(session.workingBranch) : "Not assigned before admission"}</dd></div>
          <div><dt class="font-medium text-muted">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : "Not held while Queued"}</dd></div>
          <div><dt class="font-medium text-muted">Session directory</dt><dd class="mt-1 break-words font-mono">${session.directory ? escapeHtml(session.directory) : "Not assigned before admission"}</dd></div>
-         <div><dt class="font-medium text-muted">OpenCode Session</dt><dd class="mt-1">${session.openCodeSessionId ? escapeHtml(session.openCodeSessionId) : "Not created at this boundary"}</dd></div>
-       </dl>
-       ${session.preparationReason ? `<p class="mt-6 text-sm leading-normal text-muted">Checkpoint note: ${escapeHtml(session.preparationReason)}</p>` : ""}
+        <div><dt class="font-medium text-muted">OpenCode intended Session</dt><dd class="mt-1 break-all font-mono">${session.opencodeIntendedSessionId ? escapeHtml(session.opencodeIntendedSessionId) : "Not assigned before local preparation"}</dd></div>
+        <div><dt class="font-medium text-muted">OpenCode Session</dt><dd class="mt-1 break-all font-mono">${session.openCodeSessionId ? escapeHtml(session.openCodeSessionId) : "Not associated"}</dd></div>
+        <div><dt class="font-medium text-muted">Initial message</dt><dd class="mt-1 break-all font-mono">${session.initialMessageId ? escapeHtml(session.initialMessageId) : "Not assigned"}</dd></div>
+        <div><dt class="font-medium text-muted">Prompt inbox</dt><dd class="mt-1 break-all font-mono">${session.initialInboxId ? escapeHtml(session.initialInboxId) : "Not accepted"}</dd></div>
+        <div><dt class="font-medium text-muted">OpenCode freshness</dt><dd class="mt-1">${session.opencodeFreshness === "fresh" ? "Fresh" : session.opencodeFreshness === "stale" ? "Stale" : "Not reconciled"}</dd></div>
+        <div><dt class="font-medium text-muted">Last OpenCode reconciliation</dt><dd class="mt-1">${formatTime(session.opencodeLastSuccessAt)}</dd></div>
+      </dl>
+      ${session.preparationReason ? `<p class="mt-6 text-sm leading-normal text-muted">Checkpoint note: ${escapeHtml(session.preparationReason)}</p>` : ""}
+      ${session.exactMessage ? `<section class="mt-10" aria-labelledby="sent-message-title">
+        <h2 id="sent-message-title" class="text-lg font-semibold">Exact OpenCode handoff message</h2>
+        <p class="mt-2 max-w-prose leading-relaxed text-muted">This is the context and unchanged prompt Atlas prepared for the one allowed initial message.</p>
+        <pre class="mt-5 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded-box bg-base-100 p-5 font-mono text-sm leading-relaxed">${escapeHtml(session.exactMessage)}</pre>
+      </section>` : ""}
       <section class="mt-10" aria-labelledby="immutable-context-title">
         <h2 id="immutable-context-title" class="text-lg font-semibold">Immutable handoff context</h2>
         <p class="mt-2 max-w-prose leading-relaxed text-muted">Atlas retains the Spec snapshot and prompt that were accepted. Later GitHub edits do not rewrite this attempt.</p>
@@ -1175,6 +1212,6 @@ export const renderSpecUnavailablePage = ({
      ${refreshWarning("Specs", specsRefresh)}
      <div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>GitHub synchronization is unavailable.</strong> Retry when the configured App access is available. Atlas has not invented an empty list.</div></div>
     <p class="mt-6 text-sm text-muted">${refreshLine("Access", accessRefresh)} · ${refreshLine("Specs", specsRefresh)}</p>
-    <a class="btn btn-ghost mt-8 min-h-11 border border-control-border/60" href="${repositoryLink(repository)}">Back to Specs</a>
+    <a class="btn btn-ghost mt-8 min-h-11 border border-control-border" href="${repositoryLink(repository)}">Back to Specs</a>
   </section>`,
 });
