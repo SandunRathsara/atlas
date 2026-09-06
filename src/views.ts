@@ -730,7 +730,7 @@ type StartTargetOption = {
   observation: string;
 };
 
-const targetObservation = (
+export const targetObservation = (
   repository: Repository,
   pullRequests: PullRequest[] = [],
   stacks: PrStack[] = [],

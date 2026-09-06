@@ -43,6 +43,7 @@ import {
   renderSpecUnavailablePage,
   renderSpecsPage,
   startTargetOptions,
+  targetObservation,
   type PendingStartSession,
 } from "./views.ts";
 
@@ -861,6 +862,9 @@ export const createApp = (options: AppOptions) => {
 
     let selectedQueueTarget = selectedTarget;
     let selectedTargetBranch = repository.defaultBranch!;
+    if (selectedTarget.kind === "default" && submittedTargetObservations?.[targetValue] !== targetObservation(repository, [], [], selectedTarget)) {
+      return renderError(409, "The selected default branch changed while this form was open. Review the current target and confirm it again.", repository, spec);
+    }
     if (selectedTarget.kind !== "default") {
       let pullRefresh: SyncResult;
       try {

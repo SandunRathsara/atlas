@@ -156,3 +156,7 @@
     background-image: radial-gradient(circle at top left, rgb(1 43 104 / 0.2), transparent 36rem);
   }
 }
+
+.radio.radio-primary {
+  --input-color: var(--color-control-border);
+}
