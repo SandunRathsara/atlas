@@ -1959,6 +1959,15 @@ export const createPersistence = (options: PersistenceOptions) => {
           const holdValues = target.kind === "native_stack"
             ? ["native_stack", target.stackId ?? null, target.stackNumber ?? null, null, null]
             : ["standalone_parent", null, null, target.parentPullRequestId ?? null, target.parentPullRequestNumber ?? null];
+          const conflictReason = "Waiting for another Session's stack reservation to release before preparation.";
+          database.query(`
+            UPDATE sessions
+            SET admission_blocked = 1,
+                state_reason = ?,
+                preparation_reason = ?,
+                updated_at = ?
+            WHERE atlas_id = ? AND state = 'queued'
+          `).run(conflictReason, conflictReason, isoNow(now), atlasId);
           database.query(`
             INSERT INTO reservation_conflict_holds (
               reservation_id, repository_id, target_kind, stack_id, stack_number,
@@ -1975,7 +1984,7 @@ export const createPersistence = (options: PersistenceOptions) => {
             current.repositoryId,
             ...holdValues,
             isoNow(now),
-            "Another held reservation owns this target or retained evidence.",
+            conflictReason,
             conflict.reservation_id,
             holdValues[0],
             holdValues[1],

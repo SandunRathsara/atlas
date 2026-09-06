@@ -259,7 +259,120 @@ export const createPreparationService = (options: PreparationOptions) => {
     }
   };
 
-  const safeBranch = (branch: string | null | undefined) => Boolean(branch && BRANCH_PATTERN.test(branch));
+  const safeBranch = (branch: string | null | undefined): branch is string => Boolean(branch && BRANCH_PATTERN.test(branch));
+
+  const verifyExactRemoteRefs = async (session: Session, directory: string, env: Record<string, string>) => {
+    const expected = new Map<string, string>();
+    const addExpected = (branch: string | null, sha: string | null) => {
+      if (!safeBranch(branch) || !sha || !SHA_PATTERN.test(sha)) {
+        throw new PreparationError("The persisted preparation target is incomplete or unsafe.");
+      }
+      const existing = expected.get(branch);
+      if (existing && existing.toLocaleLowerCase("en-US") !== sha.toLocaleLowerCase("en-US")) {
+        throw new PreparationError("The persisted preparation target contains conflicting branch SHAs.");
+      }
+      expected.set(branch, sha);
+    };
+
+    addExpected(session.baseBranch, session.baseSha);
+    for (const layer of session.resolvedLayers) addExpected(layer.branch, layer.sha);
+
+    const actual = new Map<string, string>();
+    for (const [branch, sha] of expected) {
+      const resolved = await assertCommand(
+        gitBinary,
+        ["-C", directory, "rev-parse", `refs/remotes/origin/${branch}^{commit}`],
+        { env },
+        `The cloned remote ref for ${branch} is missing.`,
+      );
+      if (!SHA_PATTERN.test(resolved) || resolved.toLocaleLowerCase("en-US") !== sha.toLocaleLowerCase("en-US")) {
+        throw new PreparationError(`The cloned remote ref for ${branch} differs from the freshly verified SHA.`);
+      }
+      actual.set(branch, resolved);
+    }
+
+    const trunkBranch = session.resolvedTrunkBranch ?? session.baseBranch;
+    if (!safeBranch(trunkBranch)) throw new PreparationError("The persisted stack trunk is unsafe.");
+    if (!actual.has(trunkBranch)) {
+      const trunkSha = await assertCommand(
+        gitBinary,
+        ["-C", directory, "rev-parse", `refs/remotes/origin/${trunkBranch}^{commit}`],
+        { env },
+        "The intended stack trunk ref is missing from the clone.",
+      );
+      if (!SHA_PATTERN.test(trunkSha)) throw new PreparationError("The cloned stack trunk SHA is invalid.");
+      actual.set(trunkBranch, trunkSha);
+    }
+    return { actual, trunkBranch, trunkSha: actual.get(trunkBranch)! };
+  };
+
+  const ensureLocalBranch = async (directory: string, branch: string, sha: string, env: Record<string, string>) => {
+    const existing = await run(gitBinary, ["-C", directory, "show-ref", "--verify", "--hash", `refs/heads/${branch}`], { env });
+    if (existing.exitCode === 0) {
+      if (existing.stdout.trim().toLocaleLowerCase("en-US") !== sha.toLocaleLowerCase("en-US")) {
+        throw new PreparationError(`The local stack branch ${branch} does not match its verified SHA.`);
+      }
+      return;
+    }
+    if (existing.exitCode !== 1 && existing.exitCode !== 128) throw new PreparationError(`The local stack branch ${branch} could not be inspected.`);
+    const created = await run(gitBinary, ["-C", directory, "branch", "--no-track", branch, sha], { env });
+    if (created.exitCode !== 0) throw new PreparationError(`The local stack branch ${branch} could not be created.`);
+  };
+
+  const writeGhStack = async (
+    session: Session,
+    repository: Repository,
+    trunkBranch: string,
+    trunkSha: string,
+    env: Record<string, string>,
+  ) => {
+    const branches: Array<Record<string, unknown>> = [];
+    let parentSha = trunkSha;
+    const branchNames = new Set([trunkBranch]);
+    for (const layer of session.resolvedLayers) {
+      if (branchNames.has(layer.branch)) throw new PreparationError("The local stack contains duplicate branch names.");
+      const number = Number(layer.pullRequestNumber);
+      if (!Number.isSafeInteger(number) || number < 1) throw new PreparationError("The local stack contains an invalid Pull request number.");
+      branches.push({
+        branch: layer.branch,
+        base: parentSha,
+        pullRequest: { number, id: layer.pullRequestId },
+      });
+      branchNames.add(layer.branch);
+      parentSha = layer.sha;
+    }
+    if (session.resolvedLayers.length > 0 && parentSha.toLocaleLowerCase("en-US") !== session.baseSha?.toLocaleLowerCase("en-US")) {
+      throw new PreparationError("The local stack parent layers do not end at the verified preparation SHA.");
+    }
+    if (branchNames.has(session.workingBranch!)) throw new PreparationError("The unique working branch is already a stack branch.");
+    branches.push({ branch: session.workingBranch, base: session.baseSha });
+
+    const stack: Record<string, unknown> = {
+      trunk: { branch: trunkBranch, head: trunkSha },
+      branches,
+    };
+    if (session.targetKind === "native_stack") {
+      const number = Number(session.resolvedStackNumber);
+      if (!session.resolvedStackId || !Number.isSafeInteger(number) || number < 1) {
+        throw new PreparationError("The native stack identity is incomplete.");
+      }
+      stack.id = session.resolvedStackId;
+      stack.number = number;
+    }
+
+    const gitStackPath = await assertCommand(
+      gitBinary,
+      ["-C", session.directory!, "rev-parse", "--git-path", "gh-stack"],
+      { env },
+      "The local Git directory could not be resolved for stack tracking.",
+    );
+    const stackPath = isAbsolute(gitStackPath) ? gitStackPath : resolve(session.directory!, gitStackPath);
+    writeFileSync(stackPath, JSON.stringify({
+      schemaVersion: 1,
+      repository: `github.com:${repository.fullName}`,
+      stacks: [stack],
+    }, null, 2) + "\n", { mode: 0o644 });
+  };
 
   const mergeRestriction = (pullRequest: PullRequest) => {
     if (pullRequest.autoMergeEnabled === true) return "The selected target has auto-merge enabled.";
@@ -514,36 +627,22 @@ export const createPreparationService = (options: PreparationOptions) => {
       if (!helperConfig.includes("atlas-git-credential")) throw new PreparationError("Clone-local credential routing is not Atlas-managed");
       const shallow = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", "--is-shallow-repository"], { env }, "Prepared clone completeness could not be verified.");
       if (shallow !== "false") throw new PreparationError("The Session clone is shallow; Atlas requires a full clone.");
-      await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `refs/remotes/origin/${session.baseBranch}^{commit}`], { env }, "The selected parent ref could not be verified in the clone.");
-      const trunkBranch = session.resolvedTrunkBranch ?? session.baseBranch;
-      await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `refs/remotes/origin/${trunkBranch}^{commit}`], { env }, "The intended stack trunk ref could not be verified in the clone.");
-      const resolvedSha = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `${session.baseSha}^{commit}`], { env }, "The verified preparation SHA is missing from the clone.");
-      if (resolvedSha.toLocaleLowerCase("en-US") !== session.baseSha.toLocaleLowerCase("en-US")) throw new PreparationError("The verified preparation SHA could not be resolved in the clone.");
+      const { actual, trunkBranch, trunkSha } = await verifyExactRemoteRefs(session, session.directory, env);
+      for (const layer of session.resolvedLayers) {
+        await ensureLocalBranch(session.directory, layer.branch, actual.get(layer.branch)!, env);
+      }
+      await ensureLocalBranch(session.directory, trunkBranch, trunkSha, env);
 
       if (!checkpoint(session.atlasId, "branch_started", "Unique local working branch creation is starting.", "Full clone verified; creating the unique local branch.")) return;
       const branchResult = await run(options.gitBinary ?? gitBinary, ["-C", session.directory, "checkout", "--no-track", "-b", session.workingBranch, session.baseSha], { env });
       if (branchResult.exitCode !== 0) throw new PreparationError("The unique local working branch could not be created.");
-      const upstreamResult = await run(options.gitBinary ?? gitBinary, ["-C", session.directory, "branch", "--set-upstream-to", `origin/${session.baseBranch}`, session.workingBranch], { env });
-      if (upstreamResult.exitCode !== 0) throw new PreparationError("The local working branch could not be tracked safely.");
       const currentBranch = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "branch", "--show-current"], { env }, "The local working branch could not be verified.");
       const currentSha = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", "HEAD"], { env }, "The local working branch tip could not be verified.");
-      const upstream = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], { env }, "The local working branch tracking could not be verified.");
-      if (currentBranch !== session.workingBranch || currentSha.toLocaleLowerCase("en-US") !== session.baseSha.toLocaleLowerCase("en-US") || upstream !== `origin/${session.baseBranch}`) {
+      if (currentBranch !== session.workingBranch || currentSha.toLocaleLowerCase("en-US") !== session.baseSha.toLocaleLowerCase("en-US")) {
         throw new PreparationError("The local working branch identity could not be verified.");
       }
-      if (session.targetKind !== "default") {
-        writeFileSync(
-          join(session.directory, ".git", "atlas-stack.json"),
-          JSON.stringify({
-            version: 1,
-            trunk: trunkBranch,
-            layers: session.resolvedLayers,
-            child: { branch: session.workingBranch, base: session.baseSha },
-          }, null, 2) + "\n",
-          { mode: 0o600 },
-        );
-      }
-      checkpoint(session.atlasId, "prepared", "Full clone and unique local working branch are ready; OpenCode handoff has not started.");
+      await writeGhStack(session, repository, trunkBranch, trunkSha, env);
+      checkpoint(session.atlasId, "prepared", "Full clone, exact local stack topology, and unique working branch are ready; OpenCode handoff has not started.");
     } catch (error) {
       const reason = error instanceof StorageError ? error.message : storageIssue();
       if (reason) pauseHeld(session, reason);
@@ -603,11 +702,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "config", "--local", "credential.useHttpPath", "true"], { env }, "Clone-local credential path scoping could not be enabled.");
       const shallow = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", "--is-shallow-repository"], { env }, "Clone completeness could not be verified.");
       if (shallow !== "false") throw new PreparationError("Git returned a shallow clone; Atlas requires a full clone.");
-      await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `refs/remotes/origin/${session.baseBranch}^{commit}`], { env }, "The selected parent ref is missing from the clone.");
-      const trunkBranch = session.resolvedTrunkBranch ?? session.baseBranch;
-      await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `refs/remotes/origin/${trunkBranch}^{commit}`], { env }, "The intended stack trunk ref is missing from the clone.");
-      const resolvedSha = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `${session.baseSha}^{commit}`], { env }, "The verified default tip is missing from the clone.");
-      if (resolvedSha.toLocaleLowerCase("en-US") !== session.baseSha.toLocaleLowerCase("en-US")) throw new PreparationError("The cloned parent tip differs from the verified preparation SHA.");
+      await verifyExactRemoteRefs(session, session.directory, env);
       if (!checkpoint(session.atlasId, "clone_complete", "Full clone completed and matches the verified preparation SHA.", "Full clone ready; local branch creation is next.")) return;
       await finishBranch(session = options.persistence.getSession(session.atlasId)!, repository);
     } catch (error) {

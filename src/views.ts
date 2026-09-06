@@ -727,6 +727,68 @@ type StartTargetOption = {
   label: string;
   reason: string;
   status: TargetStatus;
+  observation: string;
+};
+
+const targetObservation = (
+  repository: Repository,
+  pullRequests: PullRequest[] = [],
+  stacks: PrStack[] = [],
+  target: { kind: TargetKind; stackId?: string | null; parentPullRequestId?: string | null },
+) => {
+  const pullRequestMap = new Map(pullRequests.map((pullRequest) => [pullRequest.githubId, pullRequest]));
+  if (target.kind === "default") {
+    return JSON.stringify({ kind: "default", branch: repository.defaultBranch });
+  }
+
+  if (target.kind === "native_stack") {
+    const stack = stacks.find((candidate) => candidate.githubId === target.stackId);
+    return JSON.stringify({
+      kind: "native_stack",
+      id: target.stackId ?? null,
+      stack: stack
+        ? {
+          nodeId: stack.nodeId,
+          number: stack.number,
+          trunk: stack.trunkRef,
+          open: stack.open,
+          members: [...stack.members]
+            .sort((left, right) => left.position - right.position)
+            .map((member) => {
+              const pullRequest = pullRequestMap.get(member.pullRequestId);
+              return {
+                id: member.pullRequestId,
+                position: member.position,
+                head: pullRequest?.headRef ?? null,
+                base: pullRequest?.baseRef ?? null,
+              };
+            }),
+        }
+        : null,
+    });
+  }
+
+  const parent = pullRequests.find((pullRequest) => pullRequest.githubId === target.parentPullRequestId);
+  return JSON.stringify({
+    kind: "standalone_parent",
+    id: target.parentPullRequestId ?? null,
+    parent: parent
+      ? {
+        number: parent.number,
+        head: parent.headRef,
+        base: parent.baseRef,
+        stack: parent.stack
+          ? {
+            id: parent.stack.stackId,
+            number: parent.stack.stackNumber,
+            position: parent.stack.position,
+            size: parent.stack.size,
+            trunk: parent.stack.trunkRef,
+          }
+          : null,
+      }
+      : null,
+  });
 };
 
 export const startTargetOptions = (
@@ -748,6 +810,7 @@ export const startTargetOptions = (
     label: `Default branch · ${repository.defaultBranch ?? "unknown"}`,
     reason: defaultStatus.reason,
     status: defaultStatus,
+    observation: targetObservation(repository, pullRequests, stacks, { kind: "default" }),
   });
 
   const pullRequestMap = new Map(pullRequests.map((pullRequest) => [pullRequest.githubId, pullRequest]));
@@ -763,6 +826,7 @@ export const startTargetOptions = (
       label: `Native stack #${stack.number}${topPullRequest ? ` · top #${topPullRequest.number}` : ""}`,
       reason: status.reason,
       status,
+      observation: targetObservation(repository, pullRequests, stacks, { kind: "native_stack", stackId: stack.githubId }),
     });
   }
 
@@ -774,6 +838,7 @@ export const startTargetOptions = (
       label: `Standalone parent #${pullRequest.number} · ${pullRequest.title}`,
       reason: status.reason,
       status,
+      observation: targetObservation(repository, pullRequests, stacks, { kind: "standalone_parent", parentPullRequestId: pullRequest.githubId }),
     });
   }
   return options;
@@ -788,11 +853,13 @@ export const renderStartTargetOptions = (
   selected: string,
 ) => {
   const options = startTargetOptions(repository, pullRequests, stacks, accessRefresh, pullRequestsRefresh);
+  const observations = Object.fromEntries(options.map((option) => [option.value, option.observation]));
   const targetHelp = options.length === 1
     ? `<p class="mt-2 text-sm leading-normal text-muted">Native stack and standalone parent choices appear after a complete Pull request/stack read.</p>`
     : "";
   return `<fieldset class="mt-8 max-w-3xl" aria-describedby="target-help">
     <legend class="label mb-2 block p-0">Starting target</legend>
+    <input type="hidden" name="target_observations" value="${escapeHtml(JSON.stringify(observations))}">
     <div class="grid gap-3">
       ${options.map((option) => `<label class="flex min-h-14 items-start gap-3 rounded-field border border-control-border bg-base-100 p-3 ${option.status.kind === "eligible" ? "cursor-pointer" : "opacity-90"}">
         <input class="radio radio-primary mt-1" type="radio" name="target" value="${escapeHtml(option.value)}"${option.value === selected ? " checked" : ""}${option.status.kind === "eligible" ? "" : " disabled"}>

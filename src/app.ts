@@ -207,6 +207,22 @@ const parseTargetSelection = (value: string | undefined): SessionTarget | undefi
     : { kind: "standalone_parent", parentPullRequestId: id };
 };
 
+const parseTargetObservations = (value: string | undefined) => {
+  if (!value || value.length > MAX_FORM_BYTES) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const observations: Record<string, string> = {};
+    for (const [target, observation] of Object.entries(parsed)) {
+      if (!targetSelectionPattern.test(target) || typeof observation !== "string" || observation.length > MAX_FORM_BYTES) return undefined;
+      observations[target] = observation;
+    }
+    return observations;
+  } catch {
+    return undefined;
+  }
+};
+
 const redirectToSession = (c: Context, session: Pick<Session, "atlasId">) => {
   const destination = sessionLocation(session);
   if (isHtmx(c)) {
@@ -406,6 +422,9 @@ export const createApp = (options: AppOptions) => {
 
       if (isHtmx(c)) c.header("HX-Retarget", "body");
       if (repository && spec) {
+        const pullRequests = persistence.listPullRequests(repository.githubId);
+        const stacks = persistence.listPrStacks(repository.githubId);
+        const pullRequestsRefresh = persistence.getRefreshState(repository.githubId, "pullRequests");
         return c.html(renderStartSessionPage({
           ...retryOptions,
           repository,
@@ -413,6 +432,9 @@ export const createApp = (options: AppOptions) => {
           notice: "Signed in. Review the preserved form, then choose Start Session to retry it.",
           accessRefresh: persistence.getRefreshState(repository.githubId, "access"),
           specsRefresh: persistence.getRefreshState(repository.githubId, "specs"),
+          pullRequests,
+          stacks,
+          pullRequestsRefresh,
           target: pending.target,
         }), 200);
       }
@@ -734,6 +756,7 @@ export const createApp = (options: AppOptions) => {
     const prompt = stringField(form.prompt) ?? "";
     const submittedTarget = stringField(form.target);
     const targetValue = submittedTarget ?? "default";
+    const submittedTargetObservations = parseTargetObservations(stringField(form.target_observations));
     const submittedSubmissionId = stringField(form.submission_id);
     const submissionId = submittedSubmissionId && submissionIdPattern.test(submittedSubmissionId)
       ? submittedSubmissionId
@@ -858,31 +881,11 @@ export const createApp = (options: AppOptions) => {
         persistence.getRefreshState(repositoryId, "access"),
         currentRefresh,
       ).find((candidate) => candidate.value === targetValue);
-      const selectedParent = selectedTarget.kind === "standalone_parent"
-        ? currentPullRequests.find((pullRequest) => pullRequest.githubId === selectedTarget.parentPullRequestId)
-        : undefined;
-      const selectedParentStack = selectedParent?.stack
-        ? currentStacks.find((stack) => stack.githubId === selectedParent.stack?.stackId)
-        : undefined;
-      const associatedParentOption = selectedParentStack
-        ? startTargetOptions(
-          repository,
-          currentPullRequests,
-          currentStacks,
-          persistence.getRefreshState(repositoryId, "access"),
-          currentRefresh,
-        ).find((candidate) => candidate.value === `stack:${selectedParentStack.githubId}`)
-        : undefined;
+      if (submittedTargetObservations?.[targetValue] !== option?.observation) {
+        return renderError(409, "The selected target changed while this form was open. Review the current target and confirm it again.", repository, spec);
+      }
       if (!option || option.status.kind !== "eligible") {
-        if (selectedTarget.kind === "standalone_parent" && associatedParentOption?.status.kind === "eligible") {
-          selectedQueueTarget = {
-            ...selectedTarget,
-            parentPullRequestNumber: selectedParent?.number ?? null,
-          };
-          selectedTargetBranch = selectedParent?.headRef ?? repository.defaultBranch!;
-        } else {
-          return renderError(409, option?.status.reason ?? "The selected starting target is no longer available. Choose a current eligible target.", repository, spec);
-        }
+        return renderError(409, option?.status.reason ?? "The selected starting target is no longer available. Choose a current eligible target.", repository, spec);
       }
       if (selectedTarget.kind === "native_stack") {
         const stack = currentStacks.find((candidate) => candidate.githubId === selectedTarget.stackId);

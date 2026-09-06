@@ -119,6 +119,7 @@ const initialMessage = (session: Session, repository: { fullName: string; htmlUr
   `Target: ${session.targetKind === "native_stack" ? `native stack #${session.targetStackNumber ?? "unknown"}` : session.targetKind === "standalone_parent" ? `standalone parent #${session.targetParentPullRequestNumber ?? "unknown"}` : "default branch"}`,
   `Starting base branch: ${session.resolvedParentBranch ?? session.baseBranch ?? session.targetBranch}`,
   `Trunk branch: ${session.resolvedTrunkBranch ?? session.baseBranch ?? session.targetBranch}`,
+  ...(session.targetKind === "native_stack" ? [`Native stack ID: ${session.resolvedStackId ?? session.targetStackId ?? "unknown"}`] : []),
   ...(session.resolvedParentPullRequestId ? [
     `Parent PR: #${session.resolvedParentPullRequestNumber ?? "unknown"}`,
     `Parent PR URL: ${session.resolvedParentPullRequestUrl ?? "unknown"}`,
