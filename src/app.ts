@@ -216,6 +216,18 @@ const viewerCursor = (value: string | undefined) => {
   return value;
 };
 
+const viewerShellId = (value: string | undefined) => {
+  if (value === undefined) return undefined;
+  return /^[A-Za-z0-9._:-]{1,256}$/u.test(value) ? value : null;
+};
+
+const viewerShellCursor = (value: string | undefined) => {
+  if (value === undefined || value === "") return undefined;
+  if (!/^\d{1,16}$/u.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+};
+
 const openCodeEventData = (event: unknown) => {
   const value = (event as { data?: unknown })?.data;
   return value && typeof value === "object" && !Array.isArray(value)
@@ -1078,6 +1090,10 @@ export const createApp = (options: AppOptions) => {
     if (childId !== undefined && !openCodeSessionIdPattern.test(childId)) return c.text("Invalid child OpenCode Session ID", 400);
     const cursorValue = viewerCursor(c.req.query("cursor"));
     if (cursorValue === null) return c.text("Invalid message cursor", 400);
+    const shellId = viewerShellId(c.req.query("shell"));
+    if (shellId === null) return c.text("Invalid shell ID", 400);
+    const shellCursor = viewerShellCursor(c.req.query("shellCursor"));
+    if (shellCursor === null || (!shellId && shellCursor !== undefined)) return c.text("Invalid shell output cursor", 400);
     const limit = viewerLimit(c.req.query("limit"));
     if (limit === undefined) return c.text("Invalid viewer page size", 400);
 
@@ -1086,6 +1102,8 @@ export const createApp = (options: AppOptions) => {
       projection = await sessionViewer.hydrate(session, {
         childId,
         cursor: cursorValue,
+        shellId,
+        shellCursor,
         limit,
       });
     } catch (error) {

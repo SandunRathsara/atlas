@@ -33,6 +33,8 @@ export type ViewerShell = {
   outputUnavailable?: boolean;
 };
 
+type SessionShellMessage = Extract<SessionMessageInfo, { type: "shell" }>;
+
 export type ViewerPending = {
   permissions: PermissionRequest[];
   forms: FormInfo[];
@@ -118,6 +120,11 @@ const locationInput = (info: Pick<SessionInfo, "location">) => ({
   ...(info.location.workspaceID ? { workspace: info.location.workspaceID } : {}),
 });
 
+const sameLocation = (
+  actual: { directory: string; workspaceID?: string },
+  expected: Pick<SessionInfo, "location">,
+) => actual.directory === expected.location.directory && actual.workspaceID === expected.location.workspaceID;
+
 const errorLabel = (label: string) => `${label} is unavailable; the visible Session data may be partial.`;
 
 const terminalState = (outcome: SessionInfo["outcome"]): ViewerSemanticState | undefined => {
@@ -132,10 +139,11 @@ const initialSemanticState = (
   pending: ViewerPending,
   active: boolean,
 ): ViewerSemanticState => {
+  const terminal = terminalState(info.outcome);
+  if (terminal) return terminal;
   if (pending.permissions.length > 0 || pending.forms.length > 0) return "waiting";
   if (active) return "running";
-  const terminal = terminalState(info.outcome);
-  return terminal ?? "idle";
+  return "idle";
 };
 
 const listPages = async <T>(
@@ -298,6 +306,7 @@ export const createViewerEventReducer = (rootSessionId: string, rootDirectory?: 
   const touchedSessions = new Set<string>();
   const touchedMessages = new Set<string>();
   const semanticBySession = new Map<string, ViewerSemanticState>();
+  const shellSessions = new Map<string, string>();
   const messageOverlays = new Map<string, MutableViewerMessageOverlay>();
   let duplicateEventCount = 0;
   let revision = 0;
@@ -353,9 +362,12 @@ export const createViewerEventReducer = (rootSessionId: string, rootDirectory?: 
       const info = data.info;
       const shell = info && typeof info === "object" && !Array.isArray(info) ? info as Record<string, unknown> : undefined;
       const metadata = shell?.metadata;
-      const correlated = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      const metadataSession = metadata && typeof metadata === "object" && !Array.isArray(metadata)
         ? stringValue((metadata as Record<string, unknown>).sessionID)
         : undefined;
+      const shellId = stringValue(data.id) ?? stringValue(shell?.id);
+      if (shellId && metadataSession) shellSessions.set(shellId, metadataSession);
+      const correlated = metadataSession ?? (shellId ? shellSessions.get(shellId) : undefined);
       if (!markSession(correlated)) return false;
       touchedSessions.add(correlated!);
       revision += 1;
@@ -408,7 +420,7 @@ export const createViewerEventReducer = (rootSessionId: string, rootDirectory?: 
             } else if (type.endsWith(".delta")) {
               const delta = stringValue(data.delta);
               if (delta !== undefined && !part.ended) {
-                const key = id ?? `${contentType}:${ordinal}:${delta}`;
+                const key = id ?? `${contentType}:${ordinal}:${eventRevision}`;
                 if (!part.deltaKeys.has(key)) {
                   part.deltaKeys.add(key);
                   part.deltas.push({ key, text: delta, revision: eventRevision });
@@ -439,7 +451,7 @@ export const createViewerEventReducer = (rootSessionId: string, rootDirectory?: 
             } else if (type === "session.tool.input.delta") {
               const delta = stringValue(data.delta);
               if (delta !== undefined && !tool.inputEnded) {
-                const key = id ?? `input:${toolId}:${delta}`;
+                const key = id ?? `input:${toolId}:${eventRevision}`;
                 if (!tool.inputDeltaKeys.has(key)) {
                   tool.inputDeltaKeys.add(key);
                   tool.inputDeltas.push({ key, text: delta, revision: eventRevision });
@@ -489,6 +501,15 @@ export const createViewerEventReducer = (rootSessionId: string, rootDirectory?: 
     for (const id of ids) knownSessions.add(id);
   };
 
+  const addKnownShells = (shells: Iterable<Pick<ShellInfo, "id" | "metadata">>) => {
+    for (const shell of shells) {
+      const sessionId = shell.metadata && typeof shell.metadata === "object"
+        ? stringValue(shell.metadata.sessionID)
+        : undefined;
+      if (sessionId) shellSessions.set(shell.id, sessionId);
+    }
+  };
+
   const snapshot = (): ViewerEventSnapshot => ({
     revision,
     seenEventCount: seen.size,
@@ -501,16 +522,7 @@ export const createViewerEventReducer = (rootSessionId: string, rootDirectory?: 
     messageOverlays: new Map([...messageOverlays].map(([messageId, overlay]) => [messageId, copyMessageOverlay(overlay)])),
   });
 
-  return { apply, addKnownSessions, snapshot };
-};
-
-const appendDelta = (base: string, delta: string) => {
-  if (!delta || base.endsWith(delta)) return base;
-  const maximum = Math.min(base.length, delta.length);
-  for (let overlap = maximum; overlap > 0; overlap -= 1) {
-    if (base.slice(-overlap) === delta.slice(0, overlap)) return base + delta.slice(overlap);
-  }
-  return base + delta;
+  return { apply, addKnownSessions, addKnownShells, snapshot };
 };
 
 const contentPartIndex = (content: AssistantContent[], type: "text" | "reasoning", ordinal: number) => {
@@ -544,7 +556,7 @@ const applyTextOverlay = (
   }
   const current = content[index];
   if (current?.type !== type) return;
-  current.text = end ? end.text : deltas.reduce((value, delta) => appendDelta(value, delta.text), current.text);
+  current.text = end ? end.text : deltas.reduce((value, delta) => value + delta.text, current.text);
 };
 
 const toolContent = (value: unknown) => Array.isArray(value)
@@ -596,7 +608,7 @@ const applyToolOverlay = (
     return;
   }
 
-  const inputText = inputEnd?.text ?? inputDeltas.reduce((value, delta) => appendDelta(value, delta.text), current.state.status === "streaming" ? current.state.input : "");
+  const inputText = inputEnd?.text ?? inputDeltas.reduce((value, delta) => value + delta.text, current.state.status === "streaming" ? current.state.input : "");
   current.state = { status: "streaming", input: inputText };
 };
 
@@ -615,7 +627,7 @@ const applyMessageOverlay = (message: SessionMessageInfo, overlay: ViewerMessage
 const applyLiveOverlay = (root: ViewerSessionNode, snapshot: ViewerEventSnapshot) => {
   const visit = (node: ViewerSessionNode) => {
     const live = snapshot.semanticBySession.get(node.info.id);
-    if (live === "running" || live === "waiting") node.semanticState = live;
+    if (!node.info.outcome && (live === "running" || live === "waiting")) node.semanticState = live;
     if (live === "idle" && !node.info.outcome) node.semanticState = live;
     for (const message of node.messages) {
       const overlay = snapshot.messageOverlays.get(message.id);
@@ -631,6 +643,8 @@ type BuildOptions = {
   atlasSession: Session;
   requestedChildId?: string;
   cursor?: string;
+  shellId?: string;
+  shellCursor?: number;
   limit: number;
   partialReasons: string[];
   eventReducer: ReturnType<typeof createViewerEventReducer>;
@@ -659,7 +673,7 @@ const createViewerNode = (
 const readMessagePage = async (client: OpenCodeClient, sessionId: string, cursor: string | undefined, limit: number) => {
   const input: MessageListInput = cursor
     ? { sessionID: sessionId, cursor, limit }
-    : { sessionID: sessionId, order: "asc", limit };
+    : { sessionID: sessionId, order: "desc", limit };
   return client.message.list(input);
 };
 
@@ -690,10 +704,16 @@ const readPending = async (client: OpenCodeClient, info: SessionInfo, partialRea
   return { permissions, forms, inbox };
 };
 
-const readShells = async (client: OpenCodeClient, info: SessionInfo, partialReasons: string[]) => {
+const readShells = async (
+  client: OpenCodeClient,
+  info: SessionInfo,
+  partialReasons: string[],
+  requestedShellId?: string,
+  requestedShellCursor?: number,
+) => {
   try {
     const response = await client.shell.list({ location: locationInput(info) });
-    if (response.location.directory !== info.location.directory) {
+    if (!sameLocation(response.location, info)) {
       partialReasons.push(errorLabel("Running shell location"));
       return [];
     }
@@ -707,9 +727,13 @@ const readShells = async (client: OpenCodeClient, info: SessionInfo, partialReas
         const output = await client.shell.output({
           id: shell.id,
           location: locationInput(info),
-          cursor: 0,
+          cursor: shell.id === requestedShellId ? requestedShellCursor ?? 0 : 0,
           limit: MAX_SHELL_OUTPUT_BYTES,
         });
+        if (!sameLocation(output.location, info)) {
+          partialReasons.push(errorLabel("Shell output location"));
+          return { info: shell, outputUnavailable: true };
+        }
         return { info: shell, output: output.data };
       } catch {
         return { info: shell, outputUnavailable: true };
@@ -725,7 +749,7 @@ const readAgentMode = async (client: OpenCodeClient, info: SessionInfo, partialR
   if (!info.agent) return undefined;
   try {
     const response = await client.agent.list({ location: locationInput(info) });
-    if (response.location.directory !== info.location.directory) {
+    if (!sameLocation(response.location, info)) {
       partialReasons.push(errorLabel("Agent definition location"));
       return undefined;
     }
@@ -746,18 +770,19 @@ const findNode = (root: ViewerSessionNode, id: string): ViewerSessionNode | unde
 };
 
 const buildSnapshot = async (options: BuildOptions, rootInfo: SessionInfo, activeIds: ReadonlySet<string>) => {
-  const { client, atlasSession, requestedChildId, limit, partialReasons } = options;
+  const { client, atlasSession, requestedChildId, shellId, shellCursor, limit, partialReasons } = options;
   const seen = new Set<string>([rootInfo.id]);
   let nodeCount = 1;
 
   const buildTree = async (info: SessionInfo, depth: number): Promise<ViewerSessionNode> => {
     const pending = await readPending(client, info, partialReasons);
     const [shells, agentMode] = await Promise.all([
-      readShells(client, info, partialReasons),
+      readShells(client, info, partialReasons, shellId, shellCursor),
       readAgentMode(client, info, partialReasons),
     ]);
     const node = createViewerNode(info, activeIds, pending, shells, agentMode);
     options.eventReducer.addKnownSessions([info.id]);
+    options.eventReducer.addKnownShells(shells.map((shell) => shell.info));
     if (depth >= MAX_DESCENDANT_DEPTH || nodeCount >= MAX_DESCENDANTS) {
       partialReasons.push("The descendant tree is bounded; deeper child Sessions are not shown.");
       return node;
@@ -793,7 +818,7 @@ const buildSnapshot = async (options: BuildOptions, rootInfo: SessionInfo, activ
   const selected = requestedChildId ? findNode(root, requestedChildId) : root;
   if (!selected) throw new ViewerScopeError();
 
-  const readMessages = async (node: ViewerSessionNode, cursor?: string) => {
+  const readMessages = async (node: ViewerSessionNode, cursor?: string, readShellOutput = false) => {
     try {
       const page = await readMessagePage(client, node.info.id, cursor, limit);
       const seen = new Set<string>();
@@ -804,14 +829,35 @@ const buildSnapshot = async (options: BuildOptions, rootInfo: SessionInfo, activ
       });
       node.messagesLoaded = true;
       node.nextMessageCursor = page.cursor?.next ?? null;
+      if (readShellOutput && shellId) {
+        const shellMessage = node.messages.find((message): message is SessionShellMessage => message.type === "shell" && message.shellID === shellId);
+        if (shellMessage) {
+          try {
+            const output = await client.shell.output({
+              id: shellId,
+              location: locationInput(node.info),
+              cursor: shellCursor ?? 0,
+              limit: MAX_SHELL_OUTPUT_BYTES,
+            });
+            if (!sameLocation(output.location, node.info)) throw new Error("Shell output location did not match the Session");
+            shellMessage.output = output.data;
+          } catch {
+            partialReasons.push(errorLabel("Session shell output"));
+          }
+        }
+      }
     } catch {
       node.unavailableReason = errorLabel("Session messages");
       partialReasons.push(node.info.id === root.info.id ? errorLabel("Session messages") : errorLabel("Child Session messages"));
     }
   };
 
-  await readMessages(root, selected.info.id === root.info.id ? options.cursor : undefined);
-  if (selected.info.id !== root.info.id) await readMessages(selected, options.cursor);
+  await readMessages(root, selected.info.id === root.info.id ? options.cursor : undefined, selected.info.id === root.info.id);
+  if (selected.info.id !== root.info.id) await readMessages(selected, options.cursor, true);
+  if (shellId && !selected.shells.some((shell) => shell.info.id === shellId) &&
+      !selected.messages.some((message) => message.type === "shell" && message.shellID === shellId)) {
+    throw new ViewerScopeError("The requested shell is not a verified Session shell");
+  }
 
   return { root, selected };
 };
@@ -832,7 +878,7 @@ export const createSessionViewerService = (connection: ViewerConnection) => {
 
   const hydrate = async (
     atlasSession: Session,
-    options: { childId?: string; cursor?: string; limit?: number } = {},
+    options: { childId?: string; cursor?: string; shellId?: string; shellCursor?: number; limit?: number } = {},
   ): Promise<SessionViewerProjection> => {
     const limit = Math.min(Math.max(options.limit ?? DEFAULT_VIEWER_MESSAGE_LIMIT, 1), MAX_VIEWER_MESSAGE_LIMIT);
     const partialReasons: string[] = [];
@@ -888,6 +934,8 @@ export const createSessionViewerService = (connection: ViewerConnection) => {
         atlasSession,
         requestedChildId: options.childId,
         cursor: options.cursor,
+        shellId: options.shellId,
+        shellCursor: options.shellCursor,
         limit,
         partialReasons,
         eventReducer: reducer,
@@ -909,6 +957,8 @@ export const createSessionViewerService = (connection: ViewerConnection) => {
             atlasSession,
             requestedChildId: options.childId,
             cursor: options.cursor,
+            shellId: options.shellId,
+            shellCursor: options.shellCursor,
             limit,
             partialReasons,
             eventReducer: reducer,

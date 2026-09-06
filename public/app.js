@@ -116,6 +116,7 @@
   };
 
   const setViewerConnection = (root, state, reason) => {
+    if (state === "fresh" || state === "stale" || state === "partial") root.dataset.viewerFreshness = state;
     const badge = root.querySelector("[data-viewer-connection]");
     if (badge) {
       badge.textContent = state === "fresh" ? "Fresh" : state === "auth" ? "Sign-in expired" : state === "stale" ? "Stale" : "Partial";
@@ -179,14 +180,18 @@
           template.innerHTML = html;
           const replacement = template.content.querySelector("[data-session-viewer]");
           if (replacement?.querySelector("[data-viewer-content]")) {
-            replaceViewerMarkup(root, replacement);
-            const reconciledState = root.dataset.viewerFreshness === "fresh"
-              ? "fresh"
-              : root.dataset.viewerFreshness === "partial" ? "partial" : "stale";
-            controller.connectionState = reconciledState;
-            controller.connectionReason = reconciledState === "fresh" ? undefined : controller.connectionReason;
-            setViewerConnection(root, reconciledState, controller.connectionReason);
-            restoreContext(root, context);
+            if (replacement.dataset.viewerFreshness === "fresh") {
+              replaceViewerMarkup(root, replacement);
+              controller.connectionState = "fresh";
+              controller.connectionReason = undefined;
+              setViewerConnection(root, "fresh");
+              restoreContext(root, context);
+            } else {
+              root.dataset.viewerFreshness = "stale";
+              controller.connectionState = "stale";
+              controller.connectionReason = "Atlas could not complete Session reconciliation. Visible content is retained.";
+              setViewerConnection(root, "stale", controller.connectionReason);
+            }
           }
         }
       } catch {

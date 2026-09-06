@@ -11,7 +11,7 @@ export const APPROVED_OPENCODE_VERSION = "0.0.0-beta-19135";
 
 const DEFAULT_POLL_MS = 2_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
-const EVENT_CONNECT_TIMEOUT_MS = 10_000;
+const EVENT_CONNECT_TIMEOUT_MS = 1_000;
 const MAX_RETRY_MS = 30_000;
 const SESSION_ID_PATTERN = /^ses_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -170,7 +170,9 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   let stopped = false;
   let started = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let connectionPromise: Promise<OpenCodeClient> | undefined;
+  let transportState: "connected" | "stale" = "stale";
   const eventListeners = new Set<(event: OpenCodeEvent) => void>();
   const transportListeners = new Set<(state: "connected" | "stale", reason?: string) => void>();
   const evidence = new Map<string, EventEvidence>();
@@ -214,7 +216,11 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     retryAt = Date.now() + retryDelay;
     retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
     markStaleSessions(reason);
-    notifyTransport("stale", reason);
+    if (transportState !== "stale") {
+      transportState = "stale";
+      notifyTransport("stale", reason);
+    }
+    scheduleReconnect();
   };
 
   const consumeEvents = async (
@@ -222,8 +228,9 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     first: IteratorResult<OpenCodeEvent>,
     controller: AbortController,
   ) => {
-    let next = first;
+    let next: IteratorResult<OpenCodeEvent>;
     try {
+      next = await first;
       while (!next.done) {
         const event = next.value;
         notifyEvent(event);
@@ -255,11 +262,9 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
         }
         next = await iterator.next();
       }
-    } catch {
-      if (!controller.signal.aborted) resetStream("OpenCode event stream disconnected; canonical reconciliation is pending.");
     } finally {
       if (!controller.signal.aborted && streamController === controller) {
-        resetStream("OpenCode event stream closed; canonical reconciliation is pending.");
+        resetStream("OpenCode event stream disconnected; canonical reconciliation is pending.");
       }
     }
   };
@@ -308,8 +313,13 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     client = nextClient;
     streamController = controller;
     streamReady = true;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = undefined;
     retryDelay = 1_000;
-    notifyTransport("connected");
+    if (transportState !== "connected") {
+      transportState = "connected";
+      notifyTransport("connected");
+    }
     void consumeEvents(iterator, first, controller).catch(() => undefined);
     return nextClient;
   };
@@ -322,6 +332,15 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
       });
     }
     return connectionPromise;
+  };
+
+  const scheduleReconnect = () => {
+    if (stopped || streamReady || reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined;
+      void ensureClient().catch(() => scheduleReconnect());
+    }, Math.max(1, retryAt - Date.now()));
+    reconnectTimer.unref?.();
   };
 
   const saveIntent = (session: Session) => {
@@ -412,13 +431,6 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
       const remoteActive = Object.prototype.hasOwnProperty.call(active, session.openCodeSessionId);
       const retrying = currentEvidence?.status === "retry";
       const busy = remoteActive || currentEvidence?.executionStarted === true || currentEvidence?.status === "busy";
-      if (info.outcome && busy) {
-        options.persistence.markOpenCodeStale(
-          session.atlasId,
-          "OpenCode reported a terminal outcome alongside newer execution evidence; canonical reconciliation is pending.",
-        );
-        return undefined;
-      }
       const nextState = info.outcome === "succeeded"
         ? "succeeded"
         : info.outcome === "failed"
@@ -583,6 +595,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     }
 
     for (const session of sessions) {
+      if (activeClient !== client || !streamReady) return;
       await processSession(session, activeClient);
     }
   };
@@ -601,7 +614,9 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
         queueMicrotask(wake);
         return;
       }
-      timer = setTimeout(wake, pollMs);
+      const now = Date.now();
+      const nextDelay = retryAt > now ? retryAt - now : pollMs;
+      timer = setTimeout(wake, Math.max(1, nextDelay));
       timer.unref?.();
     });
   };
@@ -618,12 +633,15 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   const stop = () => {
     stopped = true;
     if (timer) clearTimeout(timer);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
     timer = undefined;
+    reconnectTimer = undefined;
     streamController?.abort();
     streamController = undefined;
     streamReady = false;
     client = undefined;
     connectionPromise = undefined;
+    transportState = "stale";
   };
 
   const enqueue = () => {
@@ -652,7 +670,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     getClient: ensureClient,
     onEvent,
     onTransport,
-    transportState: () => (streamReady ? "connected" as const : "stale" as const),
+    transportState: () => transportState,
   };
 };
 
