@@ -29,6 +29,6 @@
   });
 
   window.addEventListener("DOMContentLoaded", () => {
-    document.querySelector("[data-page-heading]")?.focus();
+    document.querySelector("[data-focus-on-swap], [data-page-heading]")?.focus();
   });
 })();

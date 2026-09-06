@@ -66,6 +66,60 @@ export type SpecInput = Omit<Spec, "repositoryId" | "observedAt" | "isCurrent"> 
   observedAt?: string;
 };
 
+export type SessionState =
+  | "queued"
+  | "preparing"
+  | "running"
+  | "waiting"
+  | "idle"
+  | "succeeded"
+  | "failed"
+  | "interrupted"
+  | "failed_setup";
+
+export type SessionFilter = "active" | "all" | SessionState;
+
+export type Session = {
+  atlasId: string;
+  repositoryId: string;
+  specGithubId: string;
+  specIssueNumber: string;
+  specTitle: string;
+  specBody: string;
+  specHtmlUrl: string;
+  submissionId: string;
+  submissionOrder: number;
+  submittedAt: string;
+  prompt: string;
+  targetKind: "default";
+  targetBranch: string;
+  state: SessionState;
+  stateReason: string | null;
+  directory: string | null;
+  openCodeSessionId: string | null;
+  initialMessageId: string | null;
+  exactMessage: string | null;
+  executionSlotHeld: boolean;
+  updatedAt: string;
+};
+
+export type QueueSessionInput = {
+  atlasId: string;
+  repositoryId: string;
+  spec: Pick<Spec, "githubId" | "issueNumber" | "title" | "body" | "htmlUrl">;
+  submissionId: string;
+  submissionOrderTime: string;
+  prompt: string;
+  targetKind: "default";
+  targetBranch: string;
+};
+
+export type QueueSessionResult =
+  | { kind: "created"; session: Session }
+  | { kind: "existing"; session: Session }
+  | { kind: "conflict"; session: Session }
+  | { kind: "unfinished"; session: Session };
+
 type PersistenceOptions = {
   path: string;
   now?: () => number;
@@ -116,6 +170,30 @@ type RefreshRow = {
   last_failure_at: string | null;
   availability: RefreshAvailability;
   failure_reason: string | null;
+};
+
+type SessionRow = {
+  atlas_id: string;
+  repository_id: string;
+  spec_github_id: string;
+  spec_issue_number: string;
+  spec_title: string;
+  spec_body: string;
+  spec_html_url: string;
+  submission_id: string;
+  submission_order: number;
+  submitted_at: string;
+  prompt: string;
+  target_kind: "default";
+  target_branch: string;
+  state: SessionState;
+  state_reason: string | null;
+  directory: string | null;
+  opencode_session_id: string | null;
+  initial_message_id: string | null;
+  exact_message: string | null;
+  execution_slot_held: number;
+  updated_at: string;
 };
 
 const migrations = [
@@ -183,6 +261,49 @@ const migrations = [
       SET was_spec = CASE WHEN is_pull_request = 0 AND has_spec_label = 1 THEN 1 ELSE 0 END;
     `,
   },
+  {
+    version: 3,
+    sql: `
+      CREATE UNIQUE INDEX specs_repository_github_idx
+        ON specs (repository_id, github_id);
+
+      CREATE TABLE sessions (
+        atlas_id TEXT PRIMARY KEY NOT NULL,
+        repository_id TEXT NOT NULL REFERENCES repositories (github_id),
+        spec_github_id TEXT NOT NULL,
+        spec_issue_number TEXT NOT NULL,
+        spec_title TEXT NOT NULL,
+        spec_body TEXT NOT NULL,
+        spec_html_url TEXT NOT NULL,
+        submission_id TEXT NOT NULL UNIQUE,
+        submission_order INTEGER NOT NULL UNIQUE CHECK (submission_order > 0),
+        submitted_at TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        target_kind TEXT NOT NULL CHECK (target_kind = 'default'),
+        target_branch TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('queued', 'preparing', 'running', 'waiting', 'idle', 'succeeded', 'failed', 'interrupted', 'failed_setup')),
+        state_reason TEXT,
+        directory TEXT,
+        opencode_session_id TEXT,
+        initial_message_id TEXT,
+        exact_message TEXT,
+        execution_slot_held INTEGER NOT NULL DEFAULT 0 CHECK (execution_slot_held IN (0, 1)),
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (repository_id, spec_github_id) REFERENCES specs (repository_id, github_id),
+        FOREIGN KEY (repository_id, spec_issue_number) REFERENCES specs (repository_id, issue_number)
+      );
+
+      CREATE UNIQUE INDEX sessions_unfinished_spec_idx
+        ON sessions (spec_github_id)
+        WHERE state IN ('queued', 'preparing', 'running', 'waiting', 'idle');
+
+      CREATE INDEX sessions_repository_order_idx
+        ON sessions (repository_id, submission_order DESC);
+
+      CREATE INDEX sessions_spec_order_idx
+        ON sessions (spec_github_id, submission_order DESC);
+    `,
+  },
 ];
 
 const isoNow = (now: () => number) => new Date(now()).toISOString();
@@ -244,6 +365,30 @@ const toRefreshState = (row: RefreshRow): RefreshState => ({
   lastFailureAt: row.last_failure_at,
   availability: row.availability,
   failureReason: row.failure_reason,
+});
+
+const toSession = (row: SessionRow): Session => ({
+  atlasId: row.atlas_id,
+  repositoryId: row.repository_id,
+  specGithubId: row.spec_github_id,
+  specIssueNumber: row.spec_issue_number,
+  specTitle: row.spec_title,
+  specBody: row.spec_body,
+  specHtmlUrl: row.spec_html_url,
+  submissionId: row.submission_id,
+  submissionOrder: row.submission_order,
+  submittedAt: row.submitted_at,
+  prompt: row.prompt,
+  targetKind: row.target_kind,
+  targetBranch: row.target_branch,
+  state: row.state,
+  stateReason: row.state_reason,
+  directory: row.directory,
+  openCodeSessionId: row.opencode_session_id,
+  initialMessageId: row.initial_message_id,
+  exactMessage: row.exact_message,
+  executionSlotHeld: row.execution_slot_held === 1,
+  updatedAt: row.updated_at,
 });
 
 const integerPragma = (database: Database, pragma: string, expected: number) => {
@@ -487,6 +632,118 @@ export const createPersistence = (options: PersistenceOptions) => {
     return row ? toSpec(row) : undefined;
   };
 
+  const getSession = (atlasId: string) => {
+    const row = database.query("SELECT * FROM sessions WHERE atlas_id = ?").get(atlasId) as SessionRow | null;
+    return row ? toSession(row) : undefined;
+  };
+
+  const getSessionBySubmissionId = (submissionId: string) => {
+    const row = database.query("SELECT * FROM sessions WHERE submission_id = ?").get(submissionId) as SessionRow | null;
+    return row ? toSession(row) : undefined;
+  };
+
+  const queueSession = (input: QueueSessionInput): QueueSessionResult => {
+    let result: QueueSessionResult;
+    const queue = database.transaction(() => {
+      const existingRow = database.query(
+        "SELECT * FROM sessions WHERE submission_id = ?",
+      ).get(input.submissionId) as SessionRow | null;
+
+      if (existingRow) {
+        const existing = toSession(existingRow);
+        const sameSubmission = existing.repositoryId === input.repositoryId &&
+          existing.specGithubId === input.spec.githubId &&
+          existing.specIssueNumber === input.spec.issueNumber &&
+          existing.prompt === input.prompt;
+        result = { kind: sameSubmission ? "existing" : "conflict", session: existing };
+        return;
+      }
+
+      const unfinishedRow = database.query(`
+        SELECT * FROM sessions
+        WHERE spec_github_id = ?
+          AND state IN ('queued', 'preparing', 'running', 'waiting', 'idle')
+        ORDER BY submission_order
+        LIMIT 1
+      `).get(input.spec.githubId) as SessionRow | null;
+
+      if (unfinishedRow) {
+        result = { kind: "unfinished", session: toSession(unfinishedRow) };
+        return;
+      }
+
+      const orderRow = database.query(
+        "SELECT COALESCE(MAX(submission_order), 0) + 1 AS next_order FROM sessions",
+      ).get() as { next_order: number };
+      const submittedAt = input.submissionOrderTime;
+      database.query(`
+        INSERT INTO sessions (
+          atlas_id, repository_id, spec_github_id, spec_issue_number, spec_title,
+          spec_body, spec_html_url, submission_id, submission_order, submitted_at,
+          prompt, target_kind, target_branch, state, state_reason, execution_slot_held,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 0, ?)
+      `).run(
+        input.atlasId,
+        input.repositoryId,
+        input.spec.githubId,
+        input.spec.issueNumber,
+        input.spec.title,
+        input.spec.body,
+        input.spec.htmlUrl,
+        input.submissionId,
+        orderRow.next_order,
+        submittedAt,
+        input.prompt,
+        input.targetKind,
+        input.targetBranch,
+        "Awaiting downstream preparation.",
+        submittedAt,
+      );
+
+      result = { kind: "created", session: getSession(input.atlasId)! };
+    });
+    queue.immediate();
+    return result!;
+  };
+
+  const listSessions = (repositoryId: string, filter: SessionFilter = "active") => {
+    const activeStates = "('queued', 'preparing', 'running', 'waiting', 'idle')";
+    if (filter === "active") {
+      const rows = database.query(`
+        SELECT * FROM sessions
+        WHERE repository_id = ? AND state IN ${activeStates}
+        ORDER BY submission_order DESC
+      `).all(repositoryId) as SessionRow[];
+      return rows.map(toSession);
+    }
+
+    if (filter === "all") {
+      const rows = database.query(`
+        SELECT * FROM sessions
+        WHERE repository_id = ?
+        ORDER BY submission_order DESC
+      `).all(repositoryId) as SessionRow[];
+      return rows.map(toSession);
+    }
+
+    const rows = database.query(`
+      SELECT * FROM sessions
+      WHERE repository_id = ? AND state = ?
+      ORDER BY submission_order DESC
+    `).all(repositoryId, filter) as SessionRow[];
+    return rows.map(toSession);
+  };
+
+  const listSessionsForSpec = (repositoryId: string, issueNumber: string) => {
+    const rows = database.query(`
+      SELECT * FROM sessions
+      WHERE repository_id = ? AND spec_issue_number = ?
+      ORDER BY submission_order DESC
+    `).all(repositoryId, issueNumber) as SessionRow[];
+    return rows.map(toSession);
+  };
+
   return {
     database,
     close: () => database.close(),
@@ -500,6 +757,11 @@ export const createPersistence = (options: PersistenceOptions) => {
     replaceSpecs,
     listSpecs,
     getSpec,
+    getSession,
+    getSessionBySubmissionId,
+    queueSession,
+    listSessions,
+    listSessionsForSpec,
   };
 };
 
