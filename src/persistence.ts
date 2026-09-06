@@ -529,6 +529,13 @@ const migrations = [
         WHERE working_branch IS NOT NULL;
     `,
   },
+  {
+    version: 7,
+    sql: `
+      ALTER TABLE sessions ADD COLUMN admission_blocked INTEGER NOT NULL DEFAULT 0
+        CHECK (admission_blocked IN (0, 1));
+    `,
+  },
 ];
 
 const isoNow = (now: () => number) => new Date(now()).toISOString();
@@ -1184,6 +1191,7 @@ export const createPersistence = (options: PersistenceOptions) => {
     atlasId: string,
     intent: PreparationIntent,
     globalCapacity: number,
+    freshlyVerified = false,
   ) => {
     if (!Number.isSafeInteger(globalCapacity) || globalCapacity < 1) {
       throw new Error("Global Session capacity must be a positive safe integer");
@@ -1198,6 +1206,14 @@ export const createPersistence = (options: PersistenceOptions) => {
           AND state IN ('preparing', 'running', 'waiting', 'idle')
       `).get() as { count: number };
       if (held.count >= globalCapacity) return;
+
+      if (freshlyVerified) {
+        database.query(`
+          UPDATE sessions
+          SET admission_blocked = 0
+          WHERE atlas_id = ? AND state = 'queued'
+        `).run(atlasId);
+      }
 
       const eligible = database.query(`
         WITH locally_eligible AS (
@@ -1218,6 +1234,7 @@ export const createPersistence = (options: PersistenceOptions) => {
             AND sp.state = 'open'
             AND sp.has_spec_label = 1
             AND sp.is_pull_request = 0
+            AND s.admission_blocked = 0
         )
         SELECT s.*
         FROM sessions s
@@ -1299,6 +1316,7 @@ export const createPersistence = (options: PersistenceOptions) => {
             preparation_checkpoint = 'queued',
             preparation_reason = ?,
             prepared_at = NULL,
+            admission_blocked = 0,
             execution_slot_held = 0,
             updated_at = ?
         WHERE atlas_id = ?
@@ -1307,6 +1325,18 @@ export const createPersistence = (options: PersistenceOptions) => {
       `).run(reason, reason, isoNow(now), atlasId);
     });
     requeue.immediate();
+    return getSession(atlasId);
+  };
+
+  const blockQueuedPreparation = (atlasId: string, reason: string) => {
+    database.query(`
+      UPDATE sessions
+      SET admission_blocked = 1,
+          state_reason = ?,
+          preparation_reason = ?,
+          updated_at = ?
+      WHERE atlas_id = ? AND state = 'queued'
+    `).run(reason, reason, isoNow(now), atlasId);
     return getSession(atlasId);
   };
 
@@ -1389,6 +1419,7 @@ export const createPersistence = (options: PersistenceOptions) => {
     claimPreparation,
     setPreparationCheckpoint,
     setQueuedSessionReason,
+    blockQueuedPreparation,
     requeuePreparation,
     failPreparation,
     listSessions,

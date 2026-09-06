@@ -17,10 +17,13 @@ import type {
 const DEFAULT_SESSION_ROOT = "/var/lib/atlas/sessions";
 const DEFAULT_CAPACITY = 1;
 const DEFAULT_POLL_MS = 2_000;
-const DEFAULT_MIN_FREE_BYTES = 1;
+export const DEFAULT_MIN_FREE_BYTES = 10 * 1024 * 1024 * 1024;
 const SHA_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/iu;
 const REPOSITORY_PART = /^[A-Za-z0-9_.-]+$/u;
 const BRANCH_PATTERN = /^(?!\.)(?!.*\.\.)(?!.*\/{2})(?!.*@\{)(?!.*\.$)(?!.*\/$)[A-Za-z0-9._/-]+$/u;
+
+export const hasRequiredFreeSpace = (availableBytes: number, minimumBytes: number) =>
+  Number.isFinite(availableBytes) && availableBytes >= minimumBytes;
 
 type PreparationRefresh = {
   ok: boolean;
@@ -182,6 +185,7 @@ export const createPreparationService = (options: PreparationOptions) => {
   if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 64) throw new Error("Global preparation capacity is invalid");
   const pollMs = parsePoll(options.pollMs);
   const minFreeBytes = options.minFreeBytes ?? parseMinFreeBytes(process.env.ATLAS_MIN_FREE_BYTES, DEFAULT_MIN_FREE_BYTES);
+  if (!Number.isSafeInteger(minFreeBytes) || minFreeBytes < 1) throw new Error("Minimum free Session storage must be a positive safe integer");
   const gitBinary = options.gitBinary ?? process.env.ATLAS_GIT_BINARY ?? Bun.which("git") ?? "/usr/bin/git";
   const authorized = options.authorizedRepositories
     ? new Set(options.authorizedRepositories.map((value) => value.toLocaleLowerCase("en-US")))
@@ -211,7 +215,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       accessSync(sessionRoot, constants.R_OK | constants.W_OK | constants.X_OK);
       const filesystem = statfsSync(sessionRoot);
       const availableBytes = Number(filesystem.bavail) * Number(filesystem.bsize);
-      if (!Number.isFinite(availableBytes) || availableBytes < minFreeBytes) {
+      if (!hasRequiredFreeSpace(availableBytes, minFreeBytes)) {
         throw new StorageError("Waiting for Session storage free space to recover.");
       }
     } catch (error) {
@@ -231,11 +235,14 @@ export const createPreparationService = (options: PreparationOptions) => {
     }
   };
 
-  const setReason = (session: Session, reason: string) => {
+  const setReason = (session: Session, reason: string, block = false) => {
     try {
-      options.persistence.setQueuedSessionReason(session.atlasId, reason);
+      if (block) options.persistence.blockQueuedPreparation(session.atlasId, reason);
+      else options.persistence.setQueuedSessionReason(session.atlasId, reason);
+      return true;
     } catch {
       // Persistence failure is intentionally not converted into a successful retry.
+      return false;
     }
   };
 
@@ -458,13 +465,13 @@ export const createPreparationService = (options: PreparationOptions) => {
       try {
         target = await verifyTarget(session);
       } catch (error) {
-        setReason(session, error instanceof PreparationError ? error.message : "Waiting for safe GitHub verification.");
+        if (!setReason(session, error instanceof PreparationError ? error.message : "Waiting for safe GitHub verification.", true)) return;
         continue;
       }
       const intent = intentFor(session, target.sha);
       let claimed: Session | undefined;
       try {
-        claimed = options.persistence.claimPreparation(session.atlasId, intent, capacity);
+        claimed = options.persistence.claimPreparation(session.atlasId, intent, capacity, true);
       } catch {
         return;
       }

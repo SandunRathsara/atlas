@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createCredentialBoundary } from "../src/credentials.ts";
-import { createPreparationService } from "../src/preparation.ts";
+import { createPreparationService, DEFAULT_MIN_FREE_BYTES, hasRequiredFreeSpace } from "../src/preparation.ts";
 import { createPersistence, type RepositoryInput, type SpecInput } from "../src/persistence.ts";
 
 const root = join(tmpdir(), `atlas-issue-27-fixes-${crypto.randomUUID()}`);
@@ -53,11 +53,16 @@ const candidate = {
   hasIssues: repository.hasIssues,
 };
 
-const queue = (persistence: ReturnType<typeof createPersistence>, issueNumber: string, atlasId: string) => {
+const queue = (
+  persistence: ReturnType<typeof createPersistence>,
+  issueNumber: string,
+  atlasId: string,
+  targetRepository: RepositoryInput = repository,
+) => {
   const saved = persistence.queueSession({
     atlasId,
-    repositoryId: repository.githubId,
-    spec: persistence.getSpec(repository.githubId, issueNumber)!,
+    repositoryId: targetRepository.githubId,
+    spec: persistence.getSpec(targetRepository.githubId, issueNumber)!,
     submissionId: `${atlasId}-submission`,
     submissionOrderTime: new Date().toISOString(),
     prompt: "start",
@@ -66,6 +71,10 @@ const queue = (persistence: ReturnType<typeof createPersistence>, issueNumber: s
   });
   assert.equal(saved.kind, "created");
 };
+
+assert.equal(DEFAULT_MIN_FREE_BYTES, 10 * 1024 * 1024 * 1024);
+assert.equal(hasRequiredFreeSpace(DEFAULT_MIN_FREE_BYTES - 1, DEFAULT_MIN_FREE_BYTES), false);
+assert.equal(hasRequiredFreeSpace(DEFAULT_MIN_FREE_BYTES, DEFAULT_MIN_FREE_BYTES), true);
 
 const fakeGithub = {
   listInstallationRepositories: async () => [candidate],
@@ -96,6 +105,43 @@ try {
     workingBranch: "atlas/ses_2",
   };
   assert.equal(persistence.claimPreparation("ses_2", intent, 1), undefined, "older eligible Session must win atomically");
+
+  const olderRepository: RepositoryInput = { ...repository, githubId: "10", name: "old", fullName: "Acme/old", htmlUrl: "https://github.com/Acme/old" };
+  const youngerRepository: RepositoryInput = { ...repository, githubId: "11", name: "young", fullName: "Acme/young", htmlUrl: "https://github.com/Acme/young" };
+  const candidateFor = (target: RepositoryInput) => ({ ...candidate, id: target.githubId, name: target.name, fullName: target.fullName, htmlUrl: target.htmlUrl });
+  const freshPersistence = createPersistence({ path: ":memory:" });
+  freshPersistence.upsertRepository(olderRepository);
+  freshPersistence.upsertRepository(youngerRepository);
+  freshPersistence.replaceSpecs(olderRepository.githubId, [spec("10")]);
+  freshPersistence.replaceSpecs(youngerRepository.githubId, [spec("11")]);
+  queue(freshPersistence, "10", "ses_old", olderRepository);
+  queue(freshPersistence, "11", "ses_young", youngerRepository);
+  let olderSha: string | null = null;
+  let youngerCredentialStarted = false;
+  const freshService = createPreparationService({
+    persistence: freshPersistence,
+    github: {
+      listInstallationRepositories: async () => [candidateFor(olderRepository), candidateFor(youngerRepository)],
+      hasLabel: async () => true,
+      listIssues: async () => [],
+      getBranchRef: async (target) => target.id === olderRepository.githubId
+        ? (olderSha ? { sha: olderSha } : null)
+        : { sha: "b".repeat(40) },
+    },
+    refreshRepository: async (saved) => ({ ok: true, repository: saved }),
+    sessionRoot: join(root, "fresh-sessions"),
+    minFreeBytes: 1,
+    credentials: fakeCredentials(() => { youngerCredentialStarted = true; throw new Error("supplier unavailable"); }),
+  });
+  await freshService.prepareNext();
+  assert.match(freshPersistence.getSession("ses_old")!.stateReason ?? "", /commit/u, "freshly blocked oldest scope must be recorded");
+  assert.equal(youngerCredentialStarted, true, "younger eligible scope must be attempted after fresh skip");
+  assert.equal(freshPersistence.getSession("ses_young")!.state, "queued");
+  olderSha = "c".repeat(40);
+  await freshService.prepareNext();
+  assert.match(freshPersistence.getSession("ses_old")!.stateReason ?? "", /credential/u, "oldest scope must resume in original order");
+  assert.equal(freshPersistence.getSession("ses_young")!.state, "queued");
+  freshPersistence.close();
 
   const outageService = createPreparationService({
     persistence,
