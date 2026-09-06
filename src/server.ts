@@ -12,6 +12,11 @@ if (!Number.isInteger(configuredPort) || configuredPort < 1 || configuredPort > 
 
 const app = createApp({
   allowedOrigin: Bun.env.ATLAS_ORIGIN,
+  databasePath: Bun.env.ATLAS_DATABASE_PATH ?? "./data/atlas.sqlite",
+  githubApiUrl: Bun.env.ATLAS_GITHUB_API_URL,
+  githubInstallationId: Bun.env.ATLAS_GITHUB_INSTALLATION_ID,
+  githubOrganization: Bun.env.ATLAS_GITHUB_ORGANIZATION,
+  githubToken: () => Bun.env.ATLAS_GITHUB_INSTALLATION_TOKEN,
   getSharedToken: () => Bun.env.ATLAS_SHARED_TOKEN,
   sharedToken,
 });
