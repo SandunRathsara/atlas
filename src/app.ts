@@ -10,17 +10,21 @@ import {
   GitHubError,
   type GitHubClient,
   type GitHubIssue,
+  type GitHubPullRequest,
   type GitHubRepository,
 } from "./github.ts";
 import {
   createPersistence,
   type Persistence,
+  type PrStackInput,
+  type PullRequestInput,
   type Repository,
 } from "./persistence.ts";
 import {
   renderAddRepositoryPage,
   renderLoginForm,
   renderLoginPage,
+  renderPullRequestsPage,
   renderRepositoriesPage,
   renderSpecDetailPage,
   renderSpecUnavailablePage,
@@ -226,6 +230,68 @@ export const createApp = (options: AppOptions) => {
     );
   };
 
+  const savePullRequests = async (repository: Repository, githubRepository: GitHubRepository) => {
+    if (!github.listPullRequests || !github.listStacks || !github.getBranchRef) {
+      throw new GitHubError("Native Pull request browsing is not configured", { kind: "configuration" });
+    }
+
+    const pullRequests = await github.listPullRequests(githubRepository);
+    const stacks = await github.listStacks(githubRepository);
+    const headRefs = new Set(
+      pullRequests
+        .filter((pullRequest) => pullRequest.state === "open" && pullRequest.headRepositoryId === githubRepository.id)
+        .map((pullRequest) => pullRequest.headRef),
+    );
+    const refs = new Map<string, string | null>();
+    for (const branch of headRefs) {
+      const ref = await github.getBranchRef(githubRepository, branch);
+      refs.set(branch, ref?.sha ?? null);
+    }
+
+    const observedAt = new Date(now()).toISOString();
+    const pullRequestInputs: PullRequestInput[] = pullRequests.map((pullRequest: GitHubPullRequest) => {
+      const sameRepository = pullRequest.headRepositoryId === githubRepository.id;
+      const observedHeadSha = pullRequest.state === "open" && sameRepository ? refs.get(pullRequest.headRef) ?? null : null;
+      return {
+        githubId: pullRequest.id,
+        number: pullRequest.number,
+        title: pullRequest.title,
+        htmlUrl: pullRequest.htmlUrl,
+        state: pullRequest.state,
+        draft: pullRequest.draft,
+        mergedAt: pullRequest.mergedAt,
+        headRef: pullRequest.headRef,
+        headSha: pullRequest.headSha,
+        headRepositoryId: pullRequest.headRepositoryId ?? null,
+        baseRef: pullRequest.baseRef,
+        baseSha: pullRequest.baseSha,
+        mergeableState: pullRequest.mergeableState,
+        autoMergeEnabled: pullRequest.autoMergeEnabled,
+        mergeQueueState: pullRequest.mergeQueueState,
+        headRefExists: pullRequest.state === "open" && sameRepository ? observedHeadSha !== null : null,
+        observedHeadSha,
+        updatedAt: pullRequest.updatedAt,
+        observedAt,
+      };
+    });
+    const pullRequestByNumber = new Map(pullRequests.map((pullRequest) => [pullRequest.number, pullRequest]));
+    const stackInputs: PrStackInput[] = stacks.map((stack) => ({
+      githubId: stack.id,
+      nodeId: stack.nodeId,
+      number: stack.number,
+      trunkRef: stack.trunkRef,
+      open: stack.open,
+      observedAt,
+      members: stack.pullRequests.map((member) => {
+        const pullRequest = pullRequestByNumber.get(member.number);
+        if (!pullRequest) throw new GitHubError("Native stack member was not in the complete Pull request projection", { kind: "invalid" });
+        return { pullRequestId: pullRequest.id, position: member.position };
+      }),
+    }));
+
+    persistence.replacePullRequests(repository.githubId, pullRequestInputs, stackInputs, observedAt);
+  };
+
   const saveCandidate = async (candidate: GitHubRepository) => {
     const repository = persistence.upsertRepository(repositoryInput(candidate, organization, installationId));
     persistence.markRefreshSuccess(repository.githubId, "access");
@@ -280,6 +346,50 @@ export const createApp = (options: AppOptions) => {
     }
 
     return saveCandidate(candidate);
+  };
+
+  const refreshPullRequests = async (existing: Repository): Promise<SyncResult> => {
+    let inventory: GitHubRepository[];
+    try {
+      inventory = await github.listInstallationRepositories();
+    } catch (error) {
+      const reason = githubFailureMessage(error);
+      const status = error instanceof GitHubError && error.kind === "suspended" ? "suspended" : "unknown";
+      persistence.updateAccess(existing.githubId, status, reason);
+      persistence.markRefreshFailure(existing.githubId, "access", reason);
+      persistence.markRefreshFailure(existing.githubId, "pullRequests", reason);
+      return { ok: false, repository: persistence.getRepository(existing.githubId)! };
+    }
+
+    const candidate = inventory.find((item) => item.id === existing.githubId);
+    if (!candidate) {
+      const reason = "Repository was not present in the last complete GitHub App inventory.";
+      persistence.updateAccess(existing.githubId, "revoked", reason);
+      persistence.markRefreshSuccess(existing.githubId, "access", reason);
+      persistence.markRefreshFailure(existing.githubId, "pullRequests", reason);
+      return { ok: false, repository: persistence.getRepository(existing.githubId)! };
+    }
+
+    if (candidate.owner.toLocaleLowerCase() !== organization.toLocaleLowerCase()) {
+      const reason = "Repository is now outside the configured organization.";
+      const repository = persistence.upsertRepository(
+        repositoryInput(candidate, organization, installationId, "transferred", reason),
+      );
+      persistence.markRefreshSuccess(repository.githubId, "access", reason);
+      persistence.markRefreshFailure(repository.githubId, "pullRequests", reason);
+      return { ok: false, repository };
+    }
+
+    const repository = persistence.upsertRepository(repositoryInput(candidate, organization, installationId));
+    persistence.markRefreshSuccess(repository.githubId, "access");
+    try {
+      await savePullRequests(repository, candidate);
+      return { ok: true, repository: persistence.getRepository(repository.githubId)! } satisfies SyncResult;
+    } catch (error) {
+      const reason = githubFailureMessage(error);
+      persistence.markRefreshFailure(repository.githubId, "pullRequests", reason);
+      return { ok: false, repository: persistence.getRepository(repository.githubId)! } satisfies SyncResult;
+    }
   };
 
   const scopedInventory = async () => {
@@ -476,6 +586,31 @@ export const createApp = (options: AppOptions) => {
       specs,
       accessRefresh,
       specsRefresh,
+    }));
+  });
+
+  app.get("/repositories/:repositoryId/pull-requests", async (c) => {
+    const repositoryId = c.req.param("repositoryId");
+    if (!repositoryIdPattern.test(repositoryId)) return c.text("Invalid Repository ID", 400);
+    const existing = persistence.getRepository(repositoryId);
+    if (!existing) return c.text("Repository not found", 404);
+
+    await refreshPullRequests(existing);
+    const repository = persistence.getRepository(repositoryId)!;
+    const pullRequests = persistence.listPullRequests(repositoryId);
+    const stacks = persistence.listPrStacks(repositoryId);
+    const accessRefresh = persistence.getRefreshState(repositoryId, "access");
+    const refresh = persistence.getRefreshState(repositoryId, "pullRequests");
+    const identity = c.get("auth");
+    const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
+    setPrivateHtmlHeaders(c);
+    return c.html(renderPullRequestsPage({
+      csrfToken,
+      repository,
+      pullRequests,
+      stacks,
+      accessRefresh,
+      refresh,
     }));
   });
 

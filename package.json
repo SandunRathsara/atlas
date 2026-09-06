@@ -9,6 +9,7 @@
   "scripts": {
     "build:css": "tailwindcss -i ./src/styles.css -o ./public/app.css --minify",
     "check": "tsc --noEmit",
+    "verify:issue25": "bun scripts/verify-issue25.ts",
     "dev": "bun run build:css && bun --watch src/server.ts",
     "start": "bun run build:css && bun src/server.ts"
   },

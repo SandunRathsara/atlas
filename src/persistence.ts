@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 
 export type AccessStatus = "available" | "unknown" | "revoked" | "transferred" | "suspended";
-export type RefreshView = "access" | "specs";
+export type RefreshView = "access" | "specs" | "pullRequests";
 export type RefreshAvailability = "never" | "available" | "partial" | "unavailable";
 
 export type Repository = {
@@ -42,6 +42,57 @@ export type Spec = {
   isCurrent: boolean;
 };
 
+export type StackMembership = {
+  stackId: string;
+  stackNodeId: string | null;
+  stackNumber: string;
+  position: number;
+  size: number;
+  trunkRef: string | null;
+};
+
+export type PullRequest = {
+  githubId: string;
+  repositoryId: string;
+  number: string;
+  title: string;
+  htmlUrl: string;
+  state: string;
+  draft: boolean;
+  mergedAt: string | null;
+  headRef: string;
+  headSha: string;
+  headRepositoryId: string | null;
+  baseRef: string;
+  baseSha: string;
+  mergeableState: string | null;
+  autoMergeEnabled: boolean | null;
+  mergeQueueState: string | null;
+  headRefExists: boolean | null;
+  observedHeadSha: string | null;
+  updatedAt: string | null;
+  observedAt: string;
+  isCurrent: boolean;
+  stack: StackMembership | null;
+};
+
+export type PrStackMember = {
+  pullRequestId: string;
+  position: number;
+};
+
+export type PrStack = {
+  githubId: string;
+  repositoryId: string;
+  nodeId: string | null;
+  number: string;
+  trunkRef: string | null;
+  open: boolean | null;
+  observedAt: string;
+  isCurrent: boolean;
+  members: PrStackMember[];
+};
+
 export type RefreshState = {
   repositoryId: string;
   view: RefreshView;
@@ -63,6 +114,15 @@ export type RepositoryInput = Omit<
 };
 
 export type SpecInput = Omit<Spec, "repositoryId" | "observedAt" | "isCurrent"> & {
+  observedAt?: string;
+};
+
+export type PullRequestInput = Omit<PullRequest, "repositoryId" | "observedAt" | "isCurrent" | "stack"> & {
+  observedAt?: string;
+};
+
+export type PrStackInput = Omit<PrStack, "repositoryId" | "observedAt" | "isCurrent" | "members"> & {
+  members: PrStackMember[];
   observedAt?: string;
 };
 
@@ -103,6 +163,47 @@ type SpecRow = {
   is_pull_request: number;
   has_spec_label: number;
   updated_at: string | null;
+  observed_at: string;
+  is_current: number;
+};
+
+type PullRequestRow = {
+  github_id: string;
+  repository_id: string;
+  number: string;
+  title: string;
+  html_url: string;
+  state: string;
+  draft: number;
+  merged_at: string | null;
+  head_ref: string;
+  head_sha: string;
+  head_repository_id: string | null;
+  base_ref: string;
+  base_sha: string;
+  mergeable_state: string | null;
+  auto_merge_enabled: number | null;
+  merge_queue_state: string | null;
+  head_ref_exists: number | null;
+  observed_head_sha: string | null;
+  updated_at: string | null;
+  observed_at: string;
+  is_current: number;
+  stack_id: string | null;
+  stack_node_id: string | null;
+  stack_number: string | null;
+  stack_position: number | null;
+  stack_size: number | null;
+  stack_trunk_ref: string | null;
+};
+
+type StackRow = {
+  github_id: string;
+  repository_id: string;
+  node_id: string | null;
+  number: string;
+  trunk_ref: string | null;
+  open: number | null;
   observed_at: string;
   is_current: number;
 };
@@ -183,6 +284,86 @@ const migrations = [
       SET was_spec = CASE WHEN is_pull_request = 0 AND has_spec_label = 1 THEN 1 ELSE 0 END;
     `,
   },
+  {
+    version: 3,
+    sql: `
+      CREATE TABLE refresh_state_next (
+        repository_id TEXT NOT NULL REFERENCES repositories (github_id),
+        view TEXT NOT NULL CHECK (view IN ('access', 'specs', 'pullRequests')),
+        requested_generation INTEGER NOT NULL DEFAULT 0,
+        completed_generation INTEGER NOT NULL DEFAULT 0,
+        last_success_at TEXT,
+        last_failure_at TEXT,
+        availability TEXT NOT NULL DEFAULT 'never' CHECK (availability IN ('never', 'available', 'partial', 'unavailable')),
+        failure_reason TEXT,
+        PRIMARY KEY (repository_id, view)
+      );
+
+      INSERT INTO refresh_state_next
+      SELECT repository_id, view, requested_generation, completed_generation,
+             last_success_at, last_failure_at, availability, failure_reason
+      FROM refresh_state;
+      DROP TABLE refresh_state;
+      ALTER TABLE refresh_state_next RENAME TO refresh_state;
+
+      CREATE TABLE pull_requests (
+        github_id TEXT PRIMARY KEY NOT NULL,
+        repository_id TEXT NOT NULL REFERENCES repositories (github_id),
+        number TEXT NOT NULL,
+        title TEXT NOT NULL,
+        html_url TEXT NOT NULL,
+        state TEXT NOT NULL,
+        draft INTEGER NOT NULL CHECK (draft IN (0, 1)),
+        merged_at TEXT,
+        head_ref TEXT NOT NULL,
+        head_sha TEXT NOT NULL,
+        base_ref TEXT NOT NULL,
+        base_sha TEXT NOT NULL,
+        mergeable_state TEXT,
+        auto_merge_enabled INTEGER CHECK (auto_merge_enabled IS NULL OR auto_merge_enabled IN (0, 1)),
+        merge_queue_state TEXT,
+        head_ref_exists INTEGER CHECK (head_ref_exists IS NULL OR head_ref_exists IN (0, 1)),
+        observed_head_sha TEXT,
+        updated_at TEXT,
+        observed_at TEXT NOT NULL,
+        is_current INTEGER NOT NULL CHECK (is_current IN (0, 1)),
+        UNIQUE (repository_id, number)
+      );
+
+      CREATE TABLE pr_stacks (
+        github_id TEXT PRIMARY KEY NOT NULL,
+        repository_id TEXT NOT NULL REFERENCES repositories (github_id),
+        node_id TEXT,
+        number TEXT NOT NULL,
+        trunk_ref TEXT,
+        open INTEGER CHECK (open IS NULL OR open IN (0, 1)),
+        observed_at TEXT NOT NULL,
+        is_current INTEGER NOT NULL CHECK (is_current IN (0, 1))
+      );
+
+      CREATE TABLE stack_members (
+        stack_id TEXT NOT NULL REFERENCES pr_stacks (github_id) ON DELETE CASCADE,
+        pull_request_id TEXT NOT NULL REFERENCES pull_requests (github_id),
+        position INTEGER NOT NULL CHECK (position > 0),
+        PRIMARY KEY (stack_id, pull_request_id),
+        UNIQUE (stack_id, position),
+        UNIQUE (pull_request_id)
+      );
+
+      CREATE INDEX pull_requests_repository_current_idx
+        ON pull_requests (repository_id, is_current, state, number);
+      CREATE INDEX pr_stacks_repository_current_idx
+        ON pr_stacks (repository_id, is_current, number);
+    `,
+  },
+  {
+    version: 4,
+    sql: `
+      ALTER TABLE pull_requests ADD COLUMN head_repository_id TEXT;
+      CREATE UNIQUE INDEX pr_stacks_repository_number_unique
+        ON pr_stacks (repository_id, number);
+    `,
+  },
 ];
 
 const isoNow = (now: () => number) => new Date(now()).toISOString();
@@ -244,6 +425,52 @@ const toRefreshState = (row: RefreshRow): RefreshState => ({
   lastFailureAt: row.last_failure_at,
   availability: row.availability,
   failureReason: row.failure_reason,
+});
+
+const toPullRequest = (row: PullRequestRow): PullRequest => ({
+  githubId: row.github_id,
+  repositoryId: row.repository_id,
+  number: row.number,
+  title: row.title,
+  htmlUrl: row.html_url,
+  state: row.state,
+  draft: row.draft === 1,
+  mergedAt: row.merged_at,
+  headRef: row.head_ref,
+  headSha: row.head_sha,
+  headRepositoryId: row.head_repository_id,
+  baseRef: row.base_ref,
+  baseSha: row.base_sha,
+  mergeableState: row.mergeable_state,
+  autoMergeEnabled: row.auto_merge_enabled === null ? null : row.auto_merge_enabled === 1,
+  mergeQueueState: row.merge_queue_state,
+  headRefExists: row.head_ref_exists === null ? null : row.head_ref_exists === 1,
+  observedHeadSha: row.observed_head_sha,
+  updatedAt: row.updated_at,
+  observedAt: row.observed_at,
+  isCurrent: row.is_current === 1,
+  stack: row.stack_id === null || row.stack_number === null || row.stack_position === null || row.stack_size === null
+    ? null
+    : {
+      stackId: row.stack_id,
+      stackNodeId: row.stack_node_id,
+      stackNumber: row.stack_number,
+      position: row.stack_position,
+      size: row.stack_size,
+      trunkRef: row.stack_trunk_ref,
+    },
+});
+
+const toStack = (row: StackRow, members: PrStackMember[]): PrStack => ({
+  githubId: row.github_id,
+  repositoryId: row.repository_id,
+  nodeId: row.node_id,
+  number: row.number,
+  trunkRef: row.trunk_ref,
+  open: row.open === null ? null : row.open === 1,
+  observedAt: row.observed_at,
+  isCurrent: row.is_current === 1,
+  members,
 });
 
 const integerPragma = (database: Database, pragma: string, expected: number) => {
@@ -469,6 +696,184 @@ export const createPersistence = (options: PersistenceOptions) => {
     replace();
   };
 
+  const replacePullRequests = (
+    repositoryId: string,
+    pullRequests: PullRequestInput[],
+    stacks: PrStackInput[],
+    observedAt = isoNow(now),
+    refreshReason: string | null = null,
+  ) => {
+    const replace = database.transaction(() => {
+      for (const pullRequest of pullRequests) {
+        const existing = database.query(`
+          SELECT repository_id FROM pull_requests WHERE github_id = ?
+        `).get(pullRequest.githubId) as { repository_id: string } | null;
+        if (existing && existing.repository_id !== repositoryId) {
+          throw new Error("Pull request identity cannot move between Repositories");
+        }
+      }
+      for (const stack of stacks) {
+        const existing = database.query(`
+          SELECT repository_id FROM pr_stacks WHERE github_id = ?
+        `).get(stack.githubId) as { repository_id: string } | null;
+        if (existing && existing.repository_id !== repositoryId) {
+          throw new Error("Native stack identity cannot move between Repositories");
+        }
+      }
+
+      database.query("UPDATE pull_requests SET is_current = 0 WHERE repository_id = ?").run(repositoryId);
+      database.query("UPDATE pr_stacks SET is_current = 0 WHERE repository_id = ?").run(repositoryId);
+      database.query(`
+        DELETE FROM stack_members
+        WHERE stack_id IN (SELECT github_id FROM pr_stacks WHERE repository_id = ?)
+      `).run(repositoryId);
+
+      const upsertPullRequest = database.query(`
+        INSERT INTO pull_requests (
+          github_id, repository_id, number, title, html_url, state, draft, merged_at,
+          head_ref, head_sha, head_repository_id, base_ref, base_sha, mergeable_state, auto_merge_enabled,
+          merge_queue_state, head_ref_exists, observed_head_sha, updated_at, observed_at, is_current
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        ON CONFLICT (github_id) DO UPDATE SET
+          number = excluded.number,
+          title = excluded.title,
+          html_url = excluded.html_url,
+          state = excluded.state,
+          draft = excluded.draft,
+          merged_at = excluded.merged_at,
+          head_ref = excluded.head_ref,
+          head_sha = excluded.head_sha,
+          head_repository_id = excluded.head_repository_id,
+          base_ref = excluded.base_ref,
+          base_sha = excluded.base_sha,
+          mergeable_state = excluded.mergeable_state,
+          auto_merge_enabled = excluded.auto_merge_enabled,
+          merge_queue_state = excluded.merge_queue_state,
+          head_ref_exists = excluded.head_ref_exists,
+          observed_head_sha = excluded.observed_head_sha,
+          updated_at = excluded.updated_at,
+          observed_at = excluded.observed_at,
+          is_current = 1
+      `);
+
+      for (const pullRequest of pullRequests) {
+        upsertPullRequest.run(
+          pullRequest.githubId,
+          repositoryId,
+          pullRequest.number,
+          pullRequest.title,
+          pullRequest.htmlUrl,
+          pullRequest.state,
+          pullRequest.draft ? 1 : 0,
+          pullRequest.mergedAt,
+          pullRequest.headRef,
+          pullRequest.headSha,
+          pullRequest.headRepositoryId,
+          pullRequest.baseRef,
+          pullRequest.baseSha,
+          pullRequest.mergeableState,
+          pullRequest.autoMergeEnabled === null ? null : pullRequest.autoMergeEnabled ? 1 : 0,
+          pullRequest.mergeQueueState,
+          pullRequest.headRefExists === null ? null : pullRequest.headRefExists ? 1 : 0,
+          pullRequest.observedHeadSha,
+          pullRequest.updatedAt,
+          pullRequest.observedAt ?? observedAt,
+        );
+      }
+
+      const upsertStack = database.query(`
+        INSERT INTO pr_stacks (
+          github_id, repository_id, node_id, number, trunk_ref, open, observed_at, is_current
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+        ON CONFLICT (github_id) DO UPDATE SET
+          node_id = excluded.node_id,
+          number = excluded.number,
+          trunk_ref = excluded.trunk_ref,
+          open = excluded.open,
+          observed_at = excluded.observed_at,
+          is_current = 1
+      `);
+      const insertMember = database.query(`
+        INSERT INTO stack_members (stack_id, pull_request_id, position) VALUES (?, ?, ?)
+      `);
+
+      for (const stack of stacks) {
+        upsertStack.run(
+          stack.githubId,
+          repositoryId,
+          stack.nodeId,
+          stack.number,
+          stack.trunkRef,
+          stack.open === null ? null : stack.open ? 1 : 0,
+          stack.observedAt ?? observedAt,
+        );
+
+        for (const member of stack.members) {
+          const exists = database.query(`
+            SELECT 1 FROM pull_requests WHERE github_id = ? AND repository_id = ?
+          `).get(member.pullRequestId, repositoryId);
+          if (!exists) throw new Error("Native stack references an unprojected pull request");
+          insertMember.run(stack.githubId, member.pullRequestId, member.position);
+        }
+      }
+
+      ensureRefreshState(repositoryId, "pullRequests");
+      database.query(`
+        UPDATE refresh_state
+        SET completed_generation = requested_generation,
+            last_success_at = ?,
+            availability = 'available',
+            failure_reason = ?
+        WHERE repository_id = ? AND view = 'pullRequests'
+      `).run(isoNow(now), refreshReason, repositoryId);
+    });
+    replace();
+  };
+
+  const listPullRequests = (repositoryId: string, currentOnly = true) => {
+    const rows = database.query(`
+      SELECT p.*,
+             s.github_id AS stack_id,
+             s.node_id AS stack_node_id,
+             s.number AS stack_number,
+             sm.position AS stack_position,
+             (SELECT COUNT(*) FROM stack_members sm2 WHERE sm2.stack_id = s.github_id) AS stack_size,
+             s.trunk_ref AS stack_trunk_ref
+      FROM pull_requests p
+      LEFT JOIN stack_members sm ON sm.pull_request_id = p.github_id
+      LEFT JOIN pr_stacks s ON s.github_id = sm.stack_id AND s.is_current = 1
+      WHERE p.repository_id = ? AND (? = 0 OR p.is_current = 1)
+      ORDER BY CAST(p.number AS INTEGER), p.number
+    `).all(repositoryId, currentOnly ? 1 : 0) as PullRequestRow[];
+    return rows.map(toPullRequest);
+  };
+
+  const listPrStacks = (repositoryId: string, currentOnly = true) => {
+    const stacks = database.query(`
+      SELECT * FROM pr_stacks
+      WHERE repository_id = ? AND (? = 0 OR is_current = 1)
+      ORDER BY CAST(number AS INTEGER), number
+    `).all(repositoryId, currentOnly ? 1 : 0) as StackRow[];
+    const memberRows = database.query(`
+      SELECT sm.stack_id, sm.pull_request_id, sm.position
+      FROM stack_members sm
+      JOIN pr_stacks s ON s.github_id = sm.stack_id
+      WHERE s.repository_id = ? AND (? = 0 OR s.is_current = 1)
+      ORDER BY sm.stack_id, sm.position
+    `).all(repositoryId, currentOnly ? 1 : 0) as Array<{
+      stack_id: string;
+      pull_request_id: string;
+      position: number;
+    }>;
+    const membersByStack = new Map<string, PrStackMember[]>();
+    for (const member of memberRows) {
+      const members = membersByStack.get(member.stack_id) ?? [];
+      members.push({ pullRequestId: member.pull_request_id, position: member.position });
+      membersByStack.set(member.stack_id, members);
+    }
+    return stacks.map((stack) => toStack(stack, membersByStack.get(stack.github_id) ?? []));
+  };
+
   const listSpecs = (repositoryId: string, currentOnly = true) => {
     const rows = database.query(`
       SELECT * FROM specs
@@ -498,6 +903,9 @@ export const createPersistence = (options: PersistenceOptions) => {
     markRefreshFailure,
     getRefreshState,
     replaceSpecs,
+    replacePullRequests,
+    listPullRequests,
+    listPrStacks,
     listSpecs,
     getSpec,
   };

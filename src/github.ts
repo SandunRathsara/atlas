@@ -28,6 +28,41 @@ export type GitHubIssue = {
   updatedAt: string | null;
 };
 
+export type GitHubPullRequest = {
+  id: string;
+  number: string;
+  title: string;
+  htmlUrl: string;
+  state: string;
+  draft: boolean;
+  mergedAt: string | null;
+  headRef: string;
+  headSha: string;
+  headRepositoryId: string | null;
+  baseRef: string;
+  baseSha: string;
+  mergeableState: string | null;
+  autoMergeEnabled: boolean | null;
+  mergeQueueState: string | null;
+  updatedAt: string | null;
+};
+
+export type GitHubStack = {
+  id: string;
+  nodeId: string | null;
+  number: string;
+  trunkRef: string | null;
+  open: boolean | null;
+  pullRequests: Array<{
+    number: string;
+    position: number;
+  }>;
+};
+
+export type GitHubRef = {
+  sha: string;
+};
+
 export class GitHubError extends Error {
   readonly status: number | undefined;
   readonly kind: "configuration" | "access" | "suspended" | "not-found" | "temporary" | "invalid";
@@ -50,6 +85,9 @@ export type GitHubClient = {
   listInstallationRepositories: () => Promise<GitHubRepository[]>;
   hasLabel: (repository: GitHubRepository, labelName: string) => Promise<boolean>;
   listIssues: (repository: GitHubRepository) => Promise<GitHubIssue[]>;
+  listPullRequests?: (repository: GitHubRepository) => Promise<GitHubPullRequest[]>;
+  listStacks?: (repository: GitHubRepository) => Promise<GitHubStack[]>;
+  getBranchRef?: (repository: GitHubRepository, branch: string) => Promise<GitHubRef | null>;
 };
 
 export type GitHubClientOptions = {
@@ -149,6 +187,75 @@ const parseIssue = (value: unknown): GitHubIssue => {
   };
 };
 
+const optionalBoolean = (value: unknown, field: string): boolean | null => {
+  if (value === null || value === undefined) return null;
+  return boolean(value, field);
+};
+
+const parsePullRequest = (value: unknown): GitHubPullRequest => {
+  const item = object(value, "pull request");
+  const head = object(item.head, "pull request head");
+  const base = object(item.base, "pull request base");
+  const headRepository = head.repo === null || head.repo === undefined ? null : object(head.repo, "pull request head repository");
+  const autoMerge = item.auto_merge;
+  const mergeQueue = item.merge_queue_entry ?? item.merge_queue;
+
+  return {
+    id: losslessInteger(item.id, "pull request id"),
+    number: issueNumber(item.number),
+    title: string(item.title, "pull request title"),
+    htmlUrl: string(item.html_url, "pull request URL"),
+    state: string(item.state, "pull request state"),
+    draft: boolean(item.draft, "pull request draft state"),
+    mergedAt: nullableString(item.merged_at, "pull request merge time"),
+    headRef: string(head.ref, "pull request head ref"),
+    headSha: string(head.sha, "pull request head SHA"),
+    headRepositoryId: headRepository ? losslessInteger(headRepository.id, "pull request head repository id") : null,
+    baseRef: string(base.ref, "pull request base ref"),
+    baseSha: string(base.sha, "pull request base SHA"),
+    mergeableState: nullableString(item.mergeable_state, "pull request mergeable state"),
+    autoMergeEnabled: autoMerge === undefined ? null : autoMerge !== null,
+    mergeQueueState: mergeQueue === undefined
+      ? null
+      : mergeQueue === null
+        ? "none"
+        : typeof mergeQueue === "object" && !Array.isArray(mergeQueue) && typeof (mergeQueue as Record<string, unknown>).state === "string"
+          ? (mergeQueue as Record<string, unknown>).state as string
+          : "queued",
+    updatedAt: nullableString(item.updated_at, "pull request updated time"),
+  };
+};
+
+const parseStack = (value: unknown): GitHubStack => {
+  const item = object(value, "native stack");
+  const base = item.base && typeof item.base === "object" && !Array.isArray(item.base)
+    ? item.base as Record<string, unknown>
+    : undefined;
+  const members = item.pull_requests;
+  if (!Array.isArray(members)) {
+    throw new GitHubError("GitHub returned an invalid native stack member list", { kind: "invalid" });
+  }
+
+  return {
+    id: losslessInteger(item.id, "native stack id"),
+    nodeId: nullableString(item.node_id, "native stack node ID"),
+    number: losslessInteger(item.number, "native stack number"),
+    trunkRef: nullableString(item.base_ref ?? base?.ref, "native stack trunk ref"),
+    open: optionalBoolean(item.open, "native stack open state"),
+    pullRequests: members.map((member, index) => {
+      const parsed = object(member, "native stack member");
+      const position = parsed.position === undefined ? index + 1 : Number(parsed.position);
+      if (!Number.isSafeInteger(position) || position < 1) {
+        throw new GitHubError("GitHub returned an invalid native stack member position", { kind: "invalid" });
+      }
+      return {
+        number: issueNumber(parsed.number),
+        position,
+      };
+    }).sort((left, right) => left.position - right.position),
+  };
+};
+
 const nextLink = (header: string | null) => {
   for (const value of header?.split(",") ?? []) {
     const match = /^\s*<([^>]+)>\s*;\s*rel="?([^";]+)"?/i.exec(value);
@@ -172,7 +279,7 @@ export const createGitHubClient = (options: GitHubClientOptions): GitHubClient =
   const baseUrl = (options.baseUrl ?? "https://api.github.com").replace(/\/$/, "");
   const apiVersion = options.apiVersion ?? DEFAULT_API_VERSION;
 
-  const request = async (pathOrUrl: string) => {
+  const request = async (pathOrUrl: string, init: Pick<RequestInit, "method" | "body"> = {}) => {
     const token = options.getToken();
     if (!token) {
       throw new GitHubError("GitHub App credentials are not configured", { kind: "configuration" });
@@ -193,11 +300,14 @@ export const createGitHubClient = (options: GitHubClientOptions): GitHubClient =
     let response: Response;
     try {
       response = await fetcher(url, {
+        method: init.method ?? "GET",
+        body: init.body,
         headers: {
           Accept: "application/vnd.github+json",
           Authorization: `Bearer ${token}`,
           "X-GitHub-Api-Version": apiVersion,
           "User-Agent": "Atlas",
+          ...(init.body ? { "Content-Type": "application/json" } : {}),
         },
         redirect: "manual",
       });
@@ -260,6 +370,38 @@ export const createGitHubClient = (options: GitHubClientOptions): GitHubClient =
   const repositoryPath = (repository: GitHubRepository, suffix: string) =>
     `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}${suffix}`;
 
+  const getPullRequest = async (repository: GitHubRepository, number: string) => {
+    const response = await request(repositoryPath(repository, `/pulls/${encodeURIComponent(number)}`));
+    return parsePullRequest(response.payload);
+  };
+
+  const getPullRequestMergeState = async (repository: GitHubRepository, number: string) => {
+    const response = await request("/graphql", {
+      method: "POST",
+      body: JSON.stringify({
+        query: `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){autoMergeRequest{mergeMethod} mergeQueueEntry{state}}}}`,
+        variables: {
+          owner: repository.owner,
+          name: repository.name,
+          number: Number(number),
+        },
+      }),
+    });
+    const payload = object(response.payload, "GraphQL response");
+    if (Array.isArray(payload.errors) && payload.errors.length > 0) {
+      throw new GitHubError("GitHub returned an invalid Pull request merge state", { kind: "invalid" });
+    }
+    const data = object(payload.data, "GraphQL data");
+    const repositoryData = object(data.repository, "GraphQL repository");
+    const pullRequest = object(repositoryData.pullRequest, "GraphQL Pull request");
+    const autoMerge = pullRequest.autoMergeRequest;
+    const mergeQueue = pullRequest.mergeQueueEntry;
+    return {
+      autoMergeEnabled: autoMerge === null ? false : autoMerge !== undefined,
+      mergeQueueState: mergeQueue === null ? "none" : mergeQueue === undefined ? null : "queued",
+    };
+  };
+
   return {
     listInstallationRepositories: () => paginated(
       `/installation/repositories?per_page=${PAGE_SIZE}&page=1`,
@@ -292,5 +434,62 @@ export const createGitHubClient = (options: GitHubClientOptions): GitHubClient =
         return payload.map(parseIssue);
       },
     ),
+
+    listPullRequests: async (repository) => {
+      const summaries = await paginated(
+        `${repositoryPath(repository, "/pulls")}?state=all&per_page=${PAGE_SIZE}&page=1`,
+        (payload) => {
+          if (!Array.isArray(payload)) {
+            throw new GitHubError("GitHub returned an invalid pull request list", { kind: "invalid" });
+          }
+          return payload.map((item) => {
+            const parsed = object(item, "pull request");
+            return issueNumber(parsed.number);
+          });
+        },
+      );
+      const pullRequests: GitHubPullRequest[] = [];
+      for (const number of summaries) {
+        const pullRequest = await getPullRequest(repository, number);
+        const mergeState = pullRequest.state === "open"
+          ? await getPullRequestMergeState(repository, number)
+          : undefined;
+        pullRequests.push(mergeState ? { ...pullRequest, ...mergeState } : pullRequest);
+      }
+      return pullRequests;
+    },
+
+    listStacks: async (repository) => {
+      const summaries = await paginated(
+        `${repositoryPath(repository, "/stacks")}?per_page=${PAGE_SIZE}&page=1`,
+        (payload) => {
+          if (!Array.isArray(payload)) {
+            throw new GitHubError("GitHub returned an invalid native stack inventory", { kind: "invalid" });
+          }
+          return payload.map((item) => {
+            const parsed = object(item, "native stack");
+            return losslessInteger(parsed.number, "native stack number");
+          });
+        },
+      );
+      const stacks: GitHubStack[] = [];
+      for (const number of summaries) {
+        const response = await request(repositoryPath(repository, `/stacks/${encodeURIComponent(number)}`));
+        stacks.push(parseStack(response.payload));
+      }
+      return stacks;
+    },
+
+    getBranchRef: async (repository, branch) => {
+      try {
+        const response = await request(repositoryPath(repository, `/git/ref/heads/${encodeURIComponent(branch)}`));
+        const item = object(response.payload, "branch ref");
+        const objectValue = object(item.object, "branch ref object");
+        return { sha: string(objectValue.sha, "branch ref SHA") };
+      } catch (error) {
+        if (error instanceof GitHubError && error.status === 404) return null;
+        throw error;
+      }
+    },
   };
 };

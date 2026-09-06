@@ -1,5 +1,5 @@
 import type { GitHubRepository } from "./github.ts";
-import type { RefreshState, Repository, Spec } from "./persistence.ts";
+import type { PrStack, PullRequest, RefreshState, Repository, Spec } from "./persistence.ts";
 
 const escapeHtml = (value: string) =>
   value.replace(
@@ -116,13 +116,15 @@ const renderLogoutForm = (csrfToken: string) => `<form id="logout-form" class="f
   <span id="logout-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Signing out...</span>
 </form>`;
 
-type ActivePage = "repositories" | "new-repository" | "specs" | "spec";
+type ActivePage = "repositories" | "new-repository" | "specs" | "spec" | "pull-requests";
 
 const repositoryLink = (repository: Pick<Repository, "githubId">) => `/repositories/${encodeURIComponent(repository.githubId)}/specs`;
+const pullRequestsLink = (repository: Pick<Repository, "githubId">) => `/repositories/${encodeURIComponent(repository.githubId)}/pull-requests`;
 
 const renderRepositoryNav = (repository: Repository, active: ActivePage) => `<div class="mt-6 border-t border-base-300 pt-4">
   <p class="px-4 py-2 text-sm font-medium uppercase tracking-[0.16em] text-muted">Repository</p>
   <a class="block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${active === "specs" || active === "spec" ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${repositoryLink(repository)}"${active === "specs" || active === "spec" ? ' aria-current="page"' : ""}>Specs</a>
+  <a class="mt-1 block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${active === "pull-requests" ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${pullRequestsLink(repository)}"${active === "pull-requests" ? ' aria-current="page"' : ""}>Pull requests</a>
 </div>`;
 
 const renderShell = ({
@@ -141,8 +143,10 @@ const renderShell = ({
   const repositoryName = repository?.fullName ?? "No Repository selected";
   const repositoriesActive = active === "repositories" || active === "new-repository";
   const specsActive = active === "specs" || active === "spec";
+  const pullRequestsActive = active === "pull-requests";
   const mobileLinks = `<a class="block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${repositoriesActive ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="/repositories"${repositoriesActive ? ' aria-current="page"' : ""}>Repositories</a>
-    ${repository ? `<a class="mt-1 block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${specsActive ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${repositoryLink(repository)}"${specsActive ? ' aria-current="page"' : ""}>Specs</a>` : ""}`;
+    ${repository ? `<a class="mt-1 block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${specsActive ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${repositoryLink(repository)}"${specsActive ? ' aria-current="page"' : ""}>Specs</a>
+    <a class="mt-1 block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${pullRequestsActive ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${pullRequestsLink(repository)}"${pullRequestsActive ? ' aria-current="page"' : ""}>Pull requests</a>` : ""}`;
 
   return document(
     title,
@@ -250,6 +254,7 @@ export const renderRepositoriesPage = (
           </div>
           <div class="mt-5 flex flex-wrap items-center gap-3">
             <a class="btn btn-primary min-h-11 border border-control-border" href="${repositoryLink(repository)}">Browse Specs</a>
+            <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${pullRequestsLink(repository)}">Browse Pull requests</a>
             ${safeExternalUrl(repository.htmlUrl) ? `<a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(safeExternalUrl(repository.htmlUrl))}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
           </div>
         </li>`).join("")}</ul>`;
@@ -429,6 +434,289 @@ export const renderSpecsPage = ({
       ${specsNotice(specsRefresh, specs)}
       <p class="mt-6 text-sm text-muted">${refreshLine("Access", accessRefresh)} · ${refreshLine("Specs", specsRefresh)}</p>
       ${list}
+    </section>`,
+  });
+};
+
+type TargetStatus = {
+  kind: "eligible" | "warning" | "disabled";
+  label: string;
+  reason: string;
+};
+
+const refreshIsCurrent = (refresh: RefreshState | undefined) => Boolean(
+  refresh &&
+  refresh.availability === "available" &&
+  refresh.requestedGeneration <= refresh.completedGeneration,
+);
+
+const repositoryTargetStatus = (repository: Repository): TargetStatus | undefined => {
+  if (repository.archived) {
+    return { kind: "disabled", label: "Not eligible", reason: "Archived Repositories are browsable but cannot start Sessions." };
+  }
+  if (repository.disabled) {
+    return { kind: "disabled", label: "Not eligible", reason: "Disabled Repositories are browsable but cannot start Sessions." };
+  }
+  if (repository.removedAt) {
+    return { kind: "disabled", label: "Not eligible", reason: "This Repository was removed from Atlas; new starts are disabled." };
+  }
+  if (repository.accessStatus === "unknown") {
+    return { kind: "warning", label: "Waiting for verification", reason: "GitHub access for this Repository could not be verified." };
+  }
+  if (repository.accessStatus === "revoked") {
+    return { kind: "disabled", label: "Not eligible", reason: "GitHub App access to this Repository is unavailable." };
+  }
+  if (repository.accessStatus === "transferred") {
+    return { kind: "disabled", label: "Not eligible", reason: "This Repository is outside the configured organization." };
+  }
+  if (repository.accessStatus === "suspended") {
+    return { kind: "disabled", label: "Not eligible", reason: "The GitHub App installation is suspended for this Repository." };
+  }
+  if (!repository.defaultBranch) {
+    return { kind: "warning", label: "Waiting for verification", reason: "The Repository default branch is not currently known." };
+  }
+  return undefined;
+};
+
+const targetVerificationStatus = (
+  repository: Repository,
+  accessRefresh: RefreshState | undefined,
+  pullRequestsRefresh: RefreshState | undefined,
+): TargetStatus | undefined => {
+  const repositoryStatus = repositoryTargetStatus(repository);
+  if (repositoryStatus) return repositoryStatus;
+  if (!refreshIsCurrent(accessRefresh) || !refreshIsCurrent(pullRequestsRefresh)) {
+    return { kind: "warning", label: "Waiting for verification", reason: "Current Repository access and Pull request/stack reads are required before a target can be eligible." };
+  }
+  return undefined;
+};
+
+const targetBadgeClass = (kind: TargetStatus["kind"]) =>
+  kind === "eligible" ? "badge-success" : kind === "warning" ? "badge-warning" : "badge-error";
+
+const pullRequestLifecycle = (pullRequest: PullRequest) => {
+  if (pullRequest.mergedAt) return "Merged";
+  if (pullRequest.state === "open") return pullRequest.draft ? "Draft" : "Open";
+  return "Closed";
+};
+
+const pullRequestStateBadge = (pullRequest: PullRequest) => {
+  const className = pullRequest.mergedAt
+    ? "badge-success"
+    : pullRequest.state === "open"
+      ? pullRequest.draft ? "badge-warning" : "badge-info"
+      : "badge-neutral";
+  return `<span class="badge ${className}">${pullRequestLifecycle(pullRequest)}</span>`;
+};
+
+const mergeRestriction = (pullRequest: PullRequest): string | undefined => {
+  if (pullRequest.autoMergeEnabled === true) return "Auto-merge is enabled on the top layer.";
+  if (pullRequest.autoMergeEnabled === null) return "Auto-merge state could not be verified.";
+  if (pullRequest.mergeQueueState === null) return "Merge-queue state could not be verified.";
+  if (pullRequest.mergeQueueState !== "none") return "The top layer is in a GitHub merge queue.";
+  return undefined;
+};
+
+const standaloneStatus = (repository: Repository, pullRequest: PullRequest, targetGate?: TargetStatus): TargetStatus => {
+  if (targetGate) return targetGate;
+  if (pullRequest.headRepositoryId === null || pullRequest.headRepositoryId === undefined) {
+    return { kind: "warning", label: "Waiting for verification", reason: "The Pull request head Repository could not be verified." };
+  }
+  if (pullRequest.headRepositoryId !== repository.githubId) {
+    return { kind: "disabled", label: "Not eligible", reason: "The Pull request head belongs to another Repository." };
+  }
+  if (pullRequest.baseRef !== repository.defaultBranch) {
+    return {
+      kind: "disabled",
+      label: "Not eligible",
+      reason: `This standalone parent targets ${pullRequest.baseRef}, not the Repository default branch ${repository.defaultBranch}.`,
+    };
+  }
+  if (pullRequest.headRefExists === null) {
+    return { kind: "warning", label: "Waiting for verification", reason: "The current head branch ref has not been verified." };
+  }
+  if (!pullRequest.headRefExists) {
+    return { kind: "disabled", label: "Not eligible", reason: "The required head branch ref is missing." };
+  }
+  const restriction = mergeRestriction(pullRequest);
+  if (restriction) {
+    return { kind: restriction.includes("could not") ? "warning" : "disabled", label: restriction.includes("could not") ? "Waiting for verification" : "Not eligible", reason: restriction };
+  }
+  return { kind: "eligible", label: "Eligible standalone target", reason: "Open, verified outside a native stack, and based on the Repository default branch." };
+};
+
+const stackStatus = (
+  repository: Repository,
+  stack: PrStack,
+  pullRequests: Map<string, PullRequest>,
+  targetGate?: TargetStatus,
+): TargetStatus => {
+  if (targetGate) return targetGate;
+  if (stack.members.length === 0) {
+    return { kind: "warning", label: "Waiting for verification", reason: "The native stack has no verified ordered members." };
+  }
+  if (stack.members.length >= 100) {
+    return { kind: "disabled", label: "Not eligible", reason: "This native stack already has 100 members and cannot be extended." };
+  }
+  if (!stack.trunkRef) {
+    return { kind: "warning", label: "Waiting for verification", reason: "The native stack trunk is not currently known." };
+  }
+
+  const members = [...stack.members].sort((left, right) => left.position - right.position);
+  const memberPullRequests = members.map((member) => pullRequests.get(member.pullRequestId));
+  if (memberPullRequests.some((pullRequest) => !pullRequest)) {
+    return { kind: "warning", label: "Waiting for verification", reason: "One or more native stack members could not be reconciled." };
+  }
+  const resolvedMembers = memberPullRequests as PullRequest[];
+  if (resolvedMembers.some((pullRequest) => pullRequest.headRepositoryId === null || pullRequest.headRepositoryId === undefined)) {
+    return { kind: "warning", label: "Waiting for verification", reason: "A native stack member's head Repository could not be verified." };
+  }
+  if (resolvedMembers.some((pullRequest) => pullRequest.headRepositoryId !== repository.githubId)) {
+    return { kind: "disabled", label: "Not eligible", reason: "A native stack member belongs to another Repository." };
+  }
+  if (resolvedMembers.some((pullRequest) => pullRequest.state === "closed" && !pullRequest.mergedAt)) {
+    return { kind: "disabled", label: "Not eligible", reason: "A closed-unmerged layer blocks this native stack." };
+  }
+  if (resolvedMembers.every((pullRequest) => pullRequest.mergedAt)) {
+    return { kind: "disabled", label: "Not eligible", reason: "Every native stack layer is merged; the completed stack cannot be extended." };
+  }
+
+  const top = resolvedMembers[resolvedMembers.length - 1]!;
+  if (top.state !== "open") {
+    return {
+      kind: "disabled",
+      label: "Not eligible",
+      reason: top.mergedAt ? "The actual top layer is merged; this stack cannot be extended." : "The actual top layer is closed-unmerged.",
+    };
+  }
+  if (top.headRefExists === null) {
+    return { kind: "warning", label: "Waiting for verification", reason: "The actual top branch ref has not been verified." };
+  }
+  if (!top.headRefExists) {
+    return { kind: "disabled", label: "Not eligible", reason: "The actual top branch ref is missing." };
+  }
+  const restriction = mergeRestriction(top);
+  if (restriction) {
+    return { kind: restriction.includes("could not") ? "warning" : "disabled", label: restriction.includes("could not") ? "Waiting for verification" : "Not eligible", reason: restriction };
+  }
+  return { kind: "eligible", label: "Eligible native stack target", reason: "The explicit native order and actual top are verified; the next layer would follow this top." };
+};
+
+const pullRequestLink = (pullRequest: PullRequest) => {
+  const url = safeExternalUrl(pullRequest.htmlUrl);
+  return url ? `<a class="text-brand-readable underline decoration-brand-readable/50 underline-offset-4" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">#${escapeHtml(pullRequest.number)} ${escapeHtml(pullRequest.title)}</a>` : `#${escapeHtml(pullRequest.number)} ${escapeHtml(pullRequest.title)}`;
+};
+
+const renderStack = (
+  repository: Repository,
+  stack: PrStack,
+  pullRequests: Map<string, PullRequest>,
+  targetGate?: TargetStatus,
+) => {
+  const members = [...stack.members].sort((left, right) => left.position - right.position);
+  const status = stackStatus(repository, stack, pullRequests, targetGate);
+  return `<li class="rounded-box bg-base-100 p-4 sm:p-6">
+    <div class="flex flex-wrap items-start justify-between gap-4">
+      <div class="min-w-0">
+        <h2 class="break-words text-lg font-semibold">Native stack #${escapeHtml(stack.number)}</h2>
+        <p class="mt-2 text-sm text-muted">Trunk: <code class="font-mono text-base-content">${escapeHtml(stack.trunkRef ?? "unknown")}</code> · Global ID: <code class="font-mono text-base-content">${escapeHtml(stack.githubId)}</code>${stack.nodeId ? ` · Node ID: <code class="font-mono text-base-content">${escapeHtml(stack.nodeId)}</code>` : ""}</p>
+      </div>
+      <span class="badge ${targetBadgeClass(status.kind)}">${escapeHtml(status.label)}</span>
+    </div>
+    <ol class="mt-5 grid gap-2" aria-label="Native stack #${escapeHtml(stack.number)} ordered members">
+      ${members.map((member) => {
+        const pullRequest = pullRequests.get(member.pullRequestId);
+        return `<li class="flex flex-wrap items-center justify-between gap-3 rounded-field border border-base-300 px-3 py-3">
+          <span class="min-w-0 break-words"><span class="mr-2 font-mono text-sm text-muted">${member.position}.</span>${pullRequest ? pullRequestLink(pullRequest) : `<span class="text-warning">Pull request unavailable</span>`}</span>
+          <span class="flex flex-wrap items-center gap-2">${pullRequest ? pullRequestStateBadge(pullRequest) : ""}${member.position === members[members.length - 1]?.position ? `<span class="badge badge-info">Top</span>` : ""}</span>
+        </li>`;
+      }).join("")}
+    </ol>
+    <p class="mt-4 text-sm leading-normal text-muted">${escapeHtml(status.reason)}</p>
+  </li>`;
+};
+
+const renderActivePullRequest = (pullRequest: PullRequest) => `<li class="rounded-box bg-base-100 p-4 sm:p-6">
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div class="min-w-0">
+      <h2 class="break-words text-lg font-semibold">${pullRequestLink(pullRequest)}</h2>
+      <p class="mt-2 text-sm text-muted">${pullRequest.stack ? `Native stack #${escapeHtml(pullRequest.stack.stackNumber)}, position ${pullRequest.stack.position} of ${pullRequest.stack.size}` : "Standalone Pull request"}</p>
+    </div>
+    ${pullRequestStateBadge(pullRequest)}
+  </div>
+  <dl class="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+    <div><dt class="font-medium text-muted">Head</dt><dd class="mt-1 break-words font-mono">${escapeHtml(pullRequest.headRef)}</dd></div>
+    <div><dt class="font-medium text-muted">Base</dt><dd class="mt-1 break-words font-mono">${escapeHtml(pullRequest.baseRef)}</dd></div>
+    <div><dt class="font-medium text-muted">Head ref</dt><dd class="mt-1 break-words">${pullRequest.headRefExists === true ? `Verified at <code class="font-mono">${escapeHtml(pullRequest.observedHeadSha ?? "unknown SHA")}</code>` : pullRequest.headRefExists === false ? "Missing" : "Unknown"}</dd></div>
+    <div><dt class="font-medium text-muted">Updated</dt><dd class="mt-1">${formatTime(pullRequest.updatedAt)}</dd></div>
+  </dl>
+</li>`;
+
+const renderStandaloneTarget = (repository: Repository, pullRequest: PullRequest, targetGate?: TargetStatus) => {
+  const status = standaloneStatus(repository, pullRequest, targetGate);
+  return `<li class="rounded-box bg-base-100 p-4 sm:p-6">
+    <div class="flex flex-wrap items-start justify-between gap-4">
+      <div class="min-w-0"><h2 class="break-words text-lg font-semibold">${pullRequestLink(pullRequest)}</h2><p class="mt-2 text-sm text-muted">Standalone candidate · base <code class="font-mono text-base-content">${escapeHtml(pullRequest.baseRef)}</code></p></div>
+      <span class="badge ${targetBadgeClass(status.kind)}">${escapeHtml(status.label)}</span>
+    </div>
+    <p class="mt-4 leading-normal text-muted">${escapeHtml(status.reason)}</p>
+  </li>`;
+};
+
+export const renderPullRequestsPage = ({
+  csrfToken,
+  repository,
+  pullRequests,
+  stacks,
+  accessRefresh,
+  refresh,
+}: {
+  csrfToken: string;
+  repository: Repository;
+  pullRequests: PullRequest[];
+  stacks: PrStack[];
+  accessRefresh?: RefreshState;
+  refresh?: RefreshState;
+}) => {
+  const activePullRequests = pullRequests.filter((pullRequest) => pullRequest.isCurrent && pullRequest.state === "open");
+  const pullRequestMap = new Map(pullRequests.map((pullRequest) => [pullRequest.githubId, pullRequest]));
+  const standalone = activePullRequests.filter((pullRequest) => !pullRequest.stack);
+  const targetGate = targetVerificationStatus(repository, accessRefresh, refresh);
+  const canShowEmptyState = refresh?.availability === "available";
+  const notice = !refresh || refresh.availability === "never"
+    ? `<div class="alert alert-info mt-6 leading-normal" role="status"><div><strong>Pull requests have not synchronized yet.</strong> An unavailable first read is not shown as an empty list.</div></div>`
+    : refresh.availability === "unavailable" || refresh.availability === "partial"
+      ? `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Pull request synchronization is unavailable.</strong>${pullRequests.length > 0 || stacks.length > 0 ? ` Showing the last complete projection from ${formatTime(refresh.lastSuccessAt)}.` : " No complete Pull request projection is available yet."} Known membership was not removed.</div></div>`
+      : refresh.failureReason
+        ? `<div class="alert alert-warning mt-6 leading-normal" role="status">${escapeHtml(refresh.failureReason)}</div>`
+        : "";
+  const empty = canShowEmptyState && activePullRequests.length === 0 && stacks.length === 0
+    ? `<div class="mt-8 rounded-box bg-base-100 p-6"><p class="text-lg font-semibold">No active Pull requests or native stacks</p><p class="mt-2 max-w-prose leading-relaxed text-muted">Open GitHub Pull requests and explicitly registered native stacks appear here.</p></div>`
+    : "";
+  const stackList = stacks.length > 0
+    ? `<section class="mt-8" aria-labelledby="native-stacks-heading"><h2 id="native-stacks-heading" class="text-lg font-semibold">Native PR stacks</h2><p class="mt-2 max-w-prose leading-relaxed text-muted">GitHub's explicit bottom-to-top order is shown here. Atlas does not infer stacks from branch names or change GitHub state.</p><ul class="mt-4 grid gap-4">${stacks.map((stack) => renderStack(repository, stack, pullRequestMap, targetGate)).join("")}</ul></section>`
+    : "";
+  const activeList = activePullRequests.length > 0
+    ? `<section class="mt-8" aria-labelledby="active-pull-requests-heading"><h2 id="active-pull-requests-heading" class="text-lg font-semibold">Active Pull requests</h2><ul class="mt-4 grid gap-4">${activePullRequests.map(renderActivePullRequest).join("")}</ul></section>`
+    : "";
+  const standaloneList = standalone.length > 0
+    ? `<section class="mt-8" aria-labelledby="standalone-targets-heading"><h2 id="standalone-targets-heading" class="text-lg font-semibold">Standalone target classification</h2><p class="mt-2 max-w-prose leading-relaxed text-muted">Only open Pull requests outside an explicit native stack are considered here. Classification is read-only; no start or GitHub mutation is available in this slice.</p><ul class="mt-4 grid gap-4">${standalone.map((pullRequest) => renderStandaloneTarget(repository, pullRequest, targetGate)).join("")}</ul></section>`
+    : "";
+
+  return renderShell({
+    title: `${repository.fullName} Pull requests`,
+    active: "pull-requests",
+    repository,
+    csrfToken,
+    content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
+      ${renderRepositoryHeading(repository, "Pull requests", "Active GitHub Pull requests, explicit native stack order, and read-only starting-target classification.")}
+      ${accessNotice(repository)}
+      ${notice}
+      <p class="mt-6 text-sm text-muted">${refreshLine("Access", accessRefresh)} · ${refreshLine("Pull requests", refresh)}</p>
+      ${empty}
+      ${stackList}
+      ${activeList}
+      ${standaloneList}
     </section>`,
   });
 };
