@@ -148,6 +148,18 @@ export type PreparationCheckpoint =
   | "start_unconfirmed"
   | "failed_setup";
 
+export type HandoffCheckpoint =
+  | "not_started"
+  | "intent_saved"
+  | "events_consuming"
+  | "create_sent"
+  | "create_confirmed"
+  | "associated"
+  | "prompt_sent"
+  | "prompt_accepted";
+
+export type OpenCodeFreshness = "unknown" | "fresh" | "stale";
+
 export type SessionFilter = "active" | "all" | SessionState;
 
 export type Session = {
@@ -173,9 +185,16 @@ export type Session = {
   preparationCheckpoint: PreparationCheckpoint;
   preparationReason: string | null;
   preparedAt: string | null;
+  handoffCheckpoint: HandoffCheckpoint;
+  opencodeIntendedSessionId: string | null;
   openCodeSessionId: string | null;
   initialMessageId: string | null;
+  initialInboxId: string | null;
   exactMessage: string | null;
+  handoffUncertainReason: string | null;
+  opencodeFreshness: OpenCodeFreshness;
+  opencodeLastSuccessAt: string | null;
+  opencodeLastFailureAt: string | null;
   executionSlotHeld: boolean;
   updatedAt: string;
 };
@@ -320,9 +339,16 @@ type SessionRow = {
   preparation_checkpoint: PreparationCheckpoint;
   preparation_reason: string | null;
   prepared_at: string | null;
+  handoff_checkpoint: HandoffCheckpoint;
+  opencode_intended_session_id: string | null;
   opencode_session_id: string | null;
   initial_message_id: string | null;
+  initial_inbox_id: string | null;
   exact_message: string | null;
+  handoff_uncertain_reason: string | null;
+  opencode_freshness: OpenCodeFreshness;
+  opencode_last_success_at: string | null;
+  opencode_last_failure_at: string | null;
   execution_slot_held: number;
   updated_at: string;
 };
@@ -553,6 +579,29 @@ const migrations = [
         CHECK (admission_blocked IN (0, 1));
     `,
   },
+  {
+    version: 9,
+    sql: `
+      ALTER TABLE sessions ADD COLUMN handoff_checkpoint TEXT NOT NULL DEFAULT 'not_started'
+        CHECK (handoff_checkpoint IN ('not_started', 'intent_saved', 'events_consuming', 'create_sent', 'create_confirmed', 'associated', 'prompt_sent', 'prompt_accepted'));
+      ALTER TABLE sessions ADD COLUMN opencode_intended_session_id TEXT;
+      ALTER TABLE sessions ADD COLUMN initial_inbox_id TEXT;
+      ALTER TABLE sessions ADD COLUMN handoff_uncertain_reason TEXT;
+      ALTER TABLE sessions ADD COLUMN opencode_freshness TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (opencode_freshness IN ('unknown', 'fresh', 'stale'));
+      ALTER TABLE sessions ADD COLUMN opencode_last_success_at TEXT;
+      ALTER TABLE sessions ADD COLUMN opencode_last_failure_at TEXT;
+      CREATE UNIQUE INDEX sessions_opencode_intended_session_idx
+        ON sessions (opencode_intended_session_id)
+        WHERE opencode_intended_session_id IS NOT NULL;
+      CREATE UNIQUE INDEX sessions_opencode_session_idx
+        ON sessions (opencode_session_id)
+        WHERE opencode_session_id IS NOT NULL;
+      CREATE UNIQUE INDEX sessions_initial_message_idx
+        ON sessions (initial_message_id)
+        WHERE initial_message_id IS NOT NULL;
+    `,
+  },
 ];
 
 const isoNow = (now: () => number) => new Date(now()).toISOString();
@@ -685,9 +734,16 @@ const toSession = (row: SessionRow): Session => ({
   preparationCheckpoint: row.preparation_checkpoint,
   preparationReason: row.preparation_reason,
   preparedAt: row.prepared_at,
+  handoffCheckpoint: row.handoff_checkpoint,
+  opencodeIntendedSessionId: row.opencode_intended_session_id,
   openCodeSessionId: row.opencode_session_id,
   initialMessageId: row.initial_message_id,
+  initialInboxId: row.initial_inbox_id,
   exactMessage: row.exact_message,
+  handoffUncertainReason: row.handoff_uncertain_reason,
+  opencodeFreshness: row.opencode_freshness,
+  opencodeLastSuccessAt: row.opencode_last_success_at,
+  opencodeLastFailureAt: row.opencode_last_failure_at,
   executionSlotHeld: row.execution_slot_held === 1,
   updatedAt: row.updated_at,
 });
@@ -1614,6 +1670,220 @@ export const createPersistence = (options: PersistenceOptions) => {
     return getSession(atlasId);
   };
 
+  const setHandoffIntent = (
+    atlasId: string,
+    intendedSessionId: string,
+    messageId: string,
+    exactMessage: string,
+  ) => {
+    const save = database.transaction(() => {
+      database.query(`
+        UPDATE sessions
+        SET handoff_checkpoint = 'intent_saved',
+            opencode_intended_session_id = ?,
+            initial_message_id = ?,
+            exact_message = ?,
+            handoff_uncertain_reason = NULL,
+            opencode_freshness = 'unknown',
+            opencode_last_failure_at = NULL,
+            state_reason = ?,
+            updated_at = ?
+        WHERE atlas_id = ?
+          AND state = 'preparing'
+          AND preparation_checkpoint = 'prepared'
+          AND handoff_checkpoint = 'not_started'
+      `).run(
+        intendedSessionId,
+        messageId,
+        exactMessage,
+        "OpenCode handoff intent saved; the compatible service has not been contacted.",
+        isoNow(now),
+        atlasId,
+      );
+    });
+    save.immediate();
+    return getSession(atlasId);
+  };
+
+  const setHandoffCheckpoint = (
+    atlasId: string,
+    checkpoint: HandoffCheckpoint,
+    reason: string,
+  ) => {
+    database.query(`
+      UPDATE sessions
+      SET handoff_checkpoint = ?, state_reason = ?, updated_at = ?
+      WHERE atlas_id = ?
+        AND state = 'preparing'
+        AND handoff_checkpoint != 'prompt_accepted'
+    `).run(checkpoint, reason, isoNow(now), atlasId);
+    return getSession(atlasId);
+  };
+
+  const setHandoffCreated = (atlasId: string, opencodeSessionId: string) => {
+    const save = database.transaction(() => {
+      const existing = database.query(`
+        SELECT opencode_session_id FROM sessions WHERE atlas_id = ?
+      `).get(atlasId) as { opencode_session_id: string | null } | null;
+      if (!existing) return;
+      if (existing.opencode_session_id && existing.opencode_session_id !== opencodeSessionId) {
+        throw new Error("OpenCode Session association cannot change");
+      }
+      database.query(`
+        UPDATE sessions
+        SET handoff_checkpoint = 'create_confirmed',
+            opencode_session_id = ?,
+            handoff_uncertain_reason = NULL,
+            opencode_freshness = 'fresh',
+            opencode_last_success_at = ?,
+            opencode_last_failure_at = NULL,
+            state_reason = ?,
+            updated_at = ?
+        WHERE atlas_id = ?
+          AND state = 'preparing'
+          AND handoff_checkpoint = 'create_sent'
+      `).run(
+        opencodeSessionId,
+        isoNow(now),
+        "OpenCode Session created; its directory binding is being reconciled before prompting.",
+        isoNow(now),
+        atlasId,
+      );
+    });
+    save.immediate();
+    return getSession(atlasId);
+  };
+
+  const confirmHandoffAssociation = (atlasId: string) => {
+    database.query(`
+      UPDATE sessions
+      SET handoff_checkpoint = 'associated',
+          handoff_uncertain_reason = NULL,
+          opencode_freshness = 'fresh',
+          opencode_last_success_at = ?,
+          opencode_last_failure_at = NULL,
+          state_reason = ?,
+          updated_at = ?
+      WHERE atlas_id = ?
+        AND state = 'preparing'
+        AND handoff_checkpoint = 'create_confirmed'
+        AND opencode_session_id IS NOT NULL
+    `).run(
+      isoNow(now),
+      "OpenCode Session association confirmed; the initial prompt has not been sent.",
+      isoNow(now),
+      atlasId,
+    );
+    return getSession(atlasId);
+  };
+
+  const recordPromptAccepted = (atlasId: string, inboxId: string) => {
+    database.query(`
+      UPDATE sessions
+      SET handoff_checkpoint = 'prompt_accepted',
+          initial_inbox_id = ?,
+          handoff_uncertain_reason = NULL,
+          opencode_freshness = 'fresh',
+          opencode_last_success_at = ?,
+          opencode_last_failure_at = NULL,
+          state_reason = ?,
+          updated_at = ?
+      WHERE atlas_id = ?
+        AND state = 'preparing'
+        AND handoff_checkpoint = 'prompt_sent'
+        AND opencode_session_id IS NOT NULL
+    `).run(
+      inboxId,
+      isoNow(now),
+      "Initial prompt accepted by OpenCode; execution state is being reconciled.",
+      isoNow(now),
+      atlasId,
+    );
+    return getSession(atlasId);
+  };
+
+  const markHandoffUnconfirmed = (atlasId: string, reason: string) => {
+    database.query(`
+      UPDATE sessions
+      SET handoff_uncertain_reason = ?,
+          opencode_freshness = 'stale',
+          opencode_last_failure_at = ?,
+          state_reason = ?,
+          updated_at = ?
+      WHERE atlas_id = ?
+        AND state IN ('preparing', 'running', 'waiting', 'idle')
+    `).run(reason, isoNow(now), reason, isoNow(now), atlasId);
+    return getSession(atlasId);
+  };
+
+  const markOpenCodeStale = (atlasId: string, reason: string) => {
+    database.query(`
+      UPDATE sessions
+      SET opencode_freshness = 'stale',
+          opencode_last_failure_at = ?,
+          state_reason = ?,
+          updated_at = ?
+      WHERE atlas_id = ?
+        AND state IN ('preparing', 'running', 'waiting', 'idle')
+    `).run(isoNow(now), reason, isoNow(now), atlasId);
+    return getSession(atlasId);
+  };
+
+  const reconcileOpenCode = (
+    atlasId: string,
+    state: Extract<SessionState, "running" | "waiting" | "idle" | "succeeded" | "failed" | "interrupted">,
+    reason: string,
+  ) => {
+    const terminal = state === "succeeded" || state === "failed" || state === "interrupted";
+    const reconcile = database.transaction(() => {
+      const current = database.query("SELECT state FROM sessions WHERE atlas_id = ?").get(atlasId) as { state: SessionState } | null;
+      if (!current) return;
+      if ((current.state === "succeeded" || current.state === "failed" || current.state === "interrupted") && !terminal) return;
+      database.query(`
+        UPDATE sessions
+        SET state = ?,
+            state_reason = ?,
+            execution_slot_held = ?,
+            handoff_uncertain_reason = NULL,
+            opencode_freshness = 'fresh',
+            opencode_last_success_at = ?,
+            updated_at = ?
+        WHERE atlas_id = ?
+          AND state IN ('preparing', 'running', 'waiting', 'idle')
+      `).run(
+        state,
+        reason,
+        terminal ? 0 : 1,
+        isoNow(now),
+        isoNow(now),
+        atlasId,
+      );
+    });
+    reconcile.immediate();
+    return getSession(atlasId);
+  };
+
+  const listOpenCodeSessions = () => {
+    const rows = database.query(`
+      SELECT * FROM sessions
+      WHERE state IN ('preparing', 'running', 'waiting', 'idle')
+        AND (
+          preparation_checkpoint = 'prepared'
+          OR handoff_checkpoint != 'not_started'
+          OR opencode_session_id IS NOT NULL
+        )
+      ORDER BY submission_order ASC
+    `).all() as SessionRow[];
+    return rows.map(toSession);
+  };
+
+  const getSessionByOpenCodeSessionId = (opencodeSessionId: string) => {
+    const row = database.query(
+      "SELECT * FROM sessions WHERE opencode_session_id = ?",
+    ).get(opencodeSessionId) as SessionRow | null;
+    return row ? toSession(row) : undefined;
+  };
+
   const listSessions = (repositoryId: string, filter: SessionFilter = "active") => {
     const activeStates = "('queued', 'preparing', 'running', 'waiting', 'idle')";
     if (filter === "active") {
@@ -1684,6 +1954,16 @@ export const createPersistence = (options: PersistenceOptions) => {
     blockQueuedPreparation,
     requeuePreparation,
     failPreparation,
+    setHandoffIntent,
+    setHandoffCheckpoint,
+    setHandoffCreated,
+    confirmHandoffAssociation,
+    recordPromptAccepted,
+    markHandoffUnconfirmed,
+    markOpenCodeStale,
+    reconcileOpenCode,
+    listOpenCodeSessions,
+    getSessionByOpenCodeSessionId,
     listSessions,
     listSessionsForSpec,
   };

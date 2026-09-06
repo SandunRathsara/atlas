@@ -98,7 +98,7 @@ const verify = (path: string, expectedSession: boolean, expectedDelivery: boolea
   const versions = (persistence.database.query(
     "SELECT version FROM schema_migrations ORDER BY version",
   ).all() as Array<{ version: number }>).map(({ version }) => version);
-  assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
   assert.equal(Boolean(persistence.getRepository(repository.githubId)), expectedData);
   assert.equal(Boolean(persistence.getSpec(repository.githubId, spec.issueNumber)), expectedData);
   assert.equal(Boolean(persistence.getSession(sessionId)), expectedSession);

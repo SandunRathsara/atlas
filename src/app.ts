@@ -19,6 +19,8 @@ import {
 } from "./persistence.ts";
 import { createPreparationService } from "./preparation.ts";
 import type { CredentialBoundary } from "./credentials.ts";
+import { createOpenCodeHandoffService } from "./opencode.ts";
+import type { OpenCodeHandoffService } from "./opencode.ts";
 import {
   createRefreshCoordinator,
   githubFailureMessage,
@@ -84,6 +86,7 @@ export type AppOptions = {
   credentials?: CredentialBoundary;
   persistence?: Persistence;
   refreshCoordinator?: RefreshCoordinator;
+  openCode?: OpenCodeHandoffService;
   sharedToken?: string;
 };
 
@@ -282,7 +285,12 @@ export const createApp = (options: AppOptions) => {
     gitBinary: options.gitBinary,
     credentials: options.credentials,
   });
+  const openCode = options.openCode ?? createOpenCodeHandoffService({
+    persistence,
+    onSlotReleased: preparation.enqueue,
+  });
   preparation.start();
+  openCode.start();
 
   const scopedInventory = async () => {
     const inventory = await github.listInstallationRepositories();
