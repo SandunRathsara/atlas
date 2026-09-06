@@ -1,5 +1,5 @@
 import type { GitHubRepository } from "./github.ts";
-import type { PrStack, PullRequest, RefreshState, Repository, Spec } from "./persistence.ts";
+import type { PrStack, PullRequest, RefreshState, Repository, Session, SessionFilter, SessionState, Spec } from "./persistence.ts";
 
 const escapeHtml = (value: string) =>
   value.replace(
@@ -32,7 +32,7 @@ const formatTime = (value: string | null) => {
 };
 
 const htmxConfig =
-  '{"reportValidityOfForms":true,"includeIndicatorStyles":false,"historyRestoreAsHxRequest":false,"responseHandling":[{"code":"204","swap":false},{"code":"422","swap":true,"error":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true},{"code":"...","swap":true}]}';
+  '{"reportValidityOfForms":true,"includeIndicatorStyles":false,"historyRestoreAsHxRequest":false,"responseHandling":[{"code":"204","swap":false},{"code":"409","swap":true,"error":false},{"code":"422","swap":true,"error":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true},{"code":"...","swap":true}]}';
 
 const document = (title: string, content: string) => `<!doctype html>
 <html lang="en" data-theme="dim">
@@ -52,23 +52,38 @@ const document = (title: string, content: string) => `<!doctype html>
 
 const skipLink = `<a class="atlas-skip-link" href="#main-content">Skip to main content</a>`;
 
+export type PendingStartSession = {
+  action: string;
+  submissionId: string;
+  prompt: string;
+};
+
 export const renderLoginForm = ({
   csrfToken,
   error,
   returnTo,
+  pending,
 }: {
   csrfToken: string;
   error?: string;
   returnTo: string;
+  pending?: PendingStartSession;
 }) => {
   const errorMarkup = error
     ? `<p id="login-error" class="alert alert-error mt-6 leading-normal" tabindex="-1" data-focus-on-swap>${escapeHtml(error)}</p>`
     : "";
   const errorAttribute = error ? ' aria-describedby="login-error" aria-invalid="true"' : "";
+  const pendingMarkup = pending
+    ? `<input type="hidden" name="pending_action" value="${escapeHtml(pending.action)}">
+    <input type="hidden" name="pending_submission_id" value="${escapeHtml(pending.submissionId)}">
+    <textarea hidden name="pending_prompt">${escapeHtml(pending.prompt)}</textarea>
+    <div class="alert alert-info mt-6 leading-normal" role="status">Sign in to review and retry the preserved Start Session form. Atlas will not resubmit it automatically.</div>`
+    : "";
 
   return `<form id="login-form" class="mt-8 max-w-md" action="/login" method="post" autocomplete="on" hx-post="/login" hx-target="#login-form" hx-swap="outerHTML" hx-indicator="#login-progress" hx-disabled-elt="button[type='submit']">
     <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
     <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}">
+    ${pendingMarkup}
     <div>
       <label class="label mb-2 block p-0" for="shared-token">Shared access credential</label>
       <input id="shared-token" class="input input-bordered min-h-11 w-full border-control-border bg-base-100 text-base-content" name="token" type="password" autocomplete="current-password" required${errorAttribute}>
@@ -87,6 +102,7 @@ export const renderLoginPage = (options: {
   csrfToken: string;
   error?: string;
   returnTo: string;
+  pending?: PendingStartSession;
 }) =>
   document(
     "Sign in",
@@ -116,15 +132,17 @@ const renderLogoutForm = (csrfToken: string) => `<form id="logout-form" class="f
   <span id="logout-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Signing out...</span>
 </form>`;
 
-type ActivePage = "repositories" | "new-repository" | "specs" | "spec" | "pull-requests";
+type ActivePage = "repositories" | "new-repository" | "specs" | "spec" | "pull-requests" | "sessions";
 
 const repositoryLink = (repository: Pick<Repository, "githubId">) => `/repositories/${encodeURIComponent(repository.githubId)}/specs`;
 const pullRequestsLink = (repository: Pick<Repository, "githubId">) => `/repositories/${encodeURIComponent(repository.githubId)}/pull-requests`;
+const sessionsLink = (repository: Pick<Repository, "githubId">) => `/repositories/${encodeURIComponent(repository.githubId)}/sessions`;
 
 const renderRepositoryNav = (repository: Repository, active: ActivePage) => `<div class="mt-6 border-t border-base-300 pt-4">
   <p class="px-4 py-2 text-sm font-medium uppercase tracking-[0.16em] text-muted">Repository</p>
   <a class="block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${active === "specs" || active === "spec" ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${repositoryLink(repository)}"${active === "specs" || active === "spec" ? ' aria-current="page"' : ""}>Specs</a>
   <a class="mt-1 block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${active === "pull-requests" ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${pullRequestsLink(repository)}"${active === "pull-requests" ? ' aria-current="page"' : ""}>Pull requests</a>
+  <a class="mt-1 block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${active === "sessions" ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${sessionsLink(repository)}"${active === "sessions" ? ' aria-current="page"' : ""}>Sessions</a>
 </div>`;
 
 const renderShell = ({
@@ -132,21 +150,25 @@ const renderShell = ({
   active,
   repository,
   csrfToken,
+  historyDisabled,
   content,
 }: {
   title: string;
   active: ActivePage;
   repository?: Repository;
   csrfToken: string;
+  historyDisabled?: boolean;
   content: string;
 }) => {
   const repositoryName = repository?.fullName ?? "No Repository selected";
   const repositoriesActive = active === "repositories" || active === "new-repository";
   const specsActive = active === "specs" || active === "spec";
   const pullRequestsActive = active === "pull-requests";
+  const sessionsActive = active === "sessions";
   const mobileLinks = `<a class="block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${repositoriesActive ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="/repositories"${repositoriesActive ? ' aria-current="page"' : ""}>Repositories</a>
     ${repository ? `<a class="mt-1 block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${specsActive ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${repositoryLink(repository)}"${specsActive ? ' aria-current="page"' : ""}>Specs</a>
-    <a class="mt-1 block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${pullRequestsActive ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${pullRequestsLink(repository)}"${pullRequestsActive ? ' aria-current="page"' : ""}>Pull requests</a>` : ""}`;
+    <a class="mt-1 block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${pullRequestsActive ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${pullRequestsLink(repository)}"${pullRequestsActive ? ' aria-current="page"' : ""}>Pull requests</a>
+    <a class="mt-1 block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${sessionsActive ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${sessionsLink(repository)}"${sessionsActive ? ' aria-current="page"' : ""}>Sessions</a>` : ""}`;
 
   return document(
     title,
@@ -176,7 +198,7 @@ const renderShell = ({
           ${repository ? renderRepositoryNav(repository, active) : ""}
         </nav>
       </aside>
-      <main id="main-content" class="min-w-0" aria-labelledby="page-title">
+       <main id="main-content" class="min-w-0" aria-labelledby="page-title"${historyDisabled ? ' hx-history="false"' : ""}>
         <div id="global-status" class="sr-only" role="status" aria-atomic="true">Signed in to Atlas.</div>
         ${content}
       </main>
@@ -384,8 +406,33 @@ const renderRepositoryHeading = (repository: Repository, title: string, descript
   ${eligibility ? `<div class="alert alert-warning mt-6 leading-normal" role="status">${escapeHtml(eligibility)}</div>` : ""}`;
 };
 
-const specRow = (spec: Spec) => {
+const sessionStateLabel = (state: SessionState) => {
+  if (state === "failed_setup") return "Failed — setup";
+  return state.charAt(0).toUpperCase() + state.slice(1);
+};
+
+const sessionBadgeClass = (state: SessionState) => {
+  if (state === "running") return "badge-info";
+  if (state === "waiting") return "badge-warning";
+  if (state === "succeeded") return "badge-success";
+  if (state === "failed" || state === "failed_setup" || state === "interrupted") return "badge-error";
+  return "badge-neutral";
+};
+
+const sessionHistoryRow = (session: Session) => `<li class="rounded-box bg-base-100 p-4 sm:p-5">
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div class="min-w-0">
+      <p class="font-mono text-sm text-muted">Session ${escapeHtml(session.atlasId)}</p>
+      <h3 class="mt-2 text-lg font-semibold"><a class="text-brand-readable underline decoration-brand-readable/50 underline-offset-4" href="${`/sessions/${encodeURIComponent(session.atlasId)}`}">${escapeHtml(sessionStateLabel(session.state))} Session</a></h3>
+    </div>
+    <span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>
+  </div>
+  <p class="mt-4 text-sm leading-normal text-muted">Submitted ${escapeHtml(formatTime(session.submittedAt))} · Queue order ${session.submissionOrder}</p>
+</li>`;
+
+const specRow = (spec: Spec, sessions: Session[] = []) => {
   const githubUrl = safeExternalUrl(spec.htmlUrl);
+  const latestSession = sessions[0];
   return `<li class="rounded-box bg-base-100 p-3 sm:p-6">
     <div class="flex flex-wrap items-start justify-between gap-4">
       <div class="min-w-0">
@@ -399,6 +446,11 @@ const specRow = (spec: Spec) => {
       <span>Label: <code class="font-mono text-base-content">spec</code></span>
       ${githubUrl ? `<a class="text-brand-readable underline underline-offset-4" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">GitHub issue</a>` : ""}
     </div>
+    <div class="mt-5 flex flex-wrap items-center gap-3 text-sm">
+      ${latestSession
+        ? `<a class="text-brand-readable underline underline-offset-4" href="${`/sessions/${encodeURIComponent(latestSession.atlasId)}`}">${sessions.length} Atlas Session${sessions.length === 1 ? "" : "s"} · latest ${escapeHtml(sessionStateLabel(latestSession.state))}</a>`
+        : `<span class="text-muted">No Atlas Sessions yet</span>`}
+    </div>
   </li>`;
 };
 
@@ -406,18 +458,20 @@ export const renderSpecsPage = ({
   csrfToken,
   repository,
   specs,
+  sessionsBySpec,
   accessRefresh,
   specsRefresh,
 }: {
   csrfToken: string;
   repository: Repository;
   specs: Spec[];
+  sessionsBySpec?: ReadonlyMap<string, Session[]>;
   accessRefresh?: RefreshState;
   specsRefresh?: RefreshState;
 }) => {
   const canShowEmptyState = specsRefresh?.availability === "available";
   const list = specs.length > 0
-    ? `<ul class="mt-8 grid gap-4" aria-label="Open Specs">${specs.map(specRow).join("")}</ul>`
+    ? `<ul class="mt-8 grid gap-4" aria-label="Open Specs">${specs.map((spec) => specRow(spec, sessionsBySpec?.get(spec.issueNumber) ?? [])).join("")}</ul>`
     : canShowEmptyState ? `<div class="mt-8 rounded-box bg-base-100 p-6">
         <p class="text-lg font-semibold">No open Specs</p>
         <p class="mt-2 max-w-prose leading-relaxed text-muted">Open, non-PR GitHub issues carrying the exact <code class="font-mono text-base-content">spec</code> label appear here.</p>
@@ -725,17 +779,20 @@ export const renderSpecDetailPage = ({
   csrfToken,
   repository,
   spec,
+  sessions,
   accessRefresh,
   specsRefresh,
 }: {
   csrfToken: string;
   repository: Repository;
   spec: Spec;
+  sessions?: Session[];
   accessRefresh?: RefreshState;
   specsRefresh?: RefreshState;
 }) => {
   const githubUrl = safeExternalUrl(spec.htmlUrl);
   const retained = !(spec.isCurrent && spec.state === "open" && spec.hasSpecLabel && !spec.isPullRequest);
+  const canStart = !retained && repository.accessStatus === "available" && !repository.archived && !repository.disabled && repository.hasIssues && Boolean(repository.defaultBranch);
   const labels = spec.labels.length > 0
     ? spec.labels.map((label) => `<span class="badge ${label === "spec" ? "badge-info" : ""}">${escapeHtml(label)}</span>`).join(" ")
     : `<span class="text-sm text-muted">No labels recorded</span>`;
@@ -755,6 +812,7 @@ export const renderSpecDetailPage = ({
         <div class="flex flex-wrap items-center gap-3">
           <span class="badge ${retained ? "badge-warning" : "badge-info"}">${retained ? "Retained snapshot" : "Open Spec"}</span>
           ${githubUrl ? `<a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
+          ${canStart ? `<a class="btn btn-primary min-h-11 border border-control-border" href="${`/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(spec.issueNumber)}/sessions/new`}">Start Session</a>` : ""}
         </div>
       </div>
       ${accessNotice(repository)}
@@ -770,6 +828,273 @@ export const renderSpecDetailPage = ({
         <h2 class="text-lg font-semibold">Spec description</h2>
         <div class="mt-5 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(spec.body) || "No description provided."}</div>
       </article>
+      <section class="mt-10" aria-labelledby="session-history-title">
+        <div class="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h2 id="session-history-title" class="text-lg font-semibold">Session history</h2>
+            <p class="mt-2 text-sm leading-normal text-muted">Atlas attempts for this Spec, including queued work.</p>
+          </div>
+          <a class="text-sm text-brand-readable underline underline-offset-4" href="${sessionsLink(repository)}">View Repository Sessions</a>
+        </div>
+        ${(sessions?.length ?? 0) > 0
+          ? `<ul class="mt-5 grid gap-4" aria-label="Session history">${sessions!.map(sessionHistoryRow).join("")}</ul>`
+          : `<div class="mt-5 rounded-box bg-base-100 p-5"><p class="font-medium">No Atlas Sessions yet</p><p class="mt-2 text-sm leading-normal text-muted">Starting a Session will preserve its prompt and Spec snapshot here.</p></div>`}
+      </section>
+    </section>`,
+  });
+};
+
+export const renderStartSessionForm = ({
+  action,
+  csrfToken,
+  submissionId,
+  prompt,
+  error,
+  existingSession,
+}: {
+  action: string;
+  csrfToken: string;
+  submissionId: string;
+  prompt: string;
+  error?: string;
+  existingSession?: Session;
+}) => {
+  const errorMarkup = error
+    ? `<div id="prompt-error" class="alert alert-error mt-6 leading-normal" role="alert" tabindex="-1" data-focus-on-swap>
+        <div><strong>Session was not queued.</strong><p class="mt-1">${escapeHtml(error)}</p>${existingSession ? `<a class="mt-3 inline-block text-brand-readable underline underline-offset-4" href="${`/sessions/${encodeURIComponent(existingSession.atlasId)}`}">Open the existing Session</a>` : ""}</div>
+      </div>`
+    : "";
+  const errorAttributes = error ? ' aria-describedby="prompt-error" aria-invalid="true"' : "";
+
+  return `<form id="start-session-form" class="mt-8 max-w-2xl" action="${escapeHtml(action)}" method="post" hx-post="${escapeHtml(action)}" hx-target="#start-session-form" hx-swap="outerHTML" hx-indicator="#start-session-progress" hx-disabled-elt="button[type='submit']">
+    <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
+    <input type="hidden" name="submission_id" value="${escapeHtml(submissionId)}">
+    <div>
+      <label class="label mb-2 block p-0" for="initial-prompt">Initial prompt</label>
+      <textarea id="initial-prompt" class="textarea textarea-bordered min-h-48 w-full border-control-border bg-base-100 text-base-content" name="prompt" rows="9" maxlength="20000" required${errorAttributes}>${escapeHtml(prompt)}</textarea>
+      <p class="mt-2 text-sm leading-normal text-muted">Tell the Agent what to implement. Atlas preserves this text unchanged. Maximum 20,000 characters.</p>
+    </div>
+    ${errorMarkup}
+    <div class="mt-8 flex flex-wrap items-center gap-4">
+      <button class="btn btn-primary min-h-11 border border-control-border" type="submit">Start Session</button>
+      <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(action.replace(/\/sessions$/, ""))}">Cancel</a>
+      <span id="start-session-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Starting Session…</span>
+    </div>
+    <p data-form-status class="sr-only" role="status" aria-live="polite"></p>
+  </form>`;
+};
+
+export const renderStartSessionPage = ({
+  action,
+  csrfToken,
+  repository,
+  spec,
+  submissionId,
+  prompt,
+  error,
+  notice,
+  existingSession,
+  accessRefresh,
+  specsRefresh,
+}: {
+  action?: string;
+  csrfToken: string;
+  repository: Repository;
+  spec: Spec;
+  submissionId: string;
+  prompt: string;
+  error?: string;
+  notice?: string;
+  existingSession?: Session;
+  accessRefresh?: RefreshState;
+  specsRefresh?: RefreshState;
+}) => {
+  const formAction = action ?? `/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(spec.issueNumber)}/sessions`;
+  const githubUrl = safeExternalUrl(spec.htmlUrl);
+  const retained = !(spec.isCurrent && spec.state === "open" && spec.hasSpecLabel && !spec.isPullRequest);
+
+  return renderShell({
+    title: `Start Session · Spec #${spec.issueNumber}`,
+    active: "spec",
+    repository,
+    csrfToken,
+    content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
+      <a class="text-sm text-brand-readable underline underline-offset-4" href="${repositoryLink(repository)}">← Back to Specs</a>
+      <div class="mt-6">
+        <p class="font-mono text-sm text-muted">Spec #${escapeHtml(spec.issueNumber)}</p>
+        <h1 id="page-title" class="mt-3 break-words text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Start Session</h1>
+        <p class="mt-4 max-w-prose leading-relaxed text-muted">Queue one Atlas implementation attempt for <strong class="text-base-content">${escapeHtml(spec.title)}</strong>. Opening or cancelling this form creates nothing.</p>
+      </div>
+      ${retained ? `<div class="alert alert-warning mt-6 leading-normal" role="alert">This is a retained Spec snapshot and is not currently eligible for a new Session.</div>` : ""}
+      <dl class="mt-8 grid gap-4 border-y border-base-300 py-5 text-sm sm:grid-cols-2">
+        <div><dt class="font-medium text-muted">Repository</dt><dd class="mt-1 break-words font-mono">${escapeHtml(repository.fullName)}</dd></div>
+        <div><dt class="font-medium text-muted">Starting base</dt><dd class="mt-1 break-words font-mono">${escapeHtml(repository.defaultBranch ?? "not available")}</dd></div>
+        <div><dt class="font-medium text-muted">Spec</dt><dd class="mt-1">${githubUrl ? `<a class="text-brand-readable underline underline-offset-4" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open issue on GitHub</a>` : "Snapshot retained"}</dd></div>
+        <div><dt class="font-medium text-muted">Queueing</dt><dd class="mt-1">Default branch only; preparation is deferred.</dd></div>
+      </dl>
+      ${notice ? `<div class="alert alert-info mt-8 leading-normal" role="status" tabindex="-1" data-focus-on-swap>${escapeHtml(notice)}</div>` : ""}
+      ${renderStartSessionForm({ action: formAction, csrfToken, submissionId, prompt, error, existingSession })}
+      <details class="mt-8 max-w-prose rounded-box bg-base-100 p-5 sm:p-6">
+        <summary class="min-h-11 cursor-pointer text-lg font-semibold">View Spec context</summary>
+        <div class="mt-5 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(spec.body) || "No description provided."}</div>
+      </details>
+      <p class="mt-6 text-sm leading-normal text-muted">${refreshLine("Access", accessRefresh)} · ${refreshLine("Specs", specsRefresh)}</p>
+    </section>`,
+  });
+};
+
+export const renderPendingStartSessionFragment = ({
+  action,
+  csrfToken,
+  submissionId,
+  prompt,
+}: PendingStartSession & { csrfToken: string }) => `<div id="login-form">
+  <div class="alert alert-info mt-8 leading-normal" role="status" tabindex="-1" data-focus-on-swap>Signed in. Review the preserved form, then choose Start Session to retry it.</div>
+  ${renderStartSessionForm({ action, csrfToken, submissionId, prompt })}
+</div>`;
+
+export const renderPendingStartSessionPage = ({
+  action,
+  csrfToken,
+  submissionId,
+  prompt,
+}: PendingStartSession & { csrfToken: string }) => document(
+  "Retry Start Session",
+  `${skipLink}
+  <header class="atlas-glass border-b border-base-content/16">
+    <div class="mx-auto flex min-h-20 max-w-7xl items-center px-4 sm:px-6 lg:px-8">
+      <div><p class="text-lg font-semibold tracking-tight">Atlas</p><p class="text-sm text-muted">Private sign-in</p></div>
+    </div>
+  </header>
+  <main id="main-content" class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+    <section class="atlas-glass w-full rounded-box p-6 sm:p-10 lg:max-w-2xl">
+      <p class="text-sm font-medium uppercase tracking-[0.18em] text-brand-readable">Sign-in complete</p>
+      <h1 class="mt-4 text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Review and retry Start Session</h1>
+      <p class="mt-4 max-w-prose leading-relaxed text-muted">Your original prompt and submission identity are preserved below. Choose Start Session when you are ready; Atlas will not resubmit automatically.</p>
+      ${renderStartSessionForm({ action, csrfToken, submissionId, prompt })}
+    </section>
+  </main>`,
+);
+
+const sessionFilterLabel = (filter: SessionFilter) => {
+  if (filter === "active") return "Active";
+  if (filter === "all") return "All";
+  return sessionStateLabel(filter);
+};
+
+const sessionListRow = (session: Session) => `<li class="rounded-box bg-base-100 p-4 sm:p-6">
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div class="min-w-0">
+      <p class="font-mono text-sm text-muted">Session ${escapeHtml(session.atlasId)}</p>
+      <h2 class="mt-2 break-words text-lg font-semibold"><a class="text-brand-readable underline decoration-brand-readable/50 underline-offset-4" href="${`/sessions/${encodeURIComponent(session.atlasId)}`}">Spec #${escapeHtml(session.specIssueNumber)}: ${escapeHtml(session.specTitle)}</a></h2>
+    </div>
+    <span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>
+  </div>
+  <dl class="mt-5 grid gap-3 text-sm text-muted sm:grid-cols-2">
+    <div><dt class="font-medium text-base-content">Submitted</dt><dd class="mt-1">${escapeHtml(formatTime(session.submittedAt))}</dd></div>
+    <div><dt class="font-medium text-base-content">Queue order</dt><dd class="mt-1 tabular-nums">${session.submissionOrder}</dd></div>
+    <div><dt class="font-medium text-base-content">Target</dt><dd class="mt-1">Default branch · <code class="font-mono text-base-content">${escapeHtml(session.targetBranch)}</code></dd></div>
+    <div><dt class="font-medium text-base-content">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : "Not held"}</dd></div>
+  </dl>
+  <p class="mt-5 max-w-prose truncate text-sm text-muted">Prompt: ${escapeHtml(session.prompt)}</p>
+  <a class="btn btn-ghost mt-5 min-h-11 border border-control-border/60" href="${`/sessions/${encodeURIComponent(session.atlasId)}`}">View Session</a>
+</li>`;
+
+export const renderSessionsPage = ({
+  csrfToken,
+  repository,
+  sessions,
+  filter,
+}: {
+  csrfToken: string;
+  repository: Repository;
+  sessions: Session[];
+  filter: SessionFilter;
+}) => {
+  const filters: SessionFilter[] = ["active", "all", "queued", "preparing", "running", "waiting", "idle", "succeeded", "failed", "interrupted", "failed_setup"];
+  const heading = filter === "active" ? "Active Sessions" : filter === "all" ? "Sessions" : `${sessionFilterLabel(filter)} Sessions`;
+  const emptyText = filter === "active"
+    ? "No unfinished Sessions are present in this Repository."
+    : filter === "all"
+      ? "No Atlas Sessions have been submitted for this Repository."
+      : `No Sessions currently have the ${sessionFilterLabel(filter)} state.`;
+
+  return renderShell({
+    title: `${repository.fullName} Sessions`,
+    active: "sessions",
+    repository,
+    csrfToken,
+    content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
+      ${renderRepositoryHeading(repository, heading, "Atlas implementation attempts for this Repository. Active includes every unfinished Session, including Queued.")}
+      <nav class="mt-8 flex flex-wrap gap-2" aria-label="Session status filters">
+        ${filters.map((value) => `<a class="btn ${value === filter ? "btn-primary border border-control-border" : "btn-ghost border border-control-border/60"} min-h-11" href="${value === "active" ? sessionsLink(repository) : `${sessionsLink(repository)}?status=${encodeURIComponent(value)}`}"${value === filter ? ' aria-current="page"' : ""}>${escapeHtml(sessionFilterLabel(value))}</a>`).join("")}
+      </nav>
+      ${sessions.length > 0
+        ? `<ul class="mt-8 grid gap-4" aria-label="${escapeHtml(heading)}">${sessions.map(sessionListRow).join("")}</ul>`
+        : `<div class="mt-8 rounded-box bg-base-100 p-6"><p class="text-lg font-semibold">${escapeHtml(filter === "active" ? "No active Sessions" : "No matching Sessions")}</p><p class="mt-2 max-w-prose leading-relaxed text-muted">${escapeHtml(emptyText)}</p></div>`}
+    </section>`,
+  });
+};
+
+export const renderSessionDetailPage = ({
+  csrfToken,
+  repository,
+  session,
+}: {
+  csrfToken: string;
+  repository: Repository;
+  session: Session;
+}) => {
+  const specPath = `/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(session.specIssueNumber)}`;
+  const githubUrl = safeExternalUrl(session.specHtmlUrl);
+
+  return renderShell({
+    title: `Session ${session.atlasId}`,
+    active: "sessions",
+    repository,
+    csrfToken,
+    historyDisabled: true,
+    content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
+      <div class="flex flex-wrap items-start justify-between gap-6">
+        <div class="min-w-0">
+          <p class="font-mono text-sm text-muted">${escapeHtml(repository.fullName)}</p>
+          <h1 id="page-title" class="mt-3 break-words text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Session ${escapeHtml(session.atlasId)}</h1>
+          <p class="mt-4 max-w-prose leading-relaxed text-muted">Spec #${escapeHtml(session.specIssueNumber)}: ${escapeHtml(session.specTitle)}</p>
+        </div>
+        <span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>
+      </div>
+      <div class="alert alert-info mt-6 leading-normal" role="status"><div><strong>Queued request accepted.</strong> Execution preparation is not enabled in this slice. No clone or OpenCode Session has been created.</div></div>
+      <div class="mt-8 flex flex-wrap gap-4">
+        <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${specPath}">Back to Spec</a>
+        <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${sessionsLink(repository)}">Repository Sessions</a>
+      </div>
+      <dl class="mt-8 grid gap-4 border-y border-base-300 py-5 text-sm sm:grid-cols-2">
+        <div><dt class="font-medium text-muted">State</dt><dd class="mt-1">${escapeHtml(sessionStateLabel(session.state))}</dd></div>
+        <div><dt class="font-medium text-muted">Submitted</dt><dd class="mt-1">${escapeHtml(formatTime(session.submittedAt))}</dd></div>
+        <div><dt class="font-medium text-muted">Queue order</dt><dd class="mt-1 tabular-nums">${session.submissionOrder}</dd></div>
+        <div><dt class="font-medium text-muted">Submission identity</dt><dd class="mt-1 break-all font-mono">${escapeHtml(session.submissionId)}</dd></div>
+        <div><dt class="font-medium text-muted">Starting base</dt><dd class="mt-1 break-words font-mono">Default branch · ${escapeHtml(session.targetBranch)}</dd></div>
+        <div><dt class="font-medium text-muted">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : "Not held while Queued"}</dd></div>
+        <div><dt class="font-medium text-muted">Session directory</dt><dd class="mt-1">${session.directory ? escapeHtml(session.directory) : "Not created at the Queued checkpoint"}</dd></div>
+        <div><dt class="font-medium text-muted">OpenCode Session</dt><dd class="mt-1">${session.openCodeSessionId ? escapeHtml(session.openCodeSessionId) : "Not created at the Queued checkpoint"}</dd></div>
+      </dl>
+      ${session.stateReason ? `<p class="mt-6 text-sm leading-normal text-muted">Queue note: ${escapeHtml(session.stateReason)}</p>` : ""}
+      <section class="mt-10" aria-labelledby="immutable-context-title">
+        <h2 id="immutable-context-title" class="text-lg font-semibold">Immutable handoff context</h2>
+        <p class="mt-2 max-w-prose leading-relaxed text-muted">Atlas retains the Spec snapshot and prompt that were accepted. Later GitHub edits do not rewrite this attempt.</p>
+        <dl class="mt-5 grid gap-4 border-y border-base-300 py-5 text-sm sm:grid-cols-2">
+          <div><dt class="font-medium text-muted">Repository</dt><dd class="mt-1 break-words font-mono">${escapeHtml(repository.fullName)}</dd></div>
+          <div><dt class="font-medium text-muted">Spec snapshot</dt><dd class="mt-1">${githubUrl ? `<a class="text-brand-readable underline underline-offset-4" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(session.specTitle)}</a>` : escapeHtml(session.specTitle)}</dd></div>
+        </dl>
+        <article class="mt-6 rounded-box bg-base-100 p-5 sm:p-6">
+          <h3 class="font-medium">Spec description at submission</h3>
+          <div class="mt-4 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(session.specBody) || "No description provided."}</div>
+        </article>
+        <article class="mt-6 rounded-box bg-base-100 p-5 sm:p-6">
+          <h3 class="font-medium">Initial prompt</h3>
+          <pre class="mt-4 max-w-full overflow-x-auto whitespace-pre-wrap break-words font-mono text-sm leading-relaxed">${escapeHtml(session.prompt)}</pre>
+        </article>
+      </section>
     </section>`,
   });
 };
