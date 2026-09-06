@@ -2099,7 +2099,7 @@ export const createPersistence = (options: PersistenceOptions) => {
 
     for (const reservation of reservations) {
       const targetSet = new Map<string, ReservationTarget>();
-      const currentNativeTargets = new Map<string, ReservationTarget>();
+      const currentTargets = new Map<string, ReservationTarget>();
       const accepted = reservationTargetFromRow(reservation);
       const acceptedKey = reservationTargetKey(accepted);
       if (acceptedKey) targetSet.set(acceptedKey, accepted);
@@ -2128,7 +2128,7 @@ export const createPersistence = (options: PersistenceOptions) => {
           const key = reservationTargetKey(target);
           if (key) {
             targetSet.set(key, target);
-            currentNativeTargets.set(key, target);
+            currentTargets.set(key, target);
           }
         } else if (row.pull_request_number) {
           const target: ReservationTarget = {
@@ -2139,7 +2139,10 @@ export const createPersistence = (options: PersistenceOptions) => {
             parentPullRequestNumber: row.pull_request_number,
           };
           const key = reservationTargetKey(target);
-          if (key) targetSet.set(key, target);
+          if (key) {
+            targetSet.set(key, target);
+            currentTargets.set(key, target);
+          }
         }
       }
 
@@ -2155,14 +2158,14 @@ export const createPersistence = (options: PersistenceOptions) => {
         accepted.stackId &&
         acceptedKey &&
         !currentStackIds.has(accepted.stackId) &&
-        currentNativeTargets.size === 1
+        currentTargets.size === 1
       ) {
         // A vanished queue may follow only a current target already accepted by
         // another held owner. A newly recreated stack has no such identity.
-        const successor = [...currentNativeTargets.values()][0]!;
+        const successor = [...currentTargets.values()][0]!;
         const successorKey = reservationTargetKey(successor);
         const successorOwners = successorKey ? acceptedNativeOwners.get(successorKey) : undefined;
-        if (successorOwners && [...successorOwners].some((reservationId) => reservationId !== reservation.reservation_id)) {
+        if (successor.kind === "native_stack" && successorOwners && [...successorOwners].some((reservationId) => reservationId !== reservation.reservation_id)) {
           const existing = convergedSuccessors.get(acceptedKey);
           if (existing === undefined) {
             convergedSuccessors.set(acceptedKey, { source: accepted, successor });
