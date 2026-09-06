@@ -13,6 +13,7 @@ import {
 import {
   createPersistence,
   type Persistence,
+  type RefreshState,
   type Repository,
   type Session,
   type SessionFilter,
@@ -180,6 +181,16 @@ const isEligibleRepository = (repository: Repository) =>
 
 const promptCharacterCount = (prompt: string) => Array.from(prompt).length;
 
+const refreshIsCurrent = (state: RefreshState | undefined, minimumGeneration: number) => Boolean(
+  state &&
+  state.availability === "available" &&
+  state.requestedGeneration >= minimumGeneration &&
+  state.requestedGeneration <= state.completedGeneration,
+);
+
+const nextRefreshGeneration = (persistence: Persistence, repositoryId: string, view: "access" | "specs" | "pullRequests") =>
+  (persistence.getRefreshState(repositoryId, view)?.requestedGeneration ?? 0) + 1;
+
 const sessionLocation = (session: Pick<Session, "atlasId">) => `/sessions/${encodeURIComponent(session.atlasId)}`;
 
 const pendingStartSession = (form: Record<string, unknown>): PendingStartSession | undefined => {
@@ -231,23 +242,27 @@ export const createApp = (options: AppOptions) => {
   });
 
   const refreshRepository = async (existing: Repository) => {
+    const accessGeneration = nextRefreshGeneration(persistence, existing.githubId, "access");
+    const specsGeneration = nextRefreshGeneration(persistence, existing.githubId, "specs");
     await refreshCoordinator.refresh(existing.githubId, ["access", "specs"]);
     const repository = persistence.getRepository(existing.githubId)!;
     const access = persistence.getRefreshState(existing.githubId, "access");
     const specs = persistence.getRefreshState(existing.githubId, "specs");
     return {
-      ok: repository.accessStatus === "available" && access?.availability === "available" && specs?.availability === "available",
+      ok: repository.accessStatus === "available" && refreshIsCurrent(access, accessGeneration) && refreshIsCurrent(specs, specsGeneration),
       repository,
     };
   };
 
   const refreshPullRequests = async (existing: Repository) => {
+    const accessGeneration = nextRefreshGeneration(persistence, existing.githubId, "access");
+    const pullRequestsGeneration = nextRefreshGeneration(persistence, existing.githubId, "pullRequests");
     await refreshCoordinator.refresh(existing.githubId, ["access", "pullRequests"]);
     const repository = persistence.getRepository(existing.githubId)!;
     const access = persistence.getRefreshState(existing.githubId, "access");
     const pullRequests = persistence.getRefreshState(existing.githubId, "pullRequests");
     return {
-      ok: repository.accessStatus === "available" && access?.availability === "available" && pullRequests?.availability === "available",
+      ok: repository.accessStatus === "available" && refreshIsCurrent(access, accessGeneration) && refreshIsCurrent(pullRequests, pullRequestsGeneration),
       repository,
     };
   };
