@@ -118,10 +118,8 @@
   const setViewerConnection = (root, state, reason) => {
     const badge = root.querySelector("[data-viewer-connection]");
     if (badge) {
-      const serverFreshness = root.dataset.viewerFreshness;
-      const effectiveState = state === "fresh" ? serverFreshness || "fresh" : state;
-      badge.textContent = effectiveState === "fresh" ? "Fresh" : effectiveState === "auth" ? "Sign-in expired" : effectiveState === "stale" ? "Stale" : "Partial";
-      badge.className = `badge ${effectiveState === "fresh" ? "badge-success" : "badge-warning"}`;
+      badge.textContent = state === "fresh" ? "Fresh" : state === "auth" ? "Sign-in expired" : state === "stale" ? "Stale" : "Partial";
+      badge.className = `badge ${state === "fresh" ? "badge-success" : "badge-warning"}`;
     }
     if (state === "fresh") {
       root.querySelector("[data-viewer-connection-message]")?.remove();
@@ -182,9 +180,12 @@
           const replacement = template.content.querySelector("[data-session-viewer]");
           if (replacement?.querySelector("[data-viewer-content]")) {
             replaceViewerMarkup(root, replacement);
-            if (controller.connectionState !== "fresh") {
-              setViewerConnection(root, controller.connectionState, controller.connectionReason);
-            }
+            const reconciledState = root.dataset.viewerFreshness === "fresh"
+              ? "fresh"
+              : root.dataset.viewerFreshness === "partial" ? "partial" : "stale";
+            controller.connectionState = reconciledState;
+            controller.connectionReason = reconciledState === "fresh" ? undefined : controller.connectionReason;
+            setViewerConnection(root, reconciledState, controller.connectionReason);
             restoreContext(root, context);
           }
         }
@@ -238,12 +239,18 @@
         controller.source = source;
         source.addEventListener("connected", () => {
           controller.delay = 1000;
-          controller.connectionState = "fresh";
-          controller.connectionReason = undefined;
+          controller.connectionState = "stale";
+          controller.connectionReason = "OpenCode reconnected; Atlas is reconciling this Session view.";
+          setViewerConnection(root, "stale", controller.connectionReason);
           refreshViewer(root, controller);
         });
         source.addEventListener("refresh", () => refreshViewer(root, controller));
-        source.addEventListener("reconcile", () => refreshViewer(root, controller));
+        source.addEventListener("reconcile", () => {
+          controller.connectionState = "stale";
+          controller.connectionReason = "OpenCode reconnected; Atlas is reconciling this Session view.";
+          setViewerConnection(root, "stale", controller.connectionReason);
+          refreshViewer(root, controller);
+        });
         source.addEventListener("stale", (event) => {
           let reason;
           try { reason = JSON.parse(event.data).reason; } catch { reason = undefined; }

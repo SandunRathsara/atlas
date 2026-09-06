@@ -166,11 +166,131 @@ export type ViewerEventSnapshot = {
   treeInvalidated: boolean;
   pendingInvalidated: boolean;
   semanticBySession: ReadonlyMap<string, ViewerSemanticState>;
+  messageOverlays: ReadonlyMap<string, ViewerMessageOverlay>;
+};
+
+type LiveDelta = { key: string; text: string; revision: number };
+
+type LiveTextPart = {
+  startedRevision?: number;
+  ended?: { text: string; revision: number };
+  deltas: LiveDelta[];
+  deltaKeys: Set<string>;
+};
+
+type LiveToolPart = {
+  created: number;
+  name?: { value: string; revision: number };
+  inputStartedRevision?: number;
+  inputEnded?: { text: string; revision: number };
+  inputDeltas: LiveDelta[];
+  inputDeltaKeys: Set<string>;
+  called?: {
+    input: Record<string, unknown>;
+    executed: boolean;
+    providerState?: Record<string, unknown>;
+    revision: number;
+  };
+  progress?: { metadata: Record<string, unknown>; revision: number };
+  result?: {
+    status: "completed" | "error";
+    content?: unknown[];
+    error?: Record<string, unknown>;
+    providerResultState?: Record<string, unknown>;
+    executed: boolean;
+    revision: number;
+  };
+};
+
+export type ViewerMessageOverlay = {
+  contentReplacement?: { content: unknown[]; revision: number };
+  text: ReadonlyMap<number, LiveTextPart>;
+  reasoning: ReadonlyMap<number, LiveTextPart>;
+  tools: ReadonlyMap<string, LiveToolPart>;
+};
+
+type MutableViewerMessageOverlay = {
+  contentReplacement?: { content: unknown[]; revision: number };
+  text: Map<number, LiveTextPart>;
+  reasoning: Map<number, LiveTextPart>;
+  tools: Map<string, LiveToolPart>;
+};
+
+type AssistantMessage = Extract<SessionMessageInfo, { type: "assistant" }>;
+type AssistantContent = AssistantMessage["content"][number];
+
+const recordValue = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+
+const nonNegativeOrdinal = (value: unknown) =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+
+const assistantContent = (value: unknown): unknown[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  if (!value.every((part) => {
+    const type = recordValue(part)?.type;
+    return type === "text" || type === "reasoning" || type === "tool";
+  })) return undefined;
+  return value.map((part) => ({ ...(recordValue(part) ?? {}) }));
+};
+
+const copyTextPart = (part: LiveTextPart): LiveTextPart => ({
+  startedRevision: part.startedRevision,
+  ended: part.ended ? { ...part.ended } : undefined,
+  deltas: part.deltas.map((delta) => ({ ...delta })),
+  deltaKeys: new Set(part.deltaKeys),
+});
+
+const copyToolPart = (part: LiveToolPart): LiveToolPart => ({
+  created: part.created,
+  name: part.name ? { ...part.name } : undefined,
+  inputStartedRevision: part.inputStartedRevision,
+  inputEnded: part.inputEnded ? { ...part.inputEnded } : undefined,
+  inputDeltas: part.inputDeltas.map((delta) => ({ ...delta })),
+  inputDeltaKeys: new Set(part.inputDeltaKeys),
+  called: part.called ? { ...part.called, input: { ...part.called.input }, providerState: part.called.providerState ? { ...part.called.providerState } : undefined } : undefined,
+  progress: part.progress ? { ...part.progress, metadata: { ...part.progress.metadata } } : undefined,
+  result: part.result ? { ...part.result, content: part.result.content?.map((content) => ({ ...(recordValue(content) ?? {}) })), error: part.result.error ? { ...part.result.error } : undefined, providerResultState: part.result.providerResultState ? { ...part.result.providerResultState } : undefined } : undefined,
+});
+
+const copyMessageOverlay = (overlay: MutableViewerMessageOverlay): ViewerMessageOverlay => ({
+  contentReplacement: overlay.contentReplacement
+    ? { content: overlay.contentReplacement.content.map((part) => ({ ...(recordValue(part) ?? {}) })), revision: overlay.contentReplacement.revision }
+    : undefined,
+  text: new Map([...overlay.text].map(([ordinal, part]) => [ordinal, copyTextPart(part)])),
+  reasoning: new Map([...overlay.reasoning].map(([ordinal, part]) => [ordinal, copyTextPart(part)])),
+  tools: new Map([...overlay.tools].map(([id, part]) => [id, copyToolPart(part)])),
+});
+
+const textPart = (parts: Map<number, LiveTextPart>, ordinal: number) => {
+  const existing = parts.get(ordinal);
+  if (existing) return existing;
+  const created: LiveTextPart = { deltas: [], deltaKeys: new Set() };
+  parts.set(ordinal, created);
+  return created;
+};
+
+const toolPart = (parts: Map<string, LiveToolPart>, id: string, created: number) => {
+  const existing = parts.get(id);
+  if (existing) return existing;
+  const next: LiveToolPart = {
+    created,
+    inputDeltas: [],
+    inputDeltaKeys: new Set(),
+  };
+  parts.set(id, next);
+  return next;
+};
+
+const eventCreated = (event: OpenCodeEvent) => {
+  const value = (event as unknown as { created?: unknown }).created;
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 };
 
 /**
- * Reduces only the live overlay. HTTP projections remain authoritative for
- * message content, relationships, pending records, and terminal outcomes.
+ * Reduces only trusted live overlay facts. HTTP remains authoritative for
+ * relationships, pending collections, and terminal outcomes; keyed content
+ * overlays only cover events newer than an authoritative replacement.
  */
 export const createViewerEventReducer = (rootSessionId: string, rootDirectory?: string) => {
   const seen = new Set<string>();
@@ -178,6 +298,7 @@ export const createViewerEventReducer = (rootSessionId: string, rootDirectory?: 
   const touchedSessions = new Set<string>();
   const touchedMessages = new Set<string>();
   const semanticBySession = new Map<string, ViewerSemanticState>();
+  const messageOverlays = new Map<string, MutableViewerMessageOverlay>();
   let duplicateEventCount = 0;
   let revision = 0;
   let treeInvalidated = false;
@@ -192,6 +313,18 @@ export const createViewerEventReducer = (rootSessionId: string, rootDirectory?: 
     if (!sessionId || !knownSessions.has(sessionId)) return false;
     touchedSessions.add(sessionId);
     return true;
+  };
+
+  const messageOverlay = (messageId: string) => {
+    const existing = messageOverlays.get(messageId);
+    if (existing) return existing;
+    const created: MutableViewerMessageOverlay = {
+      text: new Map(),
+      reasoning: new Map(),
+      tools: new Map(),
+    };
+    messageOverlays.set(messageId, created);
+    return created;
   };
 
   const apply = (event: OpenCodeEvent) => {
@@ -252,7 +385,101 @@ export const createViewerEventReducer = (rootSessionId: string, rootDirectory?: 
 
     if (type.startsWith("session.message.") || type.startsWith("session.step.") || type.startsWith("session.text.") || type.startsWith("session.reasoning.") || type.startsWith("session.tool.") || type === "session.retry.scheduled" || type === "session.shell.started" || type === "session.shell.ended") {
       const messageId = stringValue(data.messageID) ?? stringValue(data.assistantMessageID);
-      if (messageId) touchedMessages.add(messageId);
+      if (messageId) {
+        touchedMessages.add(messageId);
+        const overlay = messageOverlay(messageId);
+        const eventRevision = revision + 1;
+
+        if (type === "session.message.content.updated") {
+          const content = assistantContent(data.content);
+          if (content) overlay.contentReplacement = { content, revision: eventRevision };
+        }
+
+        const contentType = type.includes("reasoning") ? "reasoning" : type.includes("text") ? "text" : undefined;
+        if (contentType) {
+          const ordinal = nonNegativeOrdinal(data.ordinal);
+          if (ordinal !== undefined) {
+            const part = textPart(contentType === "text" ? overlay.text : overlay.reasoning, ordinal);
+            if (type.endsWith(".started")) {
+              part.startedRevision = eventRevision;
+              part.ended = undefined;
+              part.deltas = [];
+              part.deltaKeys.clear();
+            } else if (type.endsWith(".delta")) {
+              const delta = stringValue(data.delta);
+              if (delta !== undefined && !part.ended) {
+                const key = id ?? `${contentType}:${ordinal}:${delta}`;
+                if (!part.deltaKeys.has(key)) {
+                  part.deltaKeys.add(key);
+                  part.deltas.push({ key, text: delta, revision: eventRevision });
+                }
+              }
+            } else if (type.endsWith(".ended")) {
+              const text = stringValue(data.text);
+              if (text !== undefined) {
+                part.ended = { text, revision: eventRevision };
+                part.deltas = [];
+                part.deltaKeys.clear();
+              }
+            }
+          }
+        }
+
+        if (type.startsWith("session.tool.")) {
+          const toolId = stringValue(data.id);
+          if (toolId) {
+            const tool = toolPart(overlay.tools, toolId, eventCreated(event));
+            if (type === "session.tool.input.started") {
+              tool.inputStartedRevision = eventRevision;
+              tool.inputEnded = undefined;
+              tool.inputDeltas = [];
+              tool.inputDeltaKeys.clear();
+              const name = stringValue(data.name);
+              if (name) tool.name = { value: name, revision: eventRevision };
+            } else if (type === "session.tool.input.delta") {
+              const delta = stringValue(data.delta);
+              if (delta !== undefined && !tool.inputEnded) {
+                const key = id ?? `input:${toolId}:${delta}`;
+                if (!tool.inputDeltaKeys.has(key)) {
+                  tool.inputDeltaKeys.add(key);
+                  tool.inputDeltas.push({ key, text: delta, revision: eventRevision });
+                }
+              }
+            } else if (type === "session.tool.input.ended") {
+              const text = stringValue(data.text);
+              if (text !== undefined) {
+                tool.inputEnded = { text, revision: eventRevision };
+                tool.inputDeltas = [];
+                tool.inputDeltaKeys.clear();
+              }
+            } else if (type === "session.tool.called") {
+              const input = recordValue(data.input);
+              if (input && typeof data.executed === "boolean") {
+                tool.called = {
+                  input: { ...input },
+                  executed: data.executed,
+                  providerState: recordValue(data.state),
+                  revision: eventRevision,
+                };
+              }
+            } else if (type === "session.tool.progress") {
+              const metadata = recordValue(data.metadata);
+              if (metadata) tool.progress = { metadata: { ...metadata }, revision: eventRevision };
+            } else if (type === "session.tool.success" || type === "session.tool.failed") {
+              if (typeof data.executed === "boolean") {
+                tool.result = {
+                  status: type.endsWith("success") ? "completed" : "error",
+                  content: Array.isArray(data.content) ? data.content.map((content) => ({ ...(recordValue(content) ?? {}) })) : undefined,
+                  error: recordValue(data.error),
+                  providerResultState: recordValue(data.resultState),
+                  executed: data.executed,
+                  revision: eventRevision,
+                };
+              }
+            }
+          }
+        }
+      }
     }
     revision += 1;
     return true;
@@ -271,9 +498,118 @@ export const createViewerEventReducer = (rootSessionId: string, rootDirectory?: 
     treeInvalidated,
     pendingInvalidated,
     semanticBySession: new Map(semanticBySession),
+    messageOverlays: new Map([...messageOverlays].map(([messageId, overlay]) => [messageId, copyMessageOverlay(overlay)])),
   });
 
   return { apply, addKnownSessions, snapshot };
+};
+
+const appendDelta = (base: string, delta: string) => {
+  if (!delta || base.endsWith(delta)) return base;
+  const maximum = Math.min(base.length, delta.length);
+  for (let overlap = maximum; overlap > 0; overlap -= 1) {
+    if (base.slice(-overlap) === delta.slice(0, overlap)) return base + delta.slice(overlap);
+  }
+  return base + delta;
+};
+
+const contentPartIndex = (content: AssistantContent[], type: "text" | "reasoning", ordinal: number) => {
+  if (content[ordinal]?.type === type) return ordinal;
+  let sameTypeOrdinal = 0;
+  for (let index = 0; index < content.length; index += 1) {
+    if (content[index]?.type !== type) continue;
+    if (sameTypeOrdinal === ordinal) return index;
+    sameTypeOrdinal += 1;
+  }
+  return -1;
+};
+
+const applyTextOverlay = (
+  content: AssistantContent[],
+  type: "text" | "reasoning",
+  ordinal: number,
+  part: LiveTextPart,
+  replacementRevision: number,
+) => {
+  const end = part.ended && part.ended.revision > replacementRevision ? part.ended : undefined;
+  const deltas = part.deltas
+    .filter((delta) => delta.revision > replacementRevision)
+    .sort((left, right) => left.revision - right.revision);
+  if (!end && deltas.length === 0) return;
+
+  let index = contentPartIndex(content, type, ordinal);
+  if (index < 0) {
+    index = Math.min(ordinal, content.length);
+    content.splice(index, 0, { type, text: "" } as AssistantContent);
+  }
+  const current = content[index];
+  if (current?.type !== type) return;
+  current.text = end ? end.text : deltas.reduce((value, delta) => appendDelta(value, delta.text), current.text);
+};
+
+const toolContent = (value: unknown) => Array.isArray(value)
+  ? value.filter((part) => {
+    const type = recordValue(part)?.type;
+    return type === "text" || type === "file";
+  }).map((part) => ({ ...(recordValue(part) ?? {}) }))
+  : undefined;
+
+const applyToolOverlay = (
+  content: AssistantContent[],
+  id: string,
+  part: LiveToolPart,
+  replacementRevision: number,
+) => {
+  const effectiveCalled = part.called && part.called.revision > replacementRevision ? part.called : undefined;
+  const effectiveProgress = part.progress && part.progress.revision > replacementRevision ? part.progress : undefined;
+  const effectiveResult = part.result && part.result.revision > replacementRevision ? part.result : undefined;
+  const inputEnd = part.inputEnded && part.inputEnded.revision > replacementRevision ? part.inputEnded : undefined;
+  const inputDeltas = part.inputDeltas
+    .filter((delta) => delta.revision > replacementRevision)
+    .sort((left, right) => left.revision - right.revision);
+  if (!effectiveCalled && !effectiveProgress && !effectiveResult && !inputEnd && inputDeltas.length === 0) return;
+
+  let index = content.findIndex((candidate) => candidate.type === "tool" && candidate.id === id);
+  if (index < 0) {
+    index = content.length;
+    content.push({ type: "tool", id, name: part.name?.value ?? "Tool", time: { created: part.created }, state: { status: "streaming", input: "" } } as AssistantContent);
+  }
+  const current = content[index];
+  if (current?.type !== "tool") return;
+  if (part.name && part.name.revision > replacementRevision) current.name = part.name.value;
+
+  const currentInput = current.state.status === "streaming" ? {}
+    : current.state.input;
+  const input = effectiveCalled?.input ?? (currentInput && typeof currentInput === "object" ? currentInput : {});
+  if (effectiveResult) {
+    current.executed = effectiveResult.executed;
+    current.providerResultState = effectiveResult.providerResultState as never;
+    current.state = effectiveResult.status === "completed"
+      ? { status: "completed", input, content: toolContent(effectiveResult.content) ?? (current.state.status === "completed" ? current.state.content : [{ type: "text", text: "" }]), metadata: effectiveProgress?.metadata } as never
+      : { status: "error", input, error: effectiveResult.error ?? { type: "ToolError", message: "Tool failed." }, content: toolContent(effectiveResult.content), metadata: effectiveProgress?.metadata } as never;
+    return;
+  }
+  if (effectiveCalled || effectiveProgress) {
+    current.executed = effectiveCalled?.executed ?? current.executed;
+    current.providerState = effectiveCalled?.providerState as never;
+    current.state = { status: "running", input, metadata: effectiveProgress?.metadata ?? (current.state.status === "running" ? current.state.metadata : {}) } as never;
+    return;
+  }
+
+  const inputText = inputEnd?.text ?? inputDeltas.reduce((value, delta) => appendDelta(value, delta.text), current.state.status === "streaming" ? current.state.input : "");
+  current.state = { status: "streaming", input: inputText };
+};
+
+const applyMessageOverlay = (message: SessionMessageInfo, overlay: ViewerMessageOverlay) => {
+  if (message.type !== "assistant") return;
+  const replacementRevision = overlay.contentReplacement?.revision ?? 0;
+  const content = overlay.contentReplacement
+    ? overlay.contentReplacement.content.map((part) => ({ ...(recordValue(part) ?? {}) })) as AssistantContent[]
+    : message.content.map((part) => ({ ...part }));
+  for (const [ordinal, part] of overlay.text) applyTextOverlay(content, "text", ordinal, part, replacementRevision);
+  for (const [ordinal, part] of overlay.reasoning) applyTextOverlay(content, "reasoning", ordinal, part, replacementRevision);
+  for (const [id, part] of overlay.tools) applyToolOverlay(content, id, part, replacementRevision);
+  message.content = content;
 };
 
 const applyLiveOverlay = (root: ViewerSessionNode, snapshot: ViewerEventSnapshot) => {
@@ -281,6 +617,10 @@ const applyLiveOverlay = (root: ViewerSessionNode, snapshot: ViewerEventSnapshot
     const live = snapshot.semanticBySession.get(node.info.id);
     if (live === "running" || live === "waiting") node.semanticState = live;
     if (live === "idle" && !node.info.outcome) node.semanticState = live;
+    for (const message of node.messages) {
+      const overlay = snapshot.messageOverlays.get(message.id);
+      if (overlay) applyMessageOverlay(message, overlay);
+    }
     for (const child of node.children) visit(child);
   };
   visit(root);

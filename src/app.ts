@@ -58,6 +58,9 @@ const repositoryIdPattern = /^[1-9]\d{0,19}$/;
 const issueNumberPattern = /^[1-9]\d{0,9}$/;
 const submissionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const sessionIdPattern = /^ses_[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// OpenCode's Session.ID schema only requires the `ses` prefix. The viewer
+// still authorizes the value by walking the canonical descendant tree.
+const openCodeSessionIdPattern = /^ses[^\u0000-\u001f\u007f]{0,255}$/u;
 const startSessionPathPattern = /^\/repositories\/([1-9]\d{0,19})\/specs\/([1-9]\d{0,9})\/sessions$/;
 const sessionFilters = new Set<SessionFilter>([
   "active",
@@ -1072,7 +1075,7 @@ export const createApp = (options: AppOptions) => {
     if (!persistence.getRepository(session.repositoryId)) return c.text("Repository not found", 404);
 
     const childId = c.req.query("child");
-    if (childId !== undefined && !sessionIdPattern.test(childId)) return c.text("Invalid child Session ID", 400);
+    if (childId !== undefined && !openCodeSessionIdPattern.test(childId)) return c.text("Invalid child OpenCode Session ID", 400);
     const cursorValue = viewerCursor(c.req.query("cursor"));
     if (cursorValue === null) return c.text("Invalid message cursor", 400);
     const limit = viewerLimit(c.req.query("limit"));

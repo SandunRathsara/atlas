@@ -6,7 +6,7 @@ import { createSessionViewerService, createViewerEventReducer } from "../src/ses
 import type { Session } from "../src/persistence.ts";
 
 const rootId = "ses_00000000-0000-4000-8000-000000000001";
-const childId = "ses_00000000-0000-4000-8000-000000000002";
+const childId = "ses_f88fe2fc2ffeWcFJ6sdnIVMBRB";
 const directory = "/var/lib/atlas/sessions/test";
 
 const info = (id: string, parentID?: string): SessionInfo => ({
@@ -21,7 +21,11 @@ const info = (id: string, parentID?: string): SessionInfo => ({
 });
 
 const messages = (id: string): SessionMessageInfo[] => id === rootId
-  ? [{ id: "msg_root", time: { created: 1 }, type: "user", text: "root" }]
+  ? [{ id: "msg_root", time: { created: 1 }, type: "assistant", agent: "build", model: { id: "model", providerID: "provider" }, content: [
+    { type: "text", text: "root" },
+    { type: "reasoning", text: "old reasoning" },
+    { type: "tool", id: "tool_root", name: "run", time: { created: 1 }, state: { status: "streaming", input: "{" } },
+  ] }]
   : [{ id: "msg_child", time: { created: 2 }, type: "assistant", agent: "subagent", model: { id: "model", providerID: "provider" }, content: [{ type: "text", text: "child" }] }];
 
 const atlasSession = {
@@ -70,6 +74,13 @@ const client = {
       rootGets += 1;
       if (sessionID === rootId && rootGets === 1) {
         eventListener?.({ id: "event-overlap", created: 3, type: "session.text.delta", data: { sessionID: rootId, assistantMessageID: "msg_root", ordinal: 0, delta: "live" } } as OpenCodeEvent);
+        eventListener?.({ id: "event-overlap", created: 3, type: "session.text.delta", data: { sessionID: rootId, assistantMessageID: "msg_root", ordinal: 0, delta: "live" } } as OpenCodeEvent);
+        eventListener?.({ id: "event-end", created: 4, type: "session.text.ended", data: { sessionID: rootId, assistantMessageID: "msg_root", ordinal: 0, text: "authoritative" } } as OpenCodeEvent);
+        eventListener?.({ id: "reasoning-end", created: 5, type: "session.reasoning.ended", data: { sessionID: rootId, assistantMessageID: "msg_root", ordinal: 0, text: "live reasoning" } } as OpenCodeEvent);
+        eventListener?.({ id: "tool-input-end", created: 6, type: "session.tool.input.ended", data: { sessionID: rootId, assistantMessageID: "msg_root", id: "tool_root", text: "{\"command\":\"echo live\"}" } } as OpenCodeEvent);
+        eventListener?.({ id: "tool-called", created: 7, type: "session.tool.called", data: { sessionID: rootId, assistantMessageID: "msg_root", id: "tool_root", input: { command: "echo live" }, executed: true, state: {} } } as unknown as OpenCodeEvent);
+        eventListener?.({ id: "tool-progress", created: 8, type: "session.tool.progress", data: { sessionID: rootId, assistantMessageID: "msg_root", id: "tool_root", metadata: { step: "done" } } } as OpenCodeEvent);
+        eventListener?.({ id: "tool-success", created: 9, type: "session.tool.success", data: { sessionID: rootId, assistantMessageID: "msg_root", id: "tool_root", content: [{ type: "text", text: "live output" }], executed: true } } as unknown as OpenCodeEvent);
       }
       return info(sessionID, sessionID === childId ? rootId : undefined);
     },
@@ -106,6 +117,10 @@ const viewer = createSessionViewerService({
 const rootProjection = await viewer.hydrate(atlasSession, { limit: 10 });
 assert(rootProjection.available && rootProjection.root && rootProjection.selected, "root projection should be available");
 assert(rootProjection.root.children[0]?.activeSubagent === true, "verified active descendant should be an active subagent");
+const rootMessage = rootProjection.root.messages[0];
+assert(rootMessage?.type === "assistant" && rootMessage.content[0]?.type === "text" && rootMessage.content[0].text === "authoritative", "live text end must replace overlapping canonical text");
+assert(rootMessage?.type === "assistant" && rootMessage.content[1]?.type === "reasoning" && rootMessage.content[1].text === "live reasoning", "live reasoning end must replace overlapping canonical reasoning");
+assert(rootMessage?.type === "assistant" && rootMessage.content[2]?.type === "tool" && rootMessage.content[2].state.status === "completed" && rootMessage.content[2].state.content[0]?.type === "text" && rootMessage.content[2].state.content[0].text === "live output", "live tool success must replace overlapping canonical tool state");
 assert(messageInputs.some((input) => input.sessionID === rootId && input.order === "asc"), "first root message page should request ascending order");
 assert(rootGets >= 2, "hydration overlap should trigger canonical replacement");
 
@@ -217,6 +232,8 @@ assert(messageInputs.some((input) => input.sessionID === rootId && input.cursor 
 
 const unrelated = await httpApp.fetch(new Request(`http://atlas.test/sessions/${atlasSession.atlasId}/view?child=ses_00000000-0000-4000-8000-000000000099`, { headers: authHeaders }));
 assert.equal(unrelated.status, 404);
+const invalidChildSchema = await httpApp.fetch(new Request(`http://atlas.test/sessions/${atlasSession.atlasId}/view?child=not-an-opencode-session`, { headers: authHeaders }));
+assert.equal(invalidChildSchema.status, 400);
 const invalidCursor = await httpApp.fetch(new Request(`http://atlas.test/sessions/${atlasSession.atlasId}/view?cursor=%00`, { headers: authHeaders }));
 assert.equal(invalidCursor.status, 400);
 const invalidLimit = await httpApp.fetch(new Request(`http://atlas.test/sessions/${atlasSession.atlasId}/view?limit=0`, { headers: authHeaders }));
