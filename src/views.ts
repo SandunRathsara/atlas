@@ -236,10 +236,33 @@ const eligibilityNotice = (repository: Repository) => {
 
 const refreshLine = (label: string, refresh: RefreshState | undefined) => {
   if (!refresh || refresh.availability === "never") return `${label}: never synchronized`;
+  if (refresh.requestedGeneration > refresh.completedGeneration) {
+    return `${label}: last complete sync ${formatTime(refresh.lastSuccessAt)}; refresh pending`;
+  }
   if (refresh.availability === "unavailable" || refresh.availability === "partial") {
     return `${label}: last complete sync ${formatTime(refresh.lastSuccessAt)}; latest sync unavailable`;
   }
   return `${label}: synced ${formatTime(refresh.lastSuccessAt)}`;
+};
+
+const refreshWarning = (label: string, refresh: RefreshState | undefined) => {
+  if (!refresh || refresh.availability === "never") {
+    const verb = label === "Access" ? "has" : "have";
+    return `<div class="alert alert-info mt-6 leading-normal" role="status"><div><strong>${escapeHtml(label)} ${verb} not synchronized yet.</strong> An unavailable first read is not shown as an empty list.</div></div>`;
+  }
+  if (refresh.availability === "unavailable" || refresh.availability === "partial") {
+    return `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>${escapeHtml(label)} synchronization is unavailable.</strong> Last complete sync: ${formatTime(refresh.lastSuccessAt)}. Cached data is retained.</div></div>`;
+  }
+  if (refresh.requestedGeneration > refresh.completedGeneration) {
+    return `<div class="alert alert-warning mt-6 leading-normal" role="status"><div><strong>${escapeHtml(label)} synchronization is pending.</strong> Showing the last complete sync from ${formatTime(refresh.lastSuccessAt)}.</div></div>`;
+  }
+  if (refresh.failureReason) {
+    return `<div class="alert alert-warning mt-6 leading-normal" role="status">${escapeHtml(refresh.failureReason)}</div>`;
+  }
+  if (refresh.lastSuccessAt && Date.now() - new Date(refresh.lastSuccessAt).valueOf() >= 10 * 60 * 1000) {
+    return `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>${escapeHtml(label)} synchronization is overdue.</strong> No successful sync has completed for ten minutes. Last complete sync: ${formatTime(refresh.lastSuccessAt)}.</div></div>`;
+  }
+  return "";
 };
 
 type RepositoryListEntry = {
@@ -269,12 +292,14 @@ export const renderRepositoriesPage = (
               ${repository.defaultBranch ? "" : `<p class="mt-2 text-sm text-warning">No default-branch commit; cannot start Sessions.</p>`}
             </div>
             <span class="badge ${accessBadgeClass(repository)}">${accessLabel(repository)}</span>
-          </div>
-          <div class="mt-5 grid gap-2 text-sm text-muted sm:grid-cols-2">
-            <span>${refreshLine("Access", accessRefresh)}</span>
-            <span>${refreshLine("Specs", specsRefresh)}</span>
-          </div>
-          <div class="mt-5 flex flex-wrap items-center gap-3">
+           </div>
+           <div class="mt-5 grid gap-2 text-sm text-muted sm:grid-cols-2">
+             <span>${refreshLine("Access", accessRefresh)}</span>
+             <span>${refreshLine("Specs", specsRefresh)}</span>
+           </div>
+           ${refreshWarning("Access", accessRefresh)}
+           ${refreshWarning("Specs", specsRefresh)}
+           <div class="mt-5 flex flex-wrap items-center gap-3">
             <a class="btn btn-primary min-h-11 border border-control-border" href="${repositoryLink(repository)}">Browse Specs</a>
             <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${pullRequestsLink(repository)}">Browse Pull requests</a>
             ${safeExternalUrl(repository.htmlUrl) ? `<a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(safeExternalUrl(repository.htmlUrl))}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
@@ -379,9 +404,15 @@ const specsNotice = (refresh: RefreshState | undefined, specs: Spec[]) => {
   if (!refresh || refresh.availability === "never") {
     return `<div class="alert alert-info mt-6 leading-normal" role="status"><div><strong>Specs have not synchronized yet.</strong> An unavailable first read is not shown as an empty list.</div></div>`;
   }
+  if (refresh.requestedGeneration > refresh.completedGeneration) {
+    return `<div class="alert alert-warning mt-6 leading-normal" role="status"><div><strong>Specs synchronization is pending.</strong> ${specs.length > 0 ? `Showing the last complete sync from ${formatTime(refresh.lastSuccessAt)}.` : "No complete Specs sync is available yet."}</div></div>`;
+  }
   if (refresh.availability === "unavailable" || refresh.availability === "partial") {
     const cached = specs.length > 0 ? ` Showing ${specs.length} Specs from the last complete sync at ${formatTime(refresh.lastSuccessAt)}.` : " No complete Specs sync is available yet.";
     return `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Specs synchronization is unavailable.</strong>${cached} Known membership was not removed.</div></div>`;
+  }
+  if (refresh.lastSuccessAt && Date.now() - new Date(refresh.lastSuccessAt).valueOf() >= 10 * 60 * 1000) {
+    return `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Specs synchronization is overdue.</strong> Last complete sync: ${formatTime(refresh.lastSuccessAt)}.</div></div>`;
   }
   if (refresh.failureReason) {
     return `<div class="alert alert-warning mt-6 leading-normal" role="status">${escapeHtml(refresh.failureReason)}</div>`;
@@ -469,7 +500,8 @@ export const renderSpecsPage = ({
   accessRefresh?: RefreshState;
   specsRefresh?: RefreshState;
 }) => {
-  const canShowEmptyState = specsRefresh?.availability === "available";
+  const canShowEmptyState = specsRefresh?.availability === "available"
+    && specsRefresh.requestedGeneration <= specsRefresh.completedGeneration;
   const list = specs.length > 0
     ? `<ul class="mt-8 grid gap-4" aria-label="Open Specs">${specs.map((spec) => specRow(spec, sessionsBySpec?.get(spec.issueNumber) ?? [])).join("")}</ul>`
     : canShowEmptyState ? `<div class="mt-8 rounded-box bg-base-100 p-6">
@@ -485,6 +517,7 @@ export const renderSpecsPage = ({
     content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
       ${renderRepositoryHeading(repository, "Specs", "Open, non-PR GitHub issues labelled exactly spec.")}
       ${accessNotice(repository)}
+      ${refreshWarning("Access", accessRefresh)}
       ${specsNotice(specsRefresh, specs)}
       <p class="mt-6 text-sm text-muted">${refreshLine("Access", accessRefresh)} · ${refreshLine("Specs", specsRefresh)}</p>
       ${list}
@@ -736,14 +769,9 @@ export const renderPullRequestsPage = ({
   const pullRequestMap = new Map(pullRequests.map((pullRequest) => [pullRequest.githubId, pullRequest]));
   const standalone = activePullRequests.filter((pullRequest) => !pullRequest.stack);
   const targetGate = targetVerificationStatus(repository, accessRefresh, refresh);
-  const canShowEmptyState = refresh?.availability === "available";
-  const notice = !refresh || refresh.availability === "never"
-    ? `<div class="alert alert-info mt-6 leading-normal" role="status"><div><strong>Pull requests have not synchronized yet.</strong> An unavailable first read is not shown as an empty list.</div></div>`
-    : refresh.availability === "unavailable" || refresh.availability === "partial"
-      ? `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Pull request synchronization is unavailable.</strong>${pullRequests.length > 0 || stacks.length > 0 ? ` Showing the last complete projection from ${formatTime(refresh.lastSuccessAt)}.` : " No complete Pull request projection is available yet."} Known membership was not removed.</div></div>`
-      : refresh.failureReason
-        ? `<div class="alert alert-warning mt-6 leading-normal" role="status">${escapeHtml(refresh.failureReason)}</div>`
-        : "";
+  const canShowEmptyState = refresh?.availability === "available"
+    && refresh.requestedGeneration <= refresh.completedGeneration;
+  const notice = refreshWarning("Pull requests", refresh);
   const empty = canShowEmptyState && activePullRequests.length === 0 && stacks.length === 0
     ? `<div class="mt-8 rounded-box bg-base-100 p-6"><p class="text-lg font-semibold">No active Pull requests or native stacks</p><p class="mt-2 max-w-prose leading-relaxed text-muted">Open GitHub Pull requests and explicitly registered native stacks appear here.</p></div>`
     : "";
@@ -765,6 +793,7 @@ export const renderPullRequestsPage = ({
     content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
       ${renderRepositoryHeading(repository, "Pull requests", "Active GitHub Pull requests, explicit native stack order, and read-only starting-target classification.")}
       ${accessNotice(repository)}
+      ${refreshWarning("Access", accessRefresh)}
       ${notice}
       <p class="mt-6 text-sm text-muted">${refreshLine("Access", accessRefresh)} · ${refreshLine("Pull requests", refresh)}</p>
       ${empty}
@@ -816,6 +845,8 @@ export const renderSpecDetailPage = ({
         </div>
       </div>
       ${accessNotice(repository)}
+      ${refreshWarning("Access", accessRefresh)}
+      ${refreshWarning("Specs", specsRefresh)}
       ${retained ? `<div class="alert alert-warning mt-6 leading-normal" role="status">This issue is no longer in the active Specs projection. Atlas retains the last complete snapshot for this direct link.</div>` : ""}
       <div class="mt-8 flex flex-wrap items-center gap-2" aria-label="Spec labels">${labels}</div>
       <dl class="mt-6 grid gap-4 border-y border-base-300 py-5 text-sm sm:grid-cols-2">
@@ -1115,8 +1146,10 @@ export const renderSpecUnavailablePage = ({
   repository,
   csrfToken,
   content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
-    ${renderRepositoryHeading(repository, "Specs unavailable", "Atlas could not complete the first Specs read.")}
-    <div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>GitHub synchronization is unavailable.</strong> Retry when the configured App access is available. Atlas has not invented an empty list.</div></div>
+     ${renderRepositoryHeading(repository, "Specs unavailable", "Atlas could not complete the first Specs read.")}
+     ${refreshWarning("Access", accessRefresh)}
+     ${refreshWarning("Specs", specsRefresh)}
+     <div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>GitHub synchronization is unavailable.</strong> Retry when the configured App access is available. Atlas has not invented an empty list.</div></div>
     <p class="mt-6 text-sm text-muted">${refreshLine("Access", accessRefresh)} · ${refreshLine("Specs", specsRefresh)}</p>
     <a class="btn btn-ghost mt-8 min-h-11 border border-control-border/60" href="${repositoryLink(repository)}">Back to Specs</a>
   </section>`,

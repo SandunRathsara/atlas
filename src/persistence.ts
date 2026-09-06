@@ -5,6 +5,7 @@ import { Database } from "bun:sqlite";
 export type AccessStatus = "available" | "unknown" | "revoked" | "transferred" | "suspended";
 export type RefreshView = "access" | "specs" | "pullRequests";
 export type RefreshAvailability = "never" | "available" | "partial" | "unavailable";
+export const refreshViews: RefreshView[] = ["access", "specs", "pullRequests"];
 
 export type Repository = {
   githubId: string;
@@ -485,6 +486,18 @@ const migrations = [
         ON sessions (spec_github_id, submission_order DESC);
     `,
   },
+  {
+    version: 6,
+    sql: `
+      CREATE TABLE webhook_deliveries (
+        delivery_id TEXT PRIMARY KEY NOT NULL,
+        received_at TEXT NOT NULL
+      );
+
+      CREATE INDEX webhook_deliveries_received_idx
+        ON webhook_deliveries (received_at);
+    `,
+  },
 ];
 
 const isoNow = (now: () => number) => new Date(now()).toISOString();
@@ -693,7 +706,7 @@ export const createPersistence = (options: PersistenceOptions) => {
     return rows.map(toRepository);
   };
 
-  const upsertRepository = (input: RepositoryInput) => {
+  const upsertRepositoryRow = (input: RepositoryInput) => {
     const enrolledAt = input.enrolledAt ?? isoNow(now);
     database.query(`
       INSERT INTO repositories (
@@ -734,10 +747,36 @@ export const createPersistence = (options: PersistenceOptions) => {
       input.accessStatus ?? "available",
       input.accessReason ?? null,
     );
+  };
 
-    ensureRefreshState(input.githubId, "access");
-    ensureRefreshState(input.githubId, "specs");
+  const upsertRepository = (input: RepositoryInput) => {
+    upsertRepositoryRow(input);
+    for (const view of refreshViews) ensureRefreshState(input.githubId, view);
     return getRepository(input.githubId)!;
+  };
+
+  const saveRepositoryObservation = (
+    input: RepositoryInput,
+    generation: number,
+    refreshReason: string | null = null,
+  ) => {
+    const save = database.transaction(() => {
+      const state = database.query(`
+        SELECT requested_generation FROM refresh_state
+        WHERE repository_id = ? AND view = 'access'
+      `).get(input.githubId) as { requested_generation: number } | null;
+      if (!state || state.requested_generation !== generation) return false;
+
+      upsertRepositoryRow(input);
+      for (const view of refreshViews) ensureRefreshState(input.githubId, view);
+      database.query(`
+        UPDATE refresh_state
+        SET completed_generation = ?, last_success_at = ?, availability = 'available', failure_reason = ?
+        WHERE repository_id = ? AND view = 'access' AND requested_generation = ?
+      `).run(generation, isoNow(now), refreshReason, input.githubId, generation);
+      return true;
+    });
+    return save();
   };
 
   const updateAccess = (repositoryId: string, status: AccessStatus, reason: string | null) => {
@@ -746,17 +785,147 @@ export const createPersistence = (options: PersistenceOptions) => {
     `).run(status, reason, repositoryId);
   };
 
-  const markRefreshSuccess = (repositoryId: string, view: RefreshView, reason: string | null = null) => {
+  const markAccessObservation = (
+    repositoryId: string,
+    status: AccessStatus,
+    reason: string | null,
+    generation: number,
+  ) => {
+    const observe = database.transaction(() => {
+      const state = database.query(`
+        SELECT requested_generation FROM refresh_state
+        WHERE repository_id = ? AND view = 'access'
+      `).get(repositoryId) as { requested_generation: number } | null;
+      if (!state || state.requested_generation !== generation) return false;
+      database.query(`
+        UPDATE repositories SET access_status = ?, access_reason = ? WHERE github_id = ?
+      `).run(status, reason, repositoryId);
+      database.query(`
+        UPDATE refresh_state
+        SET completed_generation = ?, last_success_at = ?, availability = 'available', failure_reason = ?
+        WHERE repository_id = ? AND view = 'access' AND requested_generation = ?
+      `).run(generation, isoNow(now), reason, repositoryId, generation);
+      return true;
+    });
+    return observe();
+  };
+
+  const markAccessFailure = (
+    repositoryId: string,
+    status: AccessStatus,
+    reason: string,
+    generation: number,
+  ) => {
+    const fail = database.transaction(() => {
+      const state = database.query(`
+        SELECT requested_generation FROM refresh_state
+        WHERE repository_id = ? AND view = 'access'
+      `).get(repositoryId) as { requested_generation: number } | null;
+      if (!state || state.requested_generation !== generation) return false;
+      database.query(`
+        UPDATE repositories SET access_status = ?, access_reason = ? WHERE github_id = ?
+      `).run(status, reason, repositoryId);
+      database.query(`
+        UPDATE refresh_state
+        SET last_failure_at = ?, availability = 'unavailable', failure_reason = ?
+        WHERE repository_id = ? AND view = 'access' AND requested_generation = ?
+      `).run(isoNow(now), reason, repositoryId, generation);
+      return true;
+    });
+    return fail();
+  };
+
+  const requestRefresh = (repositoryId: string, views: RefreshView[] = refreshViews) => {
+    const requestedViews = [...new Set(views)];
+    const request = database.transaction(() => {
+      for (const view of requestedViews) {
+        ensureRefreshState(repositoryId, view);
+        database.query(`
+          UPDATE refresh_state
+          SET requested_generation = requested_generation + 1
+          WHERE repository_id = ? AND view = ?
+        `).run(repositoryId, view);
+      }
+    });
+    request();
+  };
+
+  const acceptWebhookDelivery = ({
+    deliveryId,
+    repositoryIds,
+    views = refreshViews,
+    receivedAt = isoNow(now),
+  }: {
+    deliveryId: string;
+    repositoryIds: string[];
+    views?: RefreshView[];
+    receivedAt?: string;
+  }) => {
+    const accepted = database.transaction(() => {
+      database.query(`
+        DELETE FROM webhook_deliveries
+        WHERE received_at <= ?
+      `).run(new Date(now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+
+      const duplicate = database.query(`
+        SELECT 1 FROM webhook_deliveries WHERE delivery_id = ?
+      `).get(deliveryId);
+      if (duplicate) return false;
+
+      database.query(`
+        INSERT INTO webhook_deliveries (delivery_id, received_at) VALUES (?, ?)
+      `).run(deliveryId, receivedAt);
+
+      const uniqueRepositories = [...new Set(repositoryIds)];
+      const uniqueViews = [...new Set(views)];
+      for (const repositoryId of uniqueRepositories) {
+        const repository = database.query(
+          "SELECT 1 FROM repositories WHERE github_id = ?",
+        ).get(repositoryId);
+        if (!repository) continue;
+        for (const view of uniqueViews) {
+          ensureRefreshState(repositoryId, view);
+          database.query(`
+            UPDATE refresh_state
+            SET requested_generation = requested_generation + 1
+            WHERE repository_id = ? AND view = ?
+          `).run(repositoryId, view);
+        }
+      }
+      return true;
+    });
+    return accepted();
+  };
+
+  const markRefreshSuccess = (
+    repositoryId: string,
+    view: RefreshView,
+    reason: string | null = null,
+    generation?: number,
+  ) => {
     ensureRefreshState(repositoryId, view);
     const timestamp = isoNow(now);
-    database.query(`
+    if (generation === undefined) {
+      database.query(`
+        UPDATE refresh_state
+        SET completed_generation = requested_generation,
+            last_success_at = ?,
+            availability = 'available',
+            failure_reason = ?
+        WHERE repository_id = ? AND view = ?
+      `).run(timestamp, reason, repositoryId, view);
+      return true;
+    }
+
+    const result = database.query(`
       UPDATE refresh_state
-      SET completed_generation = requested_generation,
+      SET completed_generation = ?,
           last_success_at = ?,
           availability = 'available',
           failure_reason = ?
-      WHERE repository_id = ? AND view = ?
-    `).run(timestamp, reason, repositoryId, view);
+      WHERE repository_id = ? AND view = ? AND requested_generation = ?
+    `).run(generation, timestamp, reason, repositoryId, view, generation);
+    return result.changes > 0;
   };
 
   const markRefreshFailure = (
@@ -764,13 +933,29 @@ export const createPersistence = (options: PersistenceOptions) => {
     view: RefreshView,
     reason: string,
     availability: RefreshAvailability = "unavailable",
+    generation?: number,
   ) => {
     ensureRefreshState(repositoryId, view);
-    database.query(`
+    const query = generation === undefined ? `
       UPDATE refresh_state
       SET last_failure_at = ?, availability = ?, failure_reason = ?
       WHERE repository_id = ? AND view = ?
-    `).run(isoNow(now), availability, reason, repositoryId, view);
+    ` : `
+      UPDATE refresh_state
+      SET last_failure_at = ?, availability = ?, failure_reason = ?
+      WHERE repository_id = ? AND view = ? AND requested_generation = ?
+    `;
+    const result = generation === undefined
+      ? database.query(query).run(isoNow(now), availability, reason, repositoryId, view)
+      : database.query(query).run(isoNow(now), availability, reason, repositoryId, view, generation);
+    return result.changes > 0;
+  };
+
+  const isRefreshGenerationCurrent = (repositoryId: string, view: RefreshView, generation: number) => {
+    const row = database.query(`
+      SELECT requested_generation FROM refresh_state WHERE repository_id = ? AND view = ?
+    `).get(repositoryId, view) as { requested_generation: number } | null;
+    return row?.requested_generation === generation;
   };
 
   const getRefreshState = (repositoryId: string, view: RefreshView) => {
@@ -786,8 +971,10 @@ export const createPersistence = (options: PersistenceOptions) => {
     specs: SpecInput[],
     observedAt = isoNow(now),
     refreshReason: string | null = null,
+    generation?: number,
   ) => {
     const replace = database.transaction(() => {
+      if (generation !== undefined && !isRefreshGenerationCurrent(repositoryId, "specs", generation)) return false;
       database.query("UPDATE specs SET is_current = 0 WHERE repository_id = ?").run(repositoryId);
       const upsert = database.query(`
         INSERT INTO specs (
@@ -829,16 +1016,28 @@ export const createPersistence = (options: PersistenceOptions) => {
       }
 
       ensureRefreshState(repositoryId, "specs");
-      database.query(`
-        UPDATE refresh_state
-        SET completed_generation = requested_generation,
-            last_success_at = ?,
-            availability = 'available',
-            failure_reason = ?
-        WHERE repository_id = ? AND view = 'specs'
-      `).run(isoNow(now), refreshReason, repositoryId);
+      if (generation === undefined) {
+        database.query(`
+          UPDATE refresh_state
+          SET completed_generation = requested_generation,
+              last_success_at = ?,
+              availability = 'available',
+              failure_reason = ?
+          WHERE repository_id = ? AND view = 'specs'
+        `).run(isoNow(now), refreshReason, repositoryId);
+      } else {
+        database.query(`
+          UPDATE refresh_state
+          SET completed_generation = ?,
+              last_success_at = ?,
+              availability = 'available',
+              failure_reason = ?
+          WHERE repository_id = ? AND view = 'specs' AND requested_generation = ?
+        `).run(generation, isoNow(now), refreshReason, repositoryId, generation);
+      }
+      return true;
     });
-    replace();
+    return replace();
   };
 
   const replacePullRequests = (
@@ -847,8 +1046,10 @@ export const createPersistence = (options: PersistenceOptions) => {
     stacks: PrStackInput[],
     observedAt = isoNow(now),
     refreshReason: string | null = null,
+    generation?: number,
   ) => {
     const replace = database.transaction(() => {
+      if (generation !== undefined && !isRefreshGenerationCurrent(repositoryId, "pullRequests", generation)) return false;
       for (const pullRequest of pullRequests) {
         const existing = database.query(`
           SELECT repository_id FROM pull_requests WHERE github_id = ?
@@ -963,16 +1164,28 @@ export const createPersistence = (options: PersistenceOptions) => {
       }
 
       ensureRefreshState(repositoryId, "pullRequests");
-      database.query(`
-        UPDATE refresh_state
-        SET completed_generation = requested_generation,
-            last_success_at = ?,
-            availability = 'available',
-            failure_reason = ?
-        WHERE repository_id = ? AND view = 'pullRequests'
-      `).run(isoNow(now), refreshReason, repositoryId);
+      if (generation === undefined) {
+        database.query(`
+          UPDATE refresh_state
+          SET completed_generation = requested_generation,
+              last_success_at = ?,
+              availability = 'available',
+              failure_reason = ?
+          WHERE repository_id = ? AND view = 'pullRequests'
+        `).run(isoNow(now), refreshReason, repositoryId);
+      } else {
+        database.query(`
+          UPDATE refresh_state
+          SET completed_generation = ?,
+              last_success_at = ?,
+              availability = 'available',
+              failure_reason = ?
+          WHERE repository_id = ? AND view = 'pullRequests' AND requested_generation = ?
+        `).run(generation, isoNow(now), refreshReason, repositoryId, generation);
+      }
+      return true;
     });
-    replace();
+    return replace();
   };
 
   const listPullRequests = (repositoryId: string, currentOnly = true) => {
@@ -1155,9 +1368,15 @@ export const createPersistence = (options: PersistenceOptions) => {
     getRepository,
     listRepositories,
     upsertRepository,
+    saveRepositoryObservation,
     updateAccess,
+    markAccessObservation,
+    markAccessFailure,
+    requestRefresh,
+    acceptWebhookDelivery,
     markRefreshSuccess,
     markRefreshFailure,
+    isRefreshGenerationCurrent,
     getRefreshState,
     replaceSpecs,
     replacePullRequests,

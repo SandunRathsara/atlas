@@ -7,21 +7,21 @@ import {
 } from "./auth.ts";
 import {
   createGitHubClient,
-  GitHubError,
   type GitHubClient,
-  type GitHubIssue,
-  type GitHubPullRequest,
   type GitHubRepository,
 } from "./github.ts";
 import {
   createPersistence,
   type Persistence,
-  type PrStackInput,
-  type PullRequestInput,
   type Repository,
   type Session,
   type SessionFilter,
 } from "./persistence.ts";
+import {
+  createRefreshCoordinator,
+  githubFailureMessage,
+  type RefreshCoordinator,
+} from "./sync.ts";
 import {
   renderAddRepositoryPage,
   renderLoginForm,
@@ -72,6 +72,7 @@ export type AppOptions = {
   githubToken?: () => string | undefined;
   now?: () => number;
   persistence?: Persistence;
+  refreshCoordinator?: RefreshCoordinator;
   sharedToken?: string;
 };
 
@@ -152,43 +153,6 @@ const securityHeaders: MiddlewareHandler = async (c, next) => {
   c.header("X-Content-Type-Options", "nosniff");
 };
 
-const repositoryInput = (
-  repository: GitHubRepository,
-  organization: string,
-  installationId: string,
-  accessStatus: Repository["accessStatus"] = "available",
-  accessReason: string | null = null,
-) => ({
-  githubId: repository.id,
-  installationId,
-  organization,
-  owner: repository.owner,
-  name: repository.name,
-  fullName: repository.fullName,
-  htmlUrl: repository.htmlUrl,
-  description: repository.description,
-  visibility: repository.visibility,
-  defaultBranch: repository.defaultBranch,
-  archived: repository.archived,
-  disabled: repository.disabled,
-  hasIssues: repository.hasIssues,
-  accessStatus,
-  accessReason,
-});
-
-const githubFailureMessage = (error: unknown) => {
-  if (error instanceof GitHubError) {
-    if (error.kind === "configuration") return "GitHub App access is not configured for this Atlas instance.";
-    if (error.kind === "access") return "GitHub App access could not be verified.";
-    if (error.kind === "suspended") return "The GitHub App installation is suspended.";
-    if (error.kind === "temporary") return "GitHub is temporarily unavailable.";
-    if (error.kind === "not-found") return "GitHub could not find the requested Repository.";
-  }
-  return "GitHub synchronization failed. Existing Atlas data was retained.";
-};
-
-const hasExactSpecLabel = (issue: GitHubIssue) => issue.labels.some((label) => label === "spec");
-
 const isCurrentSpec = (spec: { isCurrent: boolean; state: string; hasSpecLabel: boolean; isPullRequest: boolean }) =>
   spec.isCurrent && spec.state === "open" && spec.hasSpecLabel && !spec.isPullRequest;
 
@@ -226,7 +190,6 @@ type SyncResult = {
   ok: boolean;
   repository: Repository;
 };
-
 export const createApp = (options: AppOptions) => {
   const auth = createAuth(options);
   const persistence = options.persistence ?? createPersistence({
@@ -242,212 +205,56 @@ export const createApp = (options: AppOptions) => {
     baseUrl: options.githubApiUrl ?? Bun.env.ATLAS_GITHUB_API_URL,
   });
   const app = new Hono<AuthEnv>();
-
   const now = options.now ?? Date.now;
 
-  const saveSpecs = async (repository: Repository, githubRepository: GitHubRepository) => {
-    if (!githubRepository.hasIssues) {
-      persistence.replaceSpecs(
-        repository.githubId,
-        [],
-        undefined,
-        "GitHub Issues are disabled for this Repository; no Specs can be listed.",
-      );
-      return;
-    }
+  const refreshCoordinator = options.refreshCoordinator ?? createRefreshCoordinator({
+    persistence,
+    github,
+    organization,
+    installationId,
+    now: options.now,
+  });
 
-    const issues = await github.listIssues(githubRepository);
-    const hasLabel = await github.hasLabel(githubRepository, "spec");
-    if (!hasLabel) {
-      persistence.replaceSpecs(
-        repository.githubId,
-        [],
-        undefined,
-        "No exact `spec` label exists in this Repository. Atlas does not create labels.",
-      );
-      return;
-    }
-
-    const observedAt = new Date(now()).toISOString();
-    persistence.replaceSpecs(
-      repository.githubId,
-      issues.map((issue) => ({
-        githubId: issue.id,
-        issueNumber: issue.number,
-        title: issue.title,
-        body: issue.body,
-        htmlUrl: issue.htmlUrl,
-        state: issue.state,
-        labels: issue.labels,
-        isPullRequest: issue.isPullRequest,
-        hasSpecLabel: hasExactSpecLabel(issue),
-        updatedAt: issue.updatedAt,
-        observedAt,
-      })),
-      observedAt,
-    );
+  const refreshRepository = async (existing: Repository) => {
+    await refreshCoordinator.refresh(existing.githubId, ["access", "specs"]);
+    const repository = persistence.getRepository(existing.githubId)!;
+    const access = persistence.getRefreshState(existing.githubId, "access");
+    const specs = persistence.getRefreshState(existing.githubId, "specs");
+    return {
+      ok: repository.accessStatus === "available" && access?.availability === "available" && specs?.availability === "available",
+      repository,
+    };
   };
 
-  const savePullRequests = async (repository: Repository, githubRepository: GitHubRepository) => {
-    if (!github.listPullRequests || !github.listStacks || !github.getBranchRef) {
-      throw new GitHubError("Native Pull request browsing is not configured", { kind: "configuration" });
-    }
-
-    const pullRequests = await github.listPullRequests(githubRepository);
-    const stacks = await github.listStacks(githubRepository);
-    const headRefs = new Set(
-      pullRequests
-        .filter((pullRequest) => pullRequest.state === "open" && pullRequest.headRepositoryId === githubRepository.id)
-        .map((pullRequest) => pullRequest.headRef),
-    );
-    const refs = new Map<string, string | null>();
-    for (const branch of headRefs) {
-      const ref = await github.getBranchRef(githubRepository, branch);
-      refs.set(branch, ref?.sha ?? null);
-    }
-
-    const observedAt = new Date(now()).toISOString();
-    const pullRequestInputs: PullRequestInput[] = pullRequests.map((pullRequest: GitHubPullRequest) => {
-      const sameRepository = pullRequest.headRepositoryId === githubRepository.id;
-      const observedHeadSha = pullRequest.state === "open" && sameRepository ? refs.get(pullRequest.headRef) ?? null : null;
-      return {
-        githubId: pullRequest.id,
-        number: pullRequest.number,
-        title: pullRequest.title,
-        htmlUrl: pullRequest.htmlUrl,
-        state: pullRequest.state,
-        draft: pullRequest.draft,
-        mergedAt: pullRequest.mergedAt,
-        headRef: pullRequest.headRef,
-        headSha: pullRequest.headSha,
-        headRepositoryId: pullRequest.headRepositoryId ?? null,
-        baseRef: pullRequest.baseRef,
-        baseSha: pullRequest.baseSha,
-        mergeableState: pullRequest.mergeableState,
-        autoMergeEnabled: pullRequest.autoMergeEnabled,
-        mergeQueueState: pullRequest.mergeQueueState,
-        headRefExists: pullRequest.state === "open" && sameRepository ? observedHeadSha !== null : null,
-        observedHeadSha,
-        updatedAt: pullRequest.updatedAt,
-        observedAt,
-      };
-    });
-    const pullRequestByNumber = new Map(pullRequests.map((pullRequest) => [pullRequest.number, pullRequest]));
-    const stackInputs: PrStackInput[] = stacks.map((stack) => ({
-      githubId: stack.id,
-      nodeId: stack.nodeId,
-      number: stack.number,
-      trunkRef: stack.trunkRef,
-      open: stack.open,
-      observedAt,
-      members: stack.pullRequests.map((member) => {
-        const pullRequest = pullRequestByNumber.get(member.number);
-        if (!pullRequest) throw new GitHubError("Native stack member was not in the complete Pull request projection", { kind: "invalid" });
-        return { pullRequestId: pullRequest.id, position: member.position };
-      }),
-    }));
-
-    persistence.replacePullRequests(repository.githubId, pullRequestInputs, stackInputs, observedAt);
+  const refreshPullRequests = async (existing: Repository) => {
+    await refreshCoordinator.refresh(existing.githubId, ["access", "pullRequests"]);
+    const repository = persistence.getRepository(existing.githubId)!;
+    const access = persistence.getRefreshState(existing.githubId, "access");
+    const pullRequests = persistence.getRefreshState(existing.githubId, "pullRequests");
+    return {
+      ok: repository.accessStatus === "available" && access?.availability === "available" && pullRequests?.availability === "available",
+      repository,
+    };
   };
 
   const saveCandidate = async (candidate: GitHubRepository) => {
-    const repository = persistence.upsertRepository(repositoryInput(candidate, organization, installationId));
-    persistence.markRefreshSuccess(repository.githubId, "access");
-    try {
-      await saveSpecs(repository, candidate);
-      return { ok: true, repository } satisfies SyncResult;
-    } catch (error) {
-      const reason = githubFailureMessage(error);
-      if (error instanceof GitHubError && (error.kind === "access" || error.kind === "not-found" || error.kind === "suspended")) {
-        persistence.updateAccess(
-          repository.githubId,
-          error.kind === "suspended" ? "suspended" : "unknown",
-          reason,
-        );
-      }
-      persistence.markRefreshFailure(repository.githubId, "specs", reason);
-      return { ok: false, repository: persistence.getRepository(repository.githubId)! } satisfies SyncResult;
-    }
-  };
-
-  const refreshRepository = async (existing: Repository): Promise<SyncResult> => {
-    let inventory: GitHubRepository[];
-    try {
-      inventory = await github.listInstallationRepositories();
-    } catch (error) {
-      const reason = githubFailureMessage(error);
-      const status = error instanceof GitHubError && error.kind === "suspended" ? "suspended" : "unknown";
-      persistence.updateAccess(existing.githubId, status, reason);
-      persistence.markRefreshFailure(existing.githubId, "access", reason);
-      persistence.markRefreshFailure(existing.githubId, "specs", reason);
-      return { ok: false, repository: persistence.getRepository(existing.githubId)! };
-    }
-
-    const candidate = inventory.find((item) => item.id === existing.githubId);
-
-    if (!candidate) {
-      const reason = "Repository was not present in the last complete GitHub App inventory.";
-      persistence.updateAccess(existing.githubId, "revoked", reason);
-      persistence.markRefreshSuccess(existing.githubId, "access", reason);
-      persistence.markRefreshFailure(existing.githubId, "specs", reason);
-      return { ok: false, repository: persistence.getRepository(existing.githubId)! };
-    }
-
-    if (candidate.owner.toLocaleLowerCase() !== organization.toLocaleLowerCase()) {
-      const reason = "Repository is now outside the configured organization.";
-      const repository = persistence.upsertRepository(
-        repositoryInput(candidate, organization, installationId, "transferred", reason),
-      );
-      persistence.markRefreshSuccess(repository.githubId, "access", reason);
-      persistence.markRefreshFailure(repository.githubId, "specs", reason);
-      return { ok: false, repository };
-    }
-
-    return saveCandidate(candidate);
-  };
-
-  const refreshPullRequests = async (existing: Repository): Promise<SyncResult> => {
-    let inventory: GitHubRepository[];
-    try {
-      inventory = await github.listInstallationRepositories();
-    } catch (error) {
-      const reason = githubFailureMessage(error);
-      const status = error instanceof GitHubError && error.kind === "suspended" ? "suspended" : "unknown";
-      persistence.updateAccess(existing.githubId, status, reason);
-      persistence.markRefreshFailure(existing.githubId, "access", reason);
-      persistence.markRefreshFailure(existing.githubId, "pullRequests", reason);
-      return { ok: false, repository: persistence.getRepository(existing.githubId)! };
-    }
-
-    const candidate = inventory.find((item) => item.id === existing.githubId);
-    if (!candidate) {
-      const reason = "Repository was not present in the last complete GitHub App inventory.";
-      persistence.updateAccess(existing.githubId, "revoked", reason);
-      persistence.markRefreshSuccess(existing.githubId, "access", reason);
-      persistence.markRefreshFailure(existing.githubId, "pullRequests", reason);
-      return { ok: false, repository: persistence.getRepository(existing.githubId)! };
-    }
-
-    if (candidate.owner.toLocaleLowerCase() !== organization.toLocaleLowerCase()) {
-      const reason = "Repository is now outside the configured organization.";
-      const repository = persistence.upsertRepository(
-        repositoryInput(candidate, organization, installationId, "transferred", reason),
-      );
-      persistence.markRefreshSuccess(repository.githubId, "access", reason);
-      persistence.markRefreshFailure(repository.githubId, "pullRequests", reason);
-      return { ok: false, repository };
-    }
-
-    const repository = persistence.upsertRepository(repositoryInput(candidate, organization, installationId));
-    persistence.markRefreshSuccess(repository.githubId, "access");
-    try {
-      await savePullRequests(repository, candidate);
-      return { ok: true, repository: persistence.getRepository(repository.githubId)! } satisfies SyncResult;
-    } catch (error) {
-      const reason = githubFailureMessage(error);
-      persistence.markRefreshFailure(repository.githubId, "pullRequests", reason);
-      return { ok: false, repository: persistence.getRepository(repository.githubId)! } satisfies SyncResult;
-    }
+    const repository = persistence.upsertRepository({
+      githubId: candidate.id,
+      installationId,
+      organization,
+      owner: candidate.owner,
+      name: candidate.name,
+      fullName: candidate.fullName,
+      htmlUrl: candidate.htmlUrl,
+      description: candidate.description,
+      visibility: candidate.visibility,
+      defaultBranch: candidate.defaultBranch,
+      archived: candidate.archived,
+      disabled: candidate.disabled,
+      hasIssues: candidate.hasIssues,
+    });
+    const result = await refreshRepository(repository);
+    return { ...result, repository: persistence.getRepository(repository.githubId)! };
   };
 
   const scopedInventory = async () => {
