@@ -298,6 +298,57 @@ type SessionRow = {
   updated_at: string;
 };
 
+const sessionsMigrationSql = `
+      CREATE UNIQUE INDEX IF NOT EXISTS specs_repository_github_idx
+        ON specs (repository_id, github_id);
+
+      CREATE TABLE IF NOT EXISTS sessions (
+        atlas_id TEXT PRIMARY KEY NOT NULL,
+        repository_id TEXT NOT NULL REFERENCES repositories (github_id),
+        spec_github_id TEXT NOT NULL,
+        spec_issue_number TEXT NOT NULL,
+        spec_title TEXT NOT NULL,
+        spec_body TEXT NOT NULL,
+        spec_html_url TEXT NOT NULL,
+        submission_id TEXT NOT NULL UNIQUE,
+        submission_order INTEGER NOT NULL UNIQUE CHECK (submission_order > 0),
+        submitted_at TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        target_kind TEXT NOT NULL CHECK (target_kind = 'default'),
+        target_branch TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('queued', 'preparing', 'running', 'waiting', 'idle', 'succeeded', 'failed', 'interrupted', 'failed_setup')),
+        state_reason TEXT,
+        directory TEXT,
+        opencode_session_id TEXT,
+        initial_message_id TEXT,
+        exact_message TEXT,
+        execution_slot_held INTEGER NOT NULL DEFAULT 0 CHECK (execution_slot_held IN (0, 1)),
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (repository_id, spec_github_id) REFERENCES specs (repository_id, github_id),
+        FOREIGN KEY (repository_id, spec_issue_number) REFERENCES specs (repository_id, issue_number)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS sessions_unfinished_spec_idx
+        ON sessions (spec_github_id)
+        WHERE state IN ('queued', 'preparing', 'running', 'waiting', 'idle');
+
+      CREATE INDEX IF NOT EXISTS sessions_repository_order_idx
+        ON sessions (repository_id, submission_order DESC);
+
+      CREATE INDEX IF NOT EXISTS sessions_spec_order_idx
+        ON sessions (spec_github_id, submission_order DESC);
+    `;
+
+const webhookMigrationSql = `
+      CREATE TABLE IF NOT EXISTS webhook_deliveries (
+        delivery_id TEXT PRIMARY KEY NOT NULL,
+        received_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS webhook_deliveries_received_idx
+        ON webhook_deliveries (received_at);
+    `;
+
 const migrations = [
   {
     version: 1,
@@ -445,58 +496,11 @@ const migrations = [
   },
   {
     version: 5,
-    sql: `
-      CREATE UNIQUE INDEX specs_repository_github_idx
-        ON specs (repository_id, github_id);
-
-      CREATE TABLE sessions (
-        atlas_id TEXT PRIMARY KEY NOT NULL,
-        repository_id TEXT NOT NULL REFERENCES repositories (github_id),
-        spec_github_id TEXT NOT NULL,
-        spec_issue_number TEXT NOT NULL,
-        spec_title TEXT NOT NULL,
-        spec_body TEXT NOT NULL,
-        spec_html_url TEXT NOT NULL,
-        submission_id TEXT NOT NULL UNIQUE,
-        submission_order INTEGER NOT NULL UNIQUE CHECK (submission_order > 0),
-        submitted_at TEXT NOT NULL,
-        prompt TEXT NOT NULL,
-        target_kind TEXT NOT NULL CHECK (target_kind = 'default'),
-        target_branch TEXT NOT NULL,
-        state TEXT NOT NULL CHECK (state IN ('queued', 'preparing', 'running', 'waiting', 'idle', 'succeeded', 'failed', 'interrupted', 'failed_setup')),
-        state_reason TEXT,
-        directory TEXT,
-        opencode_session_id TEXT,
-        initial_message_id TEXT,
-        exact_message TEXT,
-        execution_slot_held INTEGER NOT NULL DEFAULT 0 CHECK (execution_slot_held IN (0, 1)),
-        updated_at TEXT NOT NULL,
-        FOREIGN KEY (repository_id, spec_github_id) REFERENCES specs (repository_id, github_id),
-        FOREIGN KEY (repository_id, spec_issue_number) REFERENCES specs (repository_id, issue_number)
-      );
-
-      CREATE UNIQUE INDEX sessions_unfinished_spec_idx
-        ON sessions (spec_github_id)
-        WHERE state IN ('queued', 'preparing', 'running', 'waiting', 'idle');
-
-      CREATE INDEX sessions_repository_order_idx
-        ON sessions (repository_id, submission_order DESC);
-
-      CREATE INDEX sessions_spec_order_idx
-        ON sessions (spec_github_id, submission_order DESC);
-    `,
+    sql: sessionsMigrationSql,
   },
   {
     version: 6,
-    sql: `
-      CREATE TABLE webhook_deliveries (
-        delivery_id TEXT PRIMARY KEY NOT NULL,
-        received_at TEXT NOT NULL
-      );
-
-      CREATE INDEX webhook_deliveries_received_idx
-        ON webhook_deliveries (received_at);
-    `,
+    sql: webhookMigrationSql,
   },
 ];
 
@@ -668,6 +672,19 @@ export const createPersistence = (options: PersistenceOptions) => {
       applied_at TEXT NOT NULL
     )
   `);
+
+  // Both parent branches recorded different schemas as migration 5.
+  const hasTable = (name: string) => Boolean(database.query(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+  ).get(name));
+  const repairCollidingVersionFive = database.transaction(() => {
+    const versionFiveApplied = Boolean(database.query(
+      "SELECT 1 FROM schema_migrations WHERE version = 5",
+    ).get());
+    if (!versionFiveApplied || hasTable("sessions") || !hasTable("webhook_deliveries")) return;
+    database.exec(sessionsMigrationSql);
+  });
+  repairCollidingVersionFive();
 
   const appliedVersions = new Set(
     (database.query("SELECT version FROM schema_migrations ORDER BY version").all() as Array<{ version: number }>)
