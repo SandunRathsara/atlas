@@ -309,6 +309,9 @@ const sessionTargetSelection = (session: Pick<Session, "targetKind" | "targetSta
       ? `parent:${session.targetParentPullRequestId ?? ""}`
       : "default";
 
+const targetReconfirmationRequired = (session: Pick<Session, "state" | "admissionBlocked" | "stateReason">) =>
+  session.state === "queued" && session.admissionBlocked === true && session.stateReason?.startsWith("Waiting for explicit target reconfirmation") === true;
+
 const parseTargetObservations = (value: string | undefined) => {
   if (!value || value.length > MAX_FORM_BYTES) return undefined;
   try {
@@ -1243,29 +1246,32 @@ export const createApp = (options: AppOptions) => {
     if (!session) return c.text("Session not found", 404);
     const repository = persistence.getRepository(session.repositoryId);
     if (!repository) return c.text("Repository not found", 404);
+    if (!targetReconfirmationRequired(session)) {
+      return c.text(
+        session.state === "queued"
+          ? "Target reconfirmation is available only after the selected target disappears and Atlas requires explicit confirmation."
+          : "Only a queued Session can be assigned a replacement target.",
+        409,
+      );
+    }
 
     let pullRequests = persistence.listPullRequests(repository.githubId);
     let stacks = persistence.listPrStacks(repository.githubId);
     let pullRequestsRefresh = persistence.getRefreshState(repository.githubId, "pullRequests");
     let error: string | undefined;
     let status = 200;
-    if (session.state === "queued") {
-      try {
-        const refreshed = await refreshPullRequests(repository);
-        pullRequests = persistence.listPullRequests(repository.githubId);
-        stacks = persistence.listPrStacks(repository.githubId);
-        pullRequestsRefresh = persistence.getRefreshState(repository.githubId, "pullRequests");
-        if (!refreshed.ok) {
-          error = "Current GitHub target verification is unavailable. Atlas retained the queued Session and will not infer a replacement.";
-          status = 503;
-        }
-      } catch {
+    try {
+      const refreshed = await refreshPullRequests(repository);
+      pullRequests = persistence.listPullRequests(repository.githubId);
+      stacks = persistence.listPrStacks(repository.githubId);
+      pullRequestsRefresh = persistence.getRefreshState(repository.githubId, "pullRequests");
+      if (!refreshed.ok) {
         error = "Current GitHub target verification is unavailable. Atlas retained the queued Session and will not infer a replacement.";
         status = 503;
       }
-    } else {
-      error = "Only a queued Session can be assigned a replacement target.";
-      status = 409;
+    } catch {
+      error = "Current GitHub target verification is unavailable. Atlas retained the queued Session and will not infer a replacement.";
+      status = 503;
     }
 
     const identity = c.get("auth");
@@ -1333,7 +1339,8 @@ export const createApp = (options: AppOptions) => {
       }), status);
     };
 
-    if (session.state !== "queued") return renderError("Only a queued Session can be assigned a replacement target.", 409);
+    if (session.state !== "queued") return c.text("Only a queued Session can be assigned a replacement target.", 409);
+    if (!targetReconfirmationRequired(session)) return c.text("Target reconfirmation is available only after the selected target disappears and Atlas requires explicit confirmation.", 409);
     if (!target || !observations?.[targetValue]) return renderError("Choose a current target and confirm its fresh observation.", 422);
 
     let refreshed: SyncResult;
@@ -1392,7 +1399,8 @@ export const createApp = (options: AppOptions) => {
       return renderError("Atlas could not durably save the target reconfirmation. The queued Session remains unchanged.", 503);
     }
     if (result.kind === "not_found") return c.text("Session not found", 404);
-    if (result.kind === "not_queued") return renderError("Only a queued Session can be assigned a replacement target.", 409);
+    if (result.kind === "not_queued") return c.text("Only a queued Session can be assigned a replacement target.", 409);
+    if (result.kind === "not_reconfirmation_required") return c.text("Target reconfirmation is no longer required for this Session.", 409);
     preparation.enqueue();
     return redirectToSession(c, result.session);
   });

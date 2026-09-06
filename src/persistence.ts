@@ -290,6 +290,7 @@ export type ReservationReleaseResult =
 export type TargetReconfirmationResult =
   | { kind: "updated"; session: Session }
   | { kind: "not_queued"; session: Session }
+  | { kind: "not_reconfirmation_required"; session: Session }
   | { kind: "not_found"; session: undefined };
 
 export type PreparationIntent = {
@@ -2060,8 +2061,27 @@ export const createPersistence = (options: PersistenceOptions) => {
       }
     }
 
+    const currentStackIds = new Set(
+      (database.query(`
+        SELECT github_id FROM pr_stacks
+        WHERE repository_id = ? AND is_current = 1
+      `).all(repositoryId) as Array<{ github_id: string }>).map((row) => row.github_id),
+    );
+    const convergedSuccessors = new Map<string, {
+      source: ReservationTarget;
+      successor: ReservationTarget;
+    } | null>();
+    const acceptedNativeOwners = new Map<string, Set<string>>();
     const targetOwners = new Map<string, { target: ReservationTarget; reservations: Set<string> }>();
     const unknownReservations = new Set<string>();
+    for (const reservation of reservations) {
+      const target = reservationTargetFromRow(reservation);
+      const key = reservationTargetKey(target);
+      if (target.kind !== "native_stack" || !key) continue;
+      const owners = acceptedNativeOwners.get(key) ?? new Set<string>();
+      owners.add(reservation.reservation_id);
+      acceptedNativeOwners.set(key, owners);
+    }
     const updateEvidence = database.query(`
       UPDATE stack_reservations
       SET evidence_unknown = ?, evidence_reason = ?
@@ -2079,6 +2099,7 @@ export const createPersistence = (options: PersistenceOptions) => {
 
     for (const reservation of reservations) {
       const targetSet = new Map<string, ReservationTarget>();
+      const currentNativeTargets = new Map<string, ReservationTarget>();
       const accepted = reservationTargetFromRow(reservation);
       const acceptedKey = reservationTargetKey(accepted);
       if (acceptedKey) targetSet.set(acceptedKey, accepted);
@@ -2105,7 +2126,10 @@ export const createPersistence = (options: PersistenceOptions) => {
             parentPullRequestNumber: null,
           };
           const key = reservationTargetKey(target);
-          if (key) targetSet.set(key, target);
+          if (key) {
+            targetSet.set(key, target);
+            currentNativeTargets.set(key, target);
+          }
         } else if (row.pull_request_number) {
           const target: ReservationTarget = {
             kind: "standalone_parent",
@@ -2125,6 +2149,29 @@ export const createPersistence = (options: PersistenceOptions) => {
       updateEvidence.run(unknown ? 1 : 0, evidenceReason, reservation.reservation_id);
       if (unknown) unknownReservations.add(reservation.reservation_id);
 
+      if (
+        !unknown &&
+        accepted.kind === "native_stack" &&
+        accepted.stackId &&
+        acceptedKey &&
+        !currentStackIds.has(accepted.stackId) &&
+        currentNativeTargets.size === 1
+      ) {
+        // A vanished queue may follow only a current target already accepted by
+        // another held owner. A newly recreated stack has no such identity.
+        const successor = [...currentNativeTargets.values()][0]!;
+        const successorKey = reservationTargetKey(successor);
+        const successorOwners = successorKey ? acceptedNativeOwners.get(successorKey) : undefined;
+        if (successorOwners && [...successorOwners].some((reservationId) => reservationId !== reservation.reservation_id)) {
+          const existing = convergedSuccessors.get(acceptedKey);
+          if (existing === undefined) {
+            convergedSuccessors.set(acceptedKey, { source: accepted, successor });
+          } else if (existing && existing.successor.stackId !== successor.stackId) {
+            convergedSuccessors.set(acceptedKey, null);
+          }
+        }
+      }
+
       for (const target of targetSet.values()) {
         const key = reservationTargetKey(target);
         if (!key) continue;
@@ -2141,7 +2188,66 @@ export const createPersistence = (options: PersistenceOptions) => {
       SET admission_blocked = 0, updated_at = ?
       WHERE repository_id = ? AND state = 'queued' AND admission_blocked = 1
         AND state_reason LIKE 'Waiting for GitHub verification of a retained reservation PR%'
-    `).run(isoNow(now), repositoryId);
+      `).run(isoNow(now), repositoryId);
+
+    const currentStackTop = database.query(`
+      SELECT st.number AS stack_number, top_pr.head_ref AS top_branch
+      FROM pr_stacks st
+      JOIN stack_members top_member ON top_member.stack_id = st.github_id
+      JOIN pull_requests top_pr ON top_pr.github_id = top_member.pull_request_id AND top_pr.is_current = 1
+      WHERE st.repository_id = ? AND st.github_id = ? AND st.is_current = 1
+        AND top_member.position = (
+          SELECT MAX(last_member.position)
+          FROM stack_members last_member
+          WHERE last_member.stack_id = st.github_id
+        )
+    `);
+    for (const association of convergedSuccessors.values()) {
+      if (!association?.source.stackId || !association.successor.stackId) continue;
+      const top = currentStackTop.get(repositoryId, association.successor.stackId) as {
+        stack_number: string;
+        top_branch: string;
+      } | null;
+      if (!top) continue;
+      for (const vanished of vanishedTargets) {
+        if (vanished.target_kind !== "native_stack" || vanished.target_stack_id !== association.source.stackId) continue;
+        const reason = `The selected native stack converged into native stack #${top.stack_number}; the queued request follows the verified successor while preserving its original order.`;
+        const changed = database.query(`
+          UPDATE sessions
+          SET target_stack_id = ?,
+              target_stack_number = ?,
+              target_parent_pull_request_id = NULL,
+              target_parent_pull_request_number = NULL,
+              target_branch = ?,
+              admission_blocked = 0,
+              state_reason = ?,
+              preparation_reason = ?,
+              updated_at = ?
+          WHERE atlas_id = ? AND state = 'queued'
+            AND target_kind = 'native_stack'
+            AND target_stack_id = ?
+            AND state_reason LIKE 'Waiting for explicit target reconfirmation%'
+        `).run(
+          association.successor.stackId,
+          top.stack_number,
+          top.top_branch,
+          reason,
+          reason,
+          isoNow(now),
+          vanished.atlas_id,
+          association.source.stackId,
+        );
+        if (changed.changes > 0) {
+          addHistory.run(
+            vanished.atlas_id,
+            "target_converged",
+            observedAt,
+            reason,
+            JSON.stringify({ sourceStackId: association.source.stackId, successorStackId: association.successor.stackId, successorStackNumber: top.stack_number }),
+          );
+        }
+      }
+    }
 
     const addHold = database.query(`
       INSERT INTO reservation_conflict_holds (
@@ -2615,6 +2721,10 @@ export const createPersistence = (options: PersistenceOptions) => {
         result = { kind: "not_queued", session: current };
         return;
       }
+      if (current.admissionBlocked !== true || !current.stateReason?.startsWith("Waiting for explicit target reconfirmation")) {
+        result = { kind: "not_reconfirmation_required", session: current };
+        return;
+      }
       const timestamp = isoNow(now);
       database.query(`
         UPDATE sessions
@@ -2729,8 +2839,6 @@ export const createPersistence = (options: PersistenceOptions) => {
             AND r.state = 'held'
             AND r.session_id != ?
             AND (
-              r.evidence_unknown = 1
-              OR
               (${target.kind === "native_stack" ? "r.accepted_target_kind = 'native_stack' AND r.accepted_stack_id = ?" : "0"})
               OR (${target.kind === "standalone_parent" ? "r.accepted_target_kind = 'standalone_parent' AND r.accepted_parent_pull_request_id = ?" : "0"})
               OR (${target.kind === "native_stack" ? "sm.stack_id = ?" : "0"})
@@ -2783,6 +2891,30 @@ export const createPersistence = (options: PersistenceOptions) => {
             holdValues[1],
             holdValues[3],
           );
+          return;
+        }
+
+        // Unknown evidence pauses this Repository's non-default admission
+        // scope, but it never creates a durable hold for the candidate.
+        const unknownEvidence = database.query(`
+          SELECT 1
+          FROM stack_reservations r
+          WHERE r.repository_id = ?
+            AND r.state = 'held'
+            AND r.session_id != ?
+            AND r.evidence_unknown = 1
+          LIMIT 1
+        `).get(current.repositoryId, atlasId);
+        if (unknownEvidence) {
+          const unknownReason = "Waiting for GitHub verification of a retained reservation PR's current location; Atlas will not infer absence.";
+          database.query(`
+            UPDATE sessions
+            SET admission_blocked = 1,
+                state_reason = ?,
+                preparation_reason = ?,
+                updated_at = ?
+            WHERE atlas_id = ? AND state = 'queued'
+          `).run(unknownReason, unknownReason, isoNow(now), atlasId);
           return;
         }
       }
