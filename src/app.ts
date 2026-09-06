@@ -41,6 +41,7 @@ import {
   renderPullRequestsPage,
   renderPendingStartSessionPage,
   renderRepositoriesPage,
+  renderReservationReleaseForm,
   renderReservationReleasePage,
   renderSessionDetailPage,
   renderSessionViewerFragment,
@@ -771,6 +772,7 @@ export const createApp = (options: AppOptions) => {
     try {
       inventory = await scopedInventory();
     } catch (error) {
+      auth.restoreCsrf(stringField(form.csrf), identity.type === "browser" ? identity.sessionId : undefined);
       return c.text(githubFailureMessage(error), 503);
     }
 
@@ -808,6 +810,7 @@ export const createApp = (options: AppOptions) => {
     try {
       persistence.removeRepository(repositoryId);
     } catch {
+      auth.restoreCsrf(stringField(form.csrf), identity.type === "browser" ? identity.sessionId : undefined);
       return c.text("Atlas could not save the Repository removal.", 503);
     }
     preparation.enqueue();
@@ -1025,7 +1028,9 @@ export const createApp = (options: AppOptions) => {
       spec = persistence.getSpec(repositoryId, issueNumber) ?? knownSpec,
       existingSession?: Session,
     ) => {
+      if (status === 503) auth.restoreCsrf(stringField(form.csrf), identity.type === "browser" ? identity.sessionId : undefined);
       const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
+      const targetInvalid = status === 422 && (selectedTarget === undefined || (form.target !== undefined && typeof form.target !== "string"));
       const options = {
         action,
         csrfToken,
@@ -1043,7 +1048,7 @@ export const createApp = (options: AppOptions) => {
       if (isHtmx(c)) {
         return c.html(renderStartSessionForm({
           ...options,
-          targetOptions: renderStartTargetOptions(repository, targetPullRequests, targetStacks, targetAccessRefresh, targetPullRequestsRefresh, targetValue),
+          targetOptions: renderStartTargetOptions(repository, targetPullRequests, targetStacks, targetAccessRefresh, targetPullRequestsRefresh, targetValue, targetInvalid, "prompt-error"),
         }), status);
       }
       return c.html(renderStartSessionPage({
@@ -1055,6 +1060,7 @@ export const createApp = (options: AppOptions) => {
         pullRequests: targetPullRequests,
         stacks: targetStacks,
         pullRequestsRefresh: targetPullRequestsRefresh,
+        targetInvalid,
       }), status);
     };
 
@@ -1242,7 +1248,7 @@ export const createApp = (options: AppOptions) => {
   app.get("/sessions/:sessionId/target", async (c) => {
     const sessionId = c.req.param("sessionId");
     if (!sessionIdPattern.test(sessionId)) return c.text("Invalid Session ID", 400);
-    const session = persistence.getSession(sessionId);
+    let session = persistence.getSession(sessionId);
     if (!session) return c.text("Session not found", 404);
     const repository = persistence.getRepository(session.repositoryId);
     if (!repository) return c.text("Repository not found", 404);
@@ -1260,11 +1266,14 @@ export const createApp = (options: AppOptions) => {
     let pullRequestsRefresh = persistence.getRefreshState(repository.githubId, "pullRequests");
     let error: string | undefined;
     let status = 200;
+    let noLongerRequired = false;
     try {
       const refreshed = await refreshPullRequests(repository);
       pullRequests = persistence.listPullRequests(repository.githubId);
       stacks = persistence.listPrStacks(repository.githubId);
       pullRequestsRefresh = persistence.getRefreshState(repository.githubId, "pullRequests");
+      session = persistence.getSession(sessionId) ?? session;
+      noLongerRequired = !targetReconfirmationRequired(session);
       if (!refreshed.ok) {
         error = "Current GitHub target verification is unavailable. Atlas retained the queued Session and will not infer a replacement.";
         status = 503;
@@ -1276,6 +1285,7 @@ export const createApp = (options: AppOptions) => {
 
     const identity = c.get("auth");
     setPrivateHtmlHeaders(c);
+    if (noLongerRequired) return c.text("Target reconfirmation is no longer required for this Session.", 409);
     return c.html(renderTargetReconfirmationPage({
       csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
       repository,
@@ -1317,6 +1327,7 @@ export const createApp = (options: AppOptions) => {
     let stacks = persistence.listPrStacks(repository.githubId);
     let pullRequestsRefresh = persistence.getRefreshState(repository.githubId, "pullRequests");
     const renderError = (message: string, status: 409 | 422 | 503) => {
+      if (status === 503) auth.restoreCsrf(stringField(form.csrf), identity.type === "browser" ? identity.sessionId : undefined);
       setPrivateHtmlHeaders(c);
       const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
       const currentSession = persistence.getSession(sessionId) ?? session;
@@ -1328,6 +1339,7 @@ export const createApp = (options: AppOptions) => {
         persistence.getRefreshState(repository.githubId, "access"),
         pullRequestsRefresh,
         targetValue,
+        status === 422,
       );
       if (isHtmx(c)) return c.html(renderTargetReconfirmationForm({ action, csrfToken, targetOptions, error: message }), status);
       return c.html(renderTargetReconfirmationPage({
@@ -1339,8 +1351,12 @@ export const createApp = (options: AppOptions) => {
       }), status);
     };
 
-    if (session.state !== "queued") return c.text("Only a queued Session can be assigned a replacement target.", 409);
-    if (!targetReconfirmationRequired(session)) return c.text("Target reconfirmation is available only after the selected target disappears and Atlas requires explicit confirmation.", 409);
+    if (session.state !== "queued") {
+      return renderError("Only a queued Session can be assigned a replacement target. Review the current Session state.", 409);
+    }
+    if (!targetReconfirmationRequired(session)) {
+      return renderError("Target reconfirmation is available only after the selected target disappears and Atlas requires explicit confirmation.", 409);
+    }
     if (!target || !observations?.[targetValue]) return renderError("Choose a current target and confirm its fresh observation.", 422);
 
     let refreshed: SyncResult;
@@ -1399,8 +1415,8 @@ export const createApp = (options: AppOptions) => {
       return renderError("Atlas could not durably save the target reconfirmation. The queued Session remains unchanged.", 503);
     }
     if (result.kind === "not_found") return c.text("Session not found", 404);
-    if (result.kind === "not_queued") return c.text("Only a queued Session can be assigned a replacement target.", 409);
-    if (result.kind === "not_reconfirmation_required") return c.text("Target reconfirmation is no longer required for this Session.", 409);
+    if (result.kind === "not_queued") return renderError("Only a queued Session can be assigned a replacement target. Review the current Session state.", 409);
+    if (result.kind === "not_reconfirmation_required") return renderError("Target reconfirmation is no longer required for this Session.", 409);
     preparation.enqueue();
     return redirectToSession(c, result.session);
   });
@@ -1445,13 +1461,26 @@ export const createApp = (options: AppOptions) => {
       return c.text("Request rejected", 403);
     }
 
-    const renderError = (error: string, status: 409 | 503) => c.html(renderReservationReleasePage({
-      csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
-      repository,
-      session: persistence.getSession(sessionId) ?? session,
-      pullRequestsRefresh,
-      error,
-    }), status);
+    const renderError = (error: string, status: 409 | 422 | 503) => {
+      if (status === 503) auth.restoreCsrf(stringField(form.csrf), identity.type === "browser" ? identity.sessionId : undefined);
+      const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
+      const currentSession = persistence.getSession(sessionId) ?? session;
+      if (isHtmx(c) && status !== 503) {
+        return c.html(renderReservationReleaseForm({
+          action: `/sessions/${encodeURIComponent(sessionId)}/reservation/release`,
+          csrfToken,
+          session: currentSession,
+          error,
+        }), status);
+      }
+      return c.html(renderReservationReleasePage({
+        csrfToken,
+        repository,
+        session: currentSession,
+        pullRequestsRefresh,
+        error,
+      }), status);
+    };
 
     if (session.reservationState !== "held") return redirectToSession(c, session);
     if (!["succeeded", "failed", "interrupted"].includes(session.state)) {

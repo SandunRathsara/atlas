@@ -486,7 +486,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       throw new PreparationError("Waiting for the Spec to be open and labelled exactly `spec`.");
     }
     if (session.targetKind === "default" && session.targetBranch !== candidate.defaultBranch) {
-      throw new PreparationError("Waiting for explicit default-branch reconfirmation.");
+      throw new PreparationError("Waiting for explicit target reconfirmation; the Repository default branch changed.");
     }
 
     if (session.targetKind !== "default") {
