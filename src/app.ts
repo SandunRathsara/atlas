@@ -23,7 +23,6 @@ import {
   renderAddRepositoryPage,
   renderLoginForm,
   renderLoginPage,
-  renderPendingStartSessionFragment,
   renderPendingStartSessionPage,
   renderRepositoriesPage,
   renderSessionDetailPage,
@@ -436,7 +435,7 @@ export const createApp = (options: AppOptions) => {
         csrfToken: auth.issueCsrf(session.identity.sessionId),
       };
 
-      if (isHtmx(c)) return c.html(renderPendingStartSessionFragment(retryOptions), 200);
+      if (isHtmx(c)) c.header("HX-Retarget", "body");
       if (repository && spec) {
         return c.html(renderStartSessionPage({
           ...retryOptions,
