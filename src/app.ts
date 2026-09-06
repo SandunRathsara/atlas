@@ -64,6 +64,9 @@ const issueNumberPattern = /^[1-9]\d{0,9}$/;
 const submissionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const sessionIdPattern = /^ses_[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const targetSelectionPattern = /^(?:default|stack:\d+|parent:\d+)$/;
+// OpenCode's Session.ID schema only requires the `ses` prefix. The viewer
+// still authorizes the value by walking the canonical descendant tree.
+const openCodeSessionIdPattern = /^ses[^\u0000-\u001f\u007f]{0,255}$/u;
 const startSessionPathPattern = /^\/repositories\/([1-9]\d{0,19})\/specs\/([1-9]\d{0,9})\/sessions$/;
 const sessionFilters = new Set<SessionFilter>([
   "active",
@@ -217,6 +220,18 @@ const viewerCursor = (value: string | undefined) => {
   if (!value) return undefined;
   if (value.length > 2048 || /[\u0000-\u001f\u007f]/.test(value)) return null;
   return value;
+};
+
+const viewerShellId = (value: string | undefined) => {
+  if (value === undefined) return undefined;
+  return /^[A-Za-z0-9._:-]{1,256}$/u.test(value) ? value : null;
+};
+
+const viewerShellCursor = (value: string | undefined) => {
+  if (value === undefined || value === "") return undefined;
+  if (!/^\d{1,16}$/u.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 };
 
 const openCodeEventData = (event: unknown) => {
@@ -1286,9 +1301,13 @@ export const createApp = (options: AppOptions) => {
     if (!persistence.getRepository(session.repositoryId)) return c.text("Repository not found", 404);
 
     const childId = c.req.query("child");
-    if (childId !== undefined && !sessionIdPattern.test(childId)) return c.text("Invalid child Session ID", 400);
+    if (childId !== undefined && !openCodeSessionIdPattern.test(childId)) return c.text("Invalid child OpenCode Session ID", 400);
     const cursorValue = viewerCursor(c.req.query("cursor"));
     if (cursorValue === null) return c.text("Invalid message cursor", 400);
+    const shellId = viewerShellId(c.req.query("shell"));
+    if (shellId === null) return c.text("Invalid shell ID", 400);
+    const shellCursor = viewerShellCursor(c.req.query("shellCursor"));
+    if (shellCursor === null || (!shellId && shellCursor !== undefined)) return c.text("Invalid shell output cursor", 400);
     const limit = viewerLimit(c.req.query("limit"));
     if (limit === undefined) return c.text("Invalid viewer page size", 400);
 
@@ -1297,6 +1316,8 @@ export const createApp = (options: AppOptions) => {
       projection = await sessionViewer.hydrate(session, {
         childId,
         cursor: cursorValue,
+        shellId,
+        shellCursor,
         limit,
       });
     } catch (error) {
