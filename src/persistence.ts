@@ -172,6 +172,14 @@ export type SessionTarget = {
   parentPullRequestNumber?: string | null;
 };
 
+export type PublicationStatus =
+  | "not_observed"
+  | "unverified"
+  | "ambiguous"
+  | "identified"
+  | "qualifying"
+  | "released";
+
 export type ResolvedTarget = {
   kind: TargetKind;
   stackId: string | null;
@@ -219,6 +227,12 @@ export type Session = {
   baseBranch: string | null;
   baseSha: string | null;
   workingBranch: string | null;
+  resultPullRequestId: string | null;
+  resultPullRequestNumber: string | null;
+  resultPullRequestUrl: string | null;
+  publicationStatus: PublicationStatus;
+  publicationReason: string | null;
+  publicationObservedAt: string | null;
   resolvedStackId: string | null;
   resolvedStackNumber: string | null;
   resolvedParentPullRequestId: string | null;
@@ -264,6 +278,12 @@ export type QueueSessionResult =
   | { kind: "existing"; session: Session }
   | { kind: "conflict"; session: Session }
   | { kind: "unfinished"; session: Session };
+
+export type ReservationReleaseResult =
+  | { kind: "released"; session: Session }
+  | { kind: "already_released"; session: Session }
+  | { kind: "not_found"; session: Session }
+  | { kind: "not_terminal"; session: Session };
 
 export type PreparationIntent = {
   directory: string;
@@ -397,6 +417,12 @@ type SessionRow = {
   base_branch: string | null;
   base_sha: string | null;
   working_branch: string | null;
+  result_pull_request_id: string | null;
+  publication_status: PublicationStatus;
+  publication_reason: string | null;
+  publication_observed_at: string | null;
+  publication_pr_number?: string | null;
+  publication_pr_url?: string | null;
   resolved_stack_id: string | null;
   resolved_stack_number: string | null;
   resolved_parent_pull_request_id: string | null;
@@ -860,6 +886,19 @@ const migrations = [
         ON session_history (session_id, history_id);
     `,
   },
+  {
+    version: 11,
+    sql: `
+      ALTER TABLE sessions ADD COLUMN result_pull_request_id TEXT REFERENCES pull_requests (github_id);
+      ALTER TABLE sessions ADD COLUMN publication_status TEXT NOT NULL DEFAULT 'not_observed'
+        CHECK (publication_status IN ('not_observed', 'unverified', 'ambiguous', 'identified', 'qualifying', 'released'));
+      ALTER TABLE sessions ADD COLUMN publication_reason TEXT;
+      ALTER TABLE sessions ADD COLUMN publication_observed_at TEXT;
+      CREATE INDEX sessions_result_pull_request_idx
+        ON sessions (result_pull_request_id)
+        WHERE result_pull_request_id IS NOT NULL;
+    `,
+  },
 ];
 
 const isoNow = (now: () => number) => new Date(now()).toISOString();
@@ -999,6 +1038,12 @@ const toSession = (row: SessionRow): Session => ({
   baseBranch: row.base_branch,
   baseSha: row.base_sha,
   workingBranch: row.working_branch,
+  resultPullRequestId: row.result_pull_request_id,
+  resultPullRequestNumber: row.publication_pr_number ?? null,
+  resultPullRequestUrl: row.publication_pr_url ?? null,
+  publicationStatus: row.publication_status,
+  publicationReason: row.publication_reason,
+  publicationObservedAt: row.publication_observed_at,
   resolvedStackId: row.resolved_stack_id,
   resolvedStackNumber: row.resolved_stack_number,
   resolvedParentPullRequestId: row.resolved_parent_pull_request_id,
@@ -1505,6 +1550,228 @@ export const createPersistence = (options: PersistenceOptions) => {
     return replace();
   };
 
+  type PublicationPullRequestRow = {
+    github_id: string;
+    number: string;
+    html_url: string;
+    state: string;
+    draft: number;
+    merged_at: string | null;
+    head_ref: string;
+    base_ref: string;
+    is_current: number;
+    stack_id: string | null;
+    stack_position: number | null;
+  };
+
+  const publicationPullRequest = (repositoryId: string, pullRequestId: string) => database.query(`
+    SELECT p.github_id, p.number, p.html_url, p.state, p.draft, p.merged_at, p.head_ref, p.base_ref, p.is_current,
+           s.github_id AS stack_id, sm.position AS stack_position
+    FROM pull_requests p
+    LEFT JOIN stack_members sm ON sm.pull_request_id = p.github_id
+    LEFT JOIN pr_stacks s ON s.github_id = sm.stack_id AND s.is_current = 1
+    WHERE p.repository_id = ? AND p.github_id = ?
+  `).get(repositoryId, pullRequestId) as PublicationPullRequestRow | null;
+
+  const publicationBranchMatches = (repositoryId: string, branch: string) => database.query(`
+    SELECT p.github_id, p.number, p.html_url, p.state, p.draft, p.merged_at, p.head_ref, p.base_ref, p.is_current,
+           s.github_id AS stack_id, sm.position AS stack_position
+    FROM pull_requests p
+    LEFT JOIN stack_members sm ON sm.pull_request_id = p.github_id
+    LEFT JOIN pr_stacks s ON s.github_id = sm.stack_id AND s.is_current = 1
+    WHERE p.repository_id = ? AND p.head_ref = ?
+      AND (p.head_repository_id = ? OR (p.head_repository_id IS NULL AND p.merged_at IS NOT NULL))
+    ORDER BY p.is_current DESC, p.github_id
+  `).all(repositoryId, branch, repositoryId) as PublicationPullRequestRow[];
+
+  const stackPosition = (stackId: string, pullRequestId: string) => {
+    const row = database.query(`
+      SELECT position FROM stack_members WHERE stack_id = ? AND pull_request_id = ?
+    `).get(stackId, pullRequestId) as { position: number } | null;
+    return row?.position ?? null;
+  };
+
+  const publicationQualification = (session: SessionRow, result: PublicationPullRequestRow) => {
+    if (result.draft === 1) return "The identified publication Pull request is still a draft; the reservation remains held.";
+    if (result.state !== "open" && result.merged_at === null) return "The identified publication Pull request is closed without a confirmed merge; the reservation remains held.";
+
+    if (session.target_kind === "default") {
+      if (result.stack_id !== null) return "The default-branch owner's publication is not a verified standalone parent; the first-child exception does not apply.";
+      if (result.base_ref !== session.target_branch) return "The default-branch owner's publication does not target the reserved default branch; the first-child exception does not apply.";
+      return undefined;
+    }
+
+    const parentId = session.resolved_parent_pull_request_id ?? session.target_parent_pull_request_id;
+    if (!parentId || !result.stack_id) return "The identified publication Pull request is not in a verified native stack above its preparation parent.";
+    const parentPosition = stackPosition(result.stack_id, parentId);
+    if (parentPosition === null || result.stack_position === null || result.stack_position <= parentPosition) {
+      return "The identified publication Pull request is not verified above the preparation parent in its current native stack.";
+    }
+    return undefined;
+  };
+
+  const terminalExecution = (state: SessionState) =>
+    state === "succeeded" || state === "failed" || state === "interrupted";
+
+  const publicationEvidence = (status: PublicationStatus, resultId: string | null, reason: string, observedAt: string) =>
+    JSON.stringify({ status, resultPullRequestId: resultId, reason, observedAt });
+
+  const reconcilePublications = (repositoryId: string, observedAt: string) => {
+    const rows = database.query(`
+      SELECT * FROM sessions
+      WHERE repository_id = ? AND working_branch IS NOT NULL
+      ORDER BY submission_order
+    `).all(repositoryId) as SessionRow[];
+    const updateSession = database.query(`
+      UPDATE sessions
+      SET result_pull_request_id = COALESCE(?, result_pull_request_id),
+          publication_status = ?,
+          publication_reason = ?,
+          publication_observed_at = ?,
+          updated_at = ?
+      WHERE atlas_id = ?
+    `);
+    const addResultEvidence = database.query(`
+      INSERT OR IGNORE INTO reservation_prs (reservation_id, pull_request_id, evidence_role, observed_at)
+      VALUES (?, ?, 'result', ?)
+    `);
+    const reservationForSession = database.query(`
+      SELECT reservation_id, state FROM stack_reservations WHERE session_id = ?
+    `);
+    const addDefaultReservation = database.query(`
+      INSERT INTO stack_reservations (
+        reservation_id, session_id, repository_id,
+        original_target_kind, original_parent_pull_request_id, original_parent_pull_request_number,
+        accepted_target_kind, accepted_parent_pull_request_id, accepted_parent_pull_request_number,
+        state, held_at, publication_evidence
+      ) VALUES (?, ?, ?, 'standalone_parent', ?, ?, 'standalone_parent', ?, ?, 'held', ?, ?)
+    `);
+    const addHistory = database.query(`
+      INSERT INTO session_history (session_id, event_kind, occurred_at, reason, details_json)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    const updateEvidence = database.query(`
+      UPDATE stack_reservations
+      SET publication_evidence = ?
+      WHERE reservation_id = ? AND state = 'held'
+    `);
+    const release = database.query(`
+      UPDATE stack_reservations
+      SET state = 'released', released_at = ?, release_kind = 'automatic', release_reason = ?, publication_evidence = ?
+      WHERE reservation_id = ? AND state = 'held'
+    `);
+    const deleteConflictHolds = database.query(
+      "DELETE FROM reservation_conflict_holds WHERE reservation_id = ?",
+    );
+
+    for (const session of rows) {
+      if (session.publication_status === "released") continue;
+
+      let result = session.result_pull_request_id
+        ? publicationPullRequest(repositoryId, session.result_pull_request_id)
+        : null;
+      let resultId = session.result_pull_request_id;
+      let status: PublicationStatus = session.publication_status;
+      let reason = session.publication_reason ?? "Publication has not been checked yet.";
+
+      if (!resultId) {
+        if (status === "ambiguous") continue;
+        const matches = publicationBranchMatches(repositoryId, session.working_branch!);
+        if (matches.length > 1) {
+          status = "ambiguous";
+          reason = "Publication could not be verified: multiple Pull requests use the unique working branch; Atlas will not choose one.";
+          updateSession.run(null, status, reason, observedAt, isoNow(now), session.atlas_id);
+          addHistory.run(session.atlas_id, "publication_ambiguous", observedAt, reason, JSON.stringify({ branch: session.working_branch }));
+          continue;
+        }
+        const match = matches[0];
+        if (!match || match.is_current !== 1) {
+          status = "unverified";
+          reason = "Publication could not be verified: no current Pull request uses the unique working branch in this Repository.";
+          updateSession.run(null, status, reason, observedAt, isoNow(now), session.atlas_id);
+          continue;
+        }
+        result = match;
+        resultId = match.github_id;
+        status = "identified";
+        reason = `Publication identified as Pull request #${match.number} by Repository and the unique working branch.`;
+        updateSession.run(resultId, status, reason, observedAt, isoNow(now), session.atlas_id);
+        addHistory.run(session.atlas_id, "publication_identified", observedAt, reason, JSON.stringify({ pullRequestId: resultId, branch: session.working_branch }));
+      }
+
+      if (!resultId || !result || result.is_current !== 1) {
+        status = status === "ambiguous" ? status : "identified";
+        reason = "The permanently identified publication is not in the current complete Pull request projection; Atlas will not replace it.";
+        updateSession.run(resultId, status, reason, observedAt, isoNow(now), session.atlas_id);
+        continue;
+      }
+
+      let reservation = reservationForSession.get(session.atlas_id) as { reservation_id: string; state: "held" | "released" } | null;
+      if (!reservation && session.target_kind === "default") {
+        const reservationId = `res_${crypto.randomUUID()}`;
+        const evidence = publicationEvidence("identified", resultId, reason, observedAt);
+        addDefaultReservation.run(
+          reservationId,
+          session.atlas_id,
+          repositoryId,
+          resultId,
+          result.number,
+          resultId,
+          result.number,
+          observedAt,
+          evidence,
+        );
+        addResultEvidence.run(reservationId, resultId, observedAt);
+        addHistory.run(
+          session.atlas_id,
+          "publication_reservation_created",
+          observedAt,
+          "A default-branch Session published a standalone parent; its first-child target is reserved until owner release.",
+          JSON.stringify({ reservationId, resultPullRequestId: resultId }),
+        );
+        reservation = { reservation_id: reservationId, state: "held" };
+      }
+
+      if (reservation && reservation.state === "held") {
+        addResultEvidence.run(reservation.reservation_id, resultId, observedAt);
+      }
+
+      const qualificationReason = publicationQualification(session, result);
+      if (qualificationReason) {
+        status = "identified";
+        reason = qualificationReason;
+        updateSession.run(resultId, status, reason, observedAt, isoNow(now), session.atlas_id);
+        if (reservation?.state === "held") {
+          updateEvidence.run(publicationEvidence(status, resultId, reason, observedAt), reservation.reservation_id);
+        }
+        continue;
+      }
+
+      if (!terminalExecution(session.state)) {
+        status = "qualifying";
+        reason = "Fresh GitHub evidence shows a qualifying publication; the reservation remains held until confirmed terminal execution.";
+        updateSession.run(resultId, status, reason, observedAt, isoNow(now), session.atlas_id);
+        if (reservation?.state === "held") updateEvidence.run(publicationEvidence(status, resultId, reason, observedAt), reservation.reservation_id);
+        continue;
+      }
+
+      if (reservation?.state !== "held") {
+        status = "qualifying";
+        reason = "Fresh publication is qualifying; no held reservation remains for this Session.";
+        updateSession.run(resultId, status, reason, observedAt, isoNow(now), session.atlas_id);
+        continue;
+      }
+
+      status = "released";
+      reason = "Reservation automatically released after confirmed terminal execution and fresh qualifying publication.";
+      const evidence = publicationEvidence(status, resultId, reason, observedAt);
+      release.run(observedAt, reason, evidence, reservation.reservation_id);
+      deleteConflictHolds.run(reservation.reservation_id);
+      updateSession.run(resultId, status, reason, observedAt, isoNow(now), session.atlas_id);
+      addHistory.run(session.atlas_id, "reservation_released", observedAt, reason, JSON.stringify({ reservationId: reservation.reservation_id, releaseKind: "automatic", resultPullRequestId: resultId }));
+    }
+  };
+
   const replacePullRequests = (
     repositoryId: string,
     pullRequests: PullRequestInput[],
@@ -1628,6 +1895,9 @@ export const createPersistence = (options: PersistenceOptions) => {
         }
       }
 
+      // A complete Pull request read is the fresh publication evidence boundary.
+      reconcilePublications(repositoryId, observedAt);
+
       ensureRefreshState(repositoryId, "pullRequests");
       if (generation === undefined) {
         database.query(`
@@ -1717,10 +1987,13 @@ export const createPersistence = (options: PersistenceOptions) => {
 
   const sessionSelect = `
     SELECT s.*,
+           publication_pr.number AS publication_pr_number,
+           publication_pr.html_url AS publication_pr_url,
            r.reservation_id,
            r.state AS reservation_state,
            r.release_reason AS reservation_reason
     FROM sessions s
+    LEFT JOIN pull_requests publication_pr ON publication_pr.github_id = s.result_pull_request_id
     LEFT JOIN stack_reservations r ON r.session_id = s.atlas_id
   `;
 
@@ -2438,6 +2711,61 @@ export const createPersistence = (options: PersistenceOptions) => {
     return getSession(atlasId);
   };
 
+  const releaseReservation = (atlasId: string, reason = "Reservation explicitly released after confirmed terminal execution; publication was not treated as verified."): ReservationReleaseResult => {
+    let result!: ReservationReleaseResult;
+    const release = database.transaction(() => {
+      const current = getSession(atlasId);
+      if (!current) throw new Error("Session not found");
+      if (!terminalExecution(current.state)) {
+        result = { kind: "not_terminal", session: current };
+        return;
+      }
+
+      const reservation = database.query(`
+        SELECT reservation_id, state FROM stack_reservations WHERE session_id = ?
+      `).get(atlasId) as { reservation_id: string; state: "held" | "released" } | null;
+      if (!reservation) {
+        result = { kind: "not_found", session: current };
+        return;
+      }
+      if (reservation.state === "released") {
+        result = { kind: "already_released", session: current };
+        return;
+      }
+
+      const timestamp = isoNow(now);
+      database.query(`
+        UPDATE stack_reservations
+        SET state = 'released', released_at = ?, release_kind = 'explicit', release_reason = ?,
+            publication_evidence = ?
+        WHERE reservation_id = ? AND state = 'held'
+      `).run(
+        timestamp,
+        reason,
+        publicationEvidence("released", current.resultPullRequestId, reason, timestamp),
+        reservation.reservation_id,
+      );
+      database.query("DELETE FROM reservation_conflict_holds WHERE reservation_id = ?").run(reservation.reservation_id);
+      database.query(`
+        UPDATE sessions
+        SET publication_status = 'released', publication_reason = ?, publication_observed_at = ?, updated_at = ?
+        WHERE atlas_id = ?
+      `).run(reason, timestamp, timestamp, atlasId);
+      database.query(`
+        INSERT INTO session_history (session_id, event_kind, occurred_at, reason, details_json)
+        VALUES (?, 'reservation_released', ?, ?, ?)
+      `).run(
+        atlasId,
+        timestamp,
+        reason,
+        JSON.stringify({ reservationId: reservation.reservation_id, releaseKind: "explicit", resultPullRequestId: current.resultPullRequestId }),
+      );
+      result = { kind: "released", session: getSession(atlasId)! };
+    });
+    release.immediate();
+    return result;
+  };
+
   const listOpenCodeSessions = () => {
     const rows = database.query(`
       ${sessionSelect}
@@ -2539,6 +2867,7 @@ export const createPersistence = (options: PersistenceOptions) => {
     markHandoffUnconfirmed,
     markOpenCodeStale,
     reconcileOpenCode,
+    releaseReservation,
     listOpenCodeSessions,
     getSessionByOpenCodeSessionId,
     listSessions,
