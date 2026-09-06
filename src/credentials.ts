@@ -23,11 +23,6 @@ const DEFAULT_API_VERSION = "2026-03-10";
 const MAX_REQUEST_BYTES = 64 * 1024;
 const TOKEN_RENEWAL_MARGIN_MS = 5 * 60 * 1000;
 
-export const DEFAULT_AUTHORIZED_REPOSITORIES = [
-  "SandunRathsara/atlas",
-  "SandunRathsara/atlas-issue-25-live-acceptance",
-] as const;
-
 export class CredentialError extends Error {
   constructor(message: string) {
     super(message);
@@ -316,7 +311,9 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
   const keyPath = options.keyPath ?? DEFAULT_KEY;
   const apiUrl = safeApiUrl(options.apiUrl ?? process.env.ATLAS_GITHUB_API_URL ?? DEFAULT_API_URL);
   const apiVersion = options.apiVersion ?? DEFAULT_API_VERSION;
-  const allowed = new Set((options.authorizedRepositories ?? DEFAULT_AUTHORIZED_REPOSITORIES).map(normalizedRepository));
+  const allowed = options.authorizedRepositories
+    ? new Set(options.authorizedRepositories.map(normalizedRepository))
+    : undefined;
   const fetcher = options.fetcher ?? fetch;
   const tokenCache = new Map<string, CachedToken>();
   let installationTokenCache: CachedToken | undefined;
@@ -331,13 +328,21 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
     const scope = registry.scopes
       .filter((entry) => isWithin(canonicalPath(entry.directory), requested))
       .sort((left, right) => right.directory.length - left.directory.length)[0];
-    if (!scope || !allowed.has(normalizedRepository(scope.fullName))) {
+    if (!scope || (allowed && !allowed.has(normalizedRepository(scope.fullName)))) {
       throw new CredentialError("Session directory is not registered for an authorized Repository");
     }
     return scope;
   };
 
-  const mintAppToken = async (repositoryIds?: string[]) => {
+  const mintAppToken = async (
+    repositoryIds?: string[],
+    permissions: Record<string, "read" | "write"> = {
+      contents: "read",
+      metadata: "read",
+      issues: "read",
+      pull_requests: "read",
+    },
+  ) => {
     const env = readGithubEnvFile(credentialsPath);
     const appId = env.ATLAS_GITHUB_APP_ID;
     const installationId = env.ATLAS_GITHUB_INSTALLATION_ID;
@@ -365,12 +370,7 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
         },
         body: JSON.stringify({
           ...(numericRepositoryIds ? { repository_ids: numericRepositoryIds } : {}),
-          permissions: {
-            contents: "read",
-            metadata: "read",
-            issues: "read",
-            pull_requests: "read",
-          },
+          permissions,
         }),
         redirect: "manual",
       });
@@ -397,13 +397,24 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
     if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now() + TOKEN_RENEWAL_MARGIN_MS) {
       throw new CredentialError("GitHub token supplier returned an already-expiring token");
     }
+    if (repositoryIds) {
+      const returnedPermissions = (payload as Record<string, unknown>).permissions;
+      if (!returnedPermissions || typeof returnedPermissions !== "object" || Array.isArray(returnedPermissions)) {
+        throw new CredentialError("GitHub installation token permissions could not be verified");
+      }
+      const contents = (returnedPermissions as Record<string, unknown>).contents;
+      const pullRequests = (returnedPermissions as Record<string, unknown>).pull_requests;
+      if (contents !== "write" || pullRequests !== "write") {
+        throw new CredentialError("GitHub App installation lacks required Repository write permissions");
+      }
+    }
     const value = { token, expiresAt, expiresAtMs };
     return value;
   };
 
   const mintToken = async (scope: CredentialScope) => {
     const repository = normalizedRepository(scope.fullName);
-    if (!allowed.has(repository)) throw new CredentialError("Repository is outside the authorized preparation scope");
+    if (allowed && !allowed.has(repository)) throw new CredentialError("Repository is outside the authorized preparation scope");
     const cached = tokenCache.get(repository);
     if (cached && cached.expiresAtMs > Date.now() + TOKEN_RENEWAL_MARGIN_MS) return cached;
 
@@ -414,7 +425,12 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
       return value;
     }
 
-    const value = await mintAppToken([scope.repositoryId]);
+    const value = await mintAppToken([scope.repositoryId], {
+      contents: "write",
+      metadata: "read",
+      issues: "read",
+      pull_requests: "write",
+    });
     tokenCache.set(repository, value);
     return value;
   };
@@ -497,7 +513,7 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
 
   const registerScope = (scope: CredentialScope) => {
     if (!isAbsolute(scope.directory)) throw new CredentialError("Session directory must be absolute");
-    if (!allowed.has(normalizedRepository(scope.fullName))) {
+    if (allowed && !allowed.has(normalizedRepository(scope.fullName))) {
       throw new CredentialError("Repository is outside the authorized preparation scope");
     }
     const directory = canonicalPath(scope.directory);

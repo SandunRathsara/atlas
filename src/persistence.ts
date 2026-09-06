@@ -1200,24 +1200,34 @@ export const createPersistence = (options: PersistenceOptions) => {
       if (held.count >= globalCapacity) return;
 
       const eligible = database.query(`
+        WITH locally_eligible AS (
+          SELECT s.atlas_id, s.submission_order
+          FROM sessions s
+          JOIN repositories r ON r.github_id = s.repository_id
+          JOIN specs sp ON sp.repository_id = s.repository_id AND sp.github_id = s.spec_github_id
+            AND sp.issue_number = s.spec_issue_number
+          WHERE s.state = 'queued'
+            AND r.removed_at IS NULL
+            AND r.access_status = 'available'
+            AND r.archived = 0
+            AND r.disabled = 0
+            AND r.has_issues = 1
+            AND r.default_branch IS NOT NULL
+            AND r.default_branch = s.target_branch
+            AND sp.is_current = 1
+            AND sp.state = 'open'
+            AND sp.has_spec_label = 1
+            AND sp.is_pull_request = 0
+        )
         SELECT s.*
         FROM sessions s
-        JOIN repositories r ON r.github_id = s.repository_id
-        JOIN specs sp ON sp.repository_id = s.repository_id AND sp.github_id = s.spec_github_id
-          AND sp.issue_number = s.spec_issue_number
+        JOIN locally_eligible candidate ON candidate.atlas_id = s.atlas_id
         WHERE s.atlas_id = ?
-          AND s.state = 'queued'
-          AND r.removed_at IS NULL
-          AND r.access_status = 'available'
-          AND r.archived = 0
-          AND r.disabled = 0
-          AND r.has_issues = 1
-          AND r.default_branch IS NOT NULL
-          AND r.default_branch = s.target_branch
-          AND sp.is_current = 1
-          AND sp.state = 'open'
-          AND sp.has_spec_label = 1
-          AND sp.is_pull_request = 0
+          AND NOT EXISTS (
+            SELECT 1
+            FROM locally_eligible older
+            WHERE older.submission_order < candidate.submission_order
+          )
       `).get(atlasId) as SessionRow | null;
       if (!eligible) return;
 
@@ -1277,6 +1287,26 @@ export const createPersistence = (options: PersistenceOptions) => {
       SET state_reason = ?, preparation_reason = ?, updated_at = ?
       WHERE atlas_id = ? AND state = 'queued'
     `).run(reason, reason, isoNow(now), atlasId);
+    return getSession(atlasId);
+  };
+
+  const requeuePreparation = (atlasId: string, reason: string) => {
+    const requeue = database.transaction(() => {
+      database.query(`
+        UPDATE sessions
+        SET state = 'queued',
+            state_reason = ?,
+            preparation_checkpoint = 'queued',
+            preparation_reason = ?,
+            prepared_at = NULL,
+            execution_slot_held = 0,
+            updated_at = ?
+        WHERE atlas_id = ?
+          AND state = 'preparing'
+          AND preparation_checkpoint = 'intent_saved'
+      `).run(reason, reason, isoNow(now), atlasId);
+    });
+    requeue.immediate();
     return getSession(atlasId);
   };
 
@@ -1359,6 +1389,7 @@ export const createPersistence = (options: PersistenceOptions) => {
     claimPreparation,
     setPreparationCheckpoint,
     setQueuedSessionReason,
+    requeuePreparation,
     failPreparation,
     listSessions,
     listSessionsForSpec,

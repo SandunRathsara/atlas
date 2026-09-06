@@ -11,6 +11,7 @@
     "check": "tsc --noEmit",
     "verify:issue25": "bun scripts/verify-issue25.ts",
     "verify:issue27": "bun scripts/verify-issue27.ts",
+    "verify:issue27-fixes": "bun scripts/verify-issue27-fixes.ts",
     "dev": "bun run build:css && bun --watch src/server.ts",
     "start": "bun run build:css && bun src/server.ts"
   },

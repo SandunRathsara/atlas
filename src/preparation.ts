@@ -1,11 +1,9 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, chmodSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, statfsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, join, resolve } from "node:path";
 import type { GitHubClient, GitHubRepository } from "./github.ts";
 import {
   createCredentialBoundary,
-  CredentialError,
-  DEFAULT_AUTHORIZED_REPOSITORIES,
   type CredentialBoundary,
   type CredentialScope,
 } from "./credentials.ts";
@@ -19,6 +17,7 @@ import type {
 const DEFAULT_SESSION_ROOT = "/var/lib/atlas/sessions";
 const DEFAULT_CAPACITY = 1;
 const DEFAULT_POLL_MS = 2_000;
+const DEFAULT_MIN_FREE_BYTES = 1;
 const SHA_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/iu;
 const REPOSITORY_PART = /^[A-Za-z0-9_.-]+$/u;
 const BRANCH_PATTERN = /^(?!\.)(?!.*\.\.)(?!.*\/{2})(?!.*@\{)(?!.*\.$)(?!.*\/$)[A-Za-z0-9._/-]+$/u;
@@ -36,6 +35,7 @@ type PreparationOptions = {
   globalCapacity?: number;
   pollMs?: number;
   gitBinary?: string;
+  minFreeBytes?: number;
   credentials?: CredentialBoundary;
   credentialsPath?: string;
   credentialRegistryPath?: string;
@@ -45,6 +45,8 @@ type PreparationOptions = {
 };
 
 class PreparationError extends Error {}
+
+class StorageError extends Error {}
 
 type CommandResult = {
   exitCode: number;
@@ -74,6 +76,15 @@ const parsePoll = (value: number | undefined) => {
     throw new Error("Preparation polling interval must be between 100 and 60000 milliseconds");
   }
   return value;
+};
+
+const parseMinFreeBytes = (value: string | undefined, fallback: number) => {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error("ATLAS_MIN_FREE_BYTES must be a positive integer");
+  }
+  return parsed;
 };
 
 const shellQuote = (value: string) => `'${value.replace(/'/gu, `'"'"'`)}'`;
@@ -170,8 +181,11 @@ export const createPreparationService = (options: PreparationOptions) => {
   const capacity = options.globalCapacity ?? parseCapacity(process.env.ATLAS_GLOBAL_CAPACITY, DEFAULT_CAPACITY);
   if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 64) throw new Error("Global preparation capacity is invalid");
   const pollMs = parsePoll(options.pollMs);
+  const minFreeBytes = options.minFreeBytes ?? parseMinFreeBytes(process.env.ATLAS_MIN_FREE_BYTES, DEFAULT_MIN_FREE_BYTES);
   const gitBinary = options.gitBinary ?? process.env.ATLAS_GIT_BINARY ?? Bun.which("git") ?? "/usr/bin/git";
-  const authorized = new Set((options.authorizedRepositories ?? DEFAULT_AUTHORIZED_REPOSITORIES).map((value) => value.toLocaleLowerCase("en-US")));
+  const authorized = options.authorizedRepositories
+    ? new Set(options.authorizedRepositories.map((value) => value.toLocaleLowerCase("en-US")))
+    : undefined;
   const credentials = options.credentials ?? createCredentialBoundary({
     credentialsPath: options.credentialsPath ?? process.env.ATLAS_GITHUB_ENV_PATH,
     registryPath: options.credentialRegistryPath ?? process.env.ATLAS_CREDENTIAL_REGISTRY_PATH,
@@ -188,6 +202,35 @@ export const createPreparationService = (options: PreparationOptions) => {
   let pendingWake = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
+  const ensureStorageReady = () => {
+    try {
+      mkdirSync(sessionRoot, { recursive: true, mode: 0o700 });
+      const stat = lstatSync(sessionRoot);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new StorageError("Waiting for private Session storage.");
+      if ((stat.mode & 0o077) !== 0) chmodSync(sessionRoot, 0o700);
+      accessSync(sessionRoot, constants.R_OK | constants.W_OK | constants.X_OK);
+      const filesystem = statfsSync(sessionRoot);
+      const availableBytes = Number(filesystem.bavail) * Number(filesystem.bsize);
+      if (!Number.isFinite(availableBytes) || availableBytes < minFreeBytes) {
+        throw new StorageError("Waiting for Session storage free space to recover.");
+      }
+    } catch (error) {
+      if (error instanceof StorageError) throw error;
+      throw new StorageError("Waiting for Session storage to become available.");
+    }
+  };
+
+  const storageIssue = () => {
+    try {
+      ensureStorageReady();
+      return undefined;
+    } catch (error) {
+      return error instanceof StorageError
+        ? error.message
+        : "Waiting for Session storage to become available.";
+    }
+  };
+
   const setReason = (session: Session, reason: string) => {
     try {
       options.persistence.setQueuedSessionReason(session.atlasId, reason);
@@ -199,7 +242,7 @@ export const createPreparationService = (options: PreparationOptions) => {
   const verifyTarget = async (session: Session) => {
     const existing = options.persistence.getRepository(session.repositoryId);
     if (!existing) throw new PreparationError("Waiting for Repository verification.");
-    if (!authorized.has(existing.fullName.toLocaleLowerCase("en-US"))) {
+    if (authorized && !authorized.has(existing.fullName.toLocaleLowerCase("en-US"))) {
       throw new PreparationError("Waiting: this Repository is outside the authorized preparation scope.");
     }
     if (!options.github.getBranchRef) throw new PreparationError("Waiting for GitHub default-branch verification.");
@@ -212,7 +255,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       throw new PreparationError("Waiting: GitHub access to this Repository could not be verified.");
     }
     const fullName = safeRepositoryName(candidate);
-    if (!authorized.has(fullName.toLocaleLowerCase("en-US"))) {
+    if (authorized && !authorized.has(fullName.toLocaleLowerCase("en-US"))) {
       throw new PreparationError("Waiting: this Repository is outside the authorized preparation scope.");
     }
     if (!candidate.defaultBranch || candidate.defaultBranch !== session.targetBranch) {
@@ -256,6 +299,22 @@ export const createPreparationService = (options: PreparationOptions) => {
     }
   };
 
+  const pauseHeld = (session: Session, reason: string) => {
+    const current = options.persistence.getSession(session.atlasId) ?? session;
+    if (current.state !== "preparing" || current.preparationCheckpoint === "prepared") return;
+    checkpoint(current.atlasId, current.preparationCheckpoint, reason, reason);
+  };
+
+  const requeueBeforeClone = (session: Session, reason: string) => {
+    try {
+      const current = options.persistence.requeuePreparation(session.atlasId, reason);
+      if (current?.state === "queued") return;
+    } catch {
+      // Keep the held intent when the durable release is uncertain.
+    }
+    pauseHeld(session, reason);
+  };
+
   const finishBranch = async (session: Session, repository: Repository) => {
     if (!session.directory || !session.baseSha || !session.workingBranch || !session.baseBranch) {
       checkpoint(session.atlasId, "start_unconfirmed", "Preparation intent is incomplete; manual recovery is required.", "Start unconfirmed; preparation intent is incomplete.");
@@ -295,7 +354,9 @@ export const createPreparationService = (options: PreparationOptions) => {
       }
       checkpoint(session.atlasId, "prepared", "Full clone and unique local working branch are ready; OpenCode handoff has not started.");
     } catch (error) {
-      if (error instanceof PreparationError) failSetup(session.atlasId, error.message);
+      const reason = error instanceof StorageError ? error.message : storageIssue();
+      if (reason) pauseHeld(session, reason);
+      else if (error instanceof PreparationError) failSetup(session.atlasId, error.message);
       else checkpoint(session.atlasId, "start_unconfirmed", "Local preparation stopped after an uncertain filesystem operation.", "Start unconfirmed; inspect the preserved local resources.");
     }
   };
@@ -311,19 +372,19 @@ export const createPreparationService = (options: PreparationOptions) => {
       credentials.registerScope(scope);
       await credentials.assertReady(scope);
     } catch (error) {
-      failSetup(session.atlasId, error instanceof CredentialError ? "Repository-scoped GitHub credentials are unavailable." : "Credential scope could not be established safely.");
+      requeueBeforeClone(session, "Waiting for the GitHub credential supplier or required Repository-scoped credentials; preparation is paused.");
       return;
     }
 
     try {
-      mkdirSync(sessionRoot, { recursive: true, mode: 0o700 });
-      chmodSync(sessionRoot, 0o700);
+      ensureStorageReady();
       if (existsSync(session.directory)) {
         const stat = lstatSync(session.directory);
         if (!stat.isDirectory() || readdirSync(session.directory).length > 0) throw new PreparationError("The unique Session directory already exists and is not empty.");
       }
     } catch (error) {
-      failSetup(session.atlasId, error instanceof PreparationError ? error.message : "Session storage could not be prepared safely.");
+      if (error instanceof PreparationError) failSetup(session.atlasId, error.message);
+      else requeueBeforeClone(session, error instanceof StorageError ? error.message : "Waiting for Session storage to become available.");
       return;
     }
 
@@ -357,7 +418,9 @@ export const createPreparationService = (options: PreparationOptions) => {
       if (!checkpoint(session.atlasId, "clone_complete", "Full clone completed and matches the verified default-branch SHA.", "Full clone ready; local branch creation is next.")) return;
       await finishBranch(session = options.persistence.getSession(session.atlasId)!, repository);
     } catch (error) {
-      if (error instanceof PreparationError) failSetup(session.atlasId, error.message);
+      const reason = error instanceof StorageError ? error.message : storageIssue();
+      if (reason) pauseHeld(session, reason);
+      else if (error instanceof PreparationError) failSetup(session.atlasId, error.message);
       else checkpoint(session.atlasId, "start_unconfirmed", "Local clone operation became uncertain; the partial clone was retained.", "Start unconfirmed; inspect the preserved clone before recovery.");
     }
   };
@@ -377,8 +440,20 @@ export const createPreparationService = (options: PreparationOptions) => {
   };
 
   const prepareNext = async () => {
+    const preparing = options.persistence.listPreparingSessions();
+    const queued = options.persistence.listQueuedSessions();
+    if (preparing.length === 0 && queued.length === 0) return;
+
+    const storageReason = storageIssue();
+    if (storageReason) {
+      const unresolved = preparing.find((session) => session.preparationCheckpoint !== "prepared" && session.preparationCheckpoint !== "start_unconfirmed");
+      if (unresolved) pauseHeld(unresolved, storageReason);
+      else if (queued[0]) setReason(queued[0], storageReason);
+      return;
+    }
+
     if (await resumePreparing()) return;
-    for (const session of options.persistence.listQueuedSessions()) {
+    for (const session of queued) {
       let target: Awaited<ReturnType<typeof verifyTarget>>;
       try {
         target = await verifyTarget(session);
