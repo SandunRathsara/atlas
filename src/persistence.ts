@@ -1646,6 +1646,12 @@ export const createPersistence = (options: PersistenceOptions) => {
         state, held_at, publication_evidence
       ) VALUES (?, ?, ?, 'standalone_parent', ?, ?, 'standalone_parent', ?, ?, 'held', ?, ?)
     `);
+    const addAmbiguousConflictHold = database.query(`
+      INSERT OR IGNORE INTO reservation_conflict_holds (
+        reservation_id, repository_id, target_kind, stack_id, stack_number,
+        parent_pull_request_id, parent_pull_request_number, created_at, reason
+      ) VALUES (?, ?, 'standalone_parent', NULL, NULL, ?, ?, ?, ?)
+    `);
     const addHistory = database.query(`
       INSERT INTO session_history (session_id, event_kind, occurred_at, reason, details_json)
       VALUES (?, ?, ?, ?, ?)
@@ -1655,6 +1661,51 @@ export const createPersistence = (options: PersistenceOptions) => {
       SET publication_evidence = ?
       WHERE reservation_id = ? AND state = 'held'
     `);
+    type ReservationRef = { reservation_id: string; state: "held" | "released" };
+    const retainAmbiguousDefaultOwnership = (
+      session: SessionRow,
+      reservation: ReservationRef | null,
+      matches: PublicationPullRequestRow[],
+      status: PublicationStatus,
+      reason: string,
+    ): ReservationRef | null => {
+      if (!reservation && session.target_kind === "default") {
+        const reservationId = `res_${crypto.randomUUID()}`;
+        addDefaultReservation.run(
+          reservationId,
+          session.atlas_id,
+          repositoryId,
+          null,
+          null,
+          null,
+          null,
+          observedAt,
+          publicationEvidence(status, null, reason, observedAt),
+        );
+        addHistory.run(
+          session.atlas_id,
+          "publication_reservation_created",
+          observedAt,
+          "A default-branch Session has ambiguous publication; each candidate standalone parent remains reserved until owner release.",
+          JSON.stringify({ reservationId, candidatePullRequestIds: matches.map((match) => match.github_id) }),
+        );
+        reservation = { reservation_id: reservationId, state: "held" };
+      }
+      if (reservation?.state === "held") {
+        for (const match of matches) {
+          addAmbiguousConflictHold.run(
+            reservation.reservation_id,
+            repositoryId,
+            match.github_id,
+            match.number,
+            observedAt,
+            "Ambiguous publication ownership retains this candidate target until the owner is explicitly released.",
+          );
+        }
+        updateEvidence.run(publicationEvidence(status, null, reason, observedAt), reservation.reservation_id);
+      }
+      return reservation;
+    };
     const release = database.query(`
       UPDATE stack_reservations
       SET state = 'released', released_at = ?, release_kind = 'automatic', release_reason = ?, publication_evidence = ?
@@ -1673,15 +1724,20 @@ export const createPersistence = (options: PersistenceOptions) => {
       let resultId = session.result_pull_request_id;
       let status: PublicationStatus = session.publication_status;
       let reason = session.publication_reason ?? "Publication has not been checked yet.";
+      let reservation = reservationForSession.get(session.atlas_id) as ReservationRef | null;
 
       if (!resultId) {
-        if (status === "ambiguous") continue;
         const matches = publicationBranchMatches(repositoryId, session.working_branch!);
+        if (status === "ambiguous") {
+          reservation = retainAmbiguousDefaultOwnership(session, reservation, matches, status, reason);
+          continue;
+        }
         if (matches.length > 1) {
           status = "ambiguous";
           reason = "Publication could not be verified: multiple Pull requests use the unique working branch; Atlas will not choose one.";
           updateSession.run(null, status, reason, observedAt, isoNow(now), session.atlas_id);
           addHistory.run(session.atlas_id, "publication_ambiguous", observedAt, reason, JSON.stringify({ branch: session.working_branch }));
+          reservation = retainAmbiguousDefaultOwnership(session, reservation, matches, status, reason);
           continue;
         }
         const match = matches[0];
@@ -1706,7 +1762,6 @@ export const createPersistence = (options: PersistenceOptions) => {
         continue;
       }
 
-      let reservation = reservationForSession.get(session.atlas_id) as { reservation_id: string; state: "held" | "released" } | null;
       if (!reservation && session.target_kind === "default") {
         const reservationId = `res_${crypto.randomUUID()}`;
         const evidence = publicationEvidence("identified", resultId, reason, observedAt);

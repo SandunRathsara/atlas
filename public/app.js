@@ -3,6 +3,7 @@
     if (status === 0) return "The request could not reach Atlas. Check the connection and try again.";
     if (status === 401) return "Your sign-in expired. Sign in again to retry.";
     if (status === 403) return "The request was rejected. Refresh the page and try again.";
+    if (status === 503) return "Atlas could not durably record this change. Ownership remains held; keep the form and try again.";
     return "Atlas could not complete the request. Try again.";
   };
 

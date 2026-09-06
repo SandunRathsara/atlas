@@ -1182,6 +1182,7 @@ export const createApp = (options: AppOptions) => {
       repository,
       sessions: persistence.listSessions(repositoryId, filter),
       filter,
+      pullRequestsRefresh: persistence.getRefreshState(repositoryId, "pullRequests"),
     }));
   });
 
@@ -1192,6 +1193,7 @@ export const createApp = (options: AppOptions) => {
     if (!session) return c.text("Session not found", 404);
     const repository = persistence.getRepository(session.repositoryId);
     if (!repository) return c.text("Repository not found", 404);
+    const pullRequestsRefresh = persistence.getRefreshState(session.repositoryId, "pullRequests");
     const identity = c.get("auth");
     const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
     let viewer: SessionViewerProjection | undefined;
@@ -1206,6 +1208,7 @@ export const createApp = (options: AppOptions) => {
       repository,
       session,
       viewer,
+      pullRequestsRefresh,
     }));
   });
 
@@ -1216,12 +1219,14 @@ export const createApp = (options: AppOptions) => {
     if (!session) return c.text("Session not found", 404);
     const repository = persistence.getRepository(session.repositoryId);
     if (!repository) return c.text("Repository not found", 404);
+    const pullRequestsRefresh = persistence.getRefreshState(session.repositoryId, "pullRequests");
     const identity = c.get("auth");
     setPrivateHtmlHeaders(c);
     return c.html(renderReservationReleasePage({
       csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
       repository,
       session,
+      pullRequestsRefresh,
     }), session.reservationState !== "held" || ["succeeded", "failed", "interrupted"].includes(session.state) ? 200 : 409);
   });
 
@@ -1232,6 +1237,7 @@ export const createApp = (options: AppOptions) => {
     if (!session) return c.text("Session not found", 404);
     const repository = persistence.getRepository(session.repositoryId);
     if (!repository) return c.text("Repository not found", 404);
+    const pullRequestsRefresh = persistence.getRefreshState(session.repositoryId, "pullRequests");
 
     let form: Record<string, unknown>;
     try {
@@ -1250,6 +1256,7 @@ export const createApp = (options: AppOptions) => {
       csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
       repository,
       session: persistence.getSession(sessionId) ?? session,
+      pullRequestsRefresh,
       error,
     }), status);
 
@@ -1308,6 +1315,7 @@ export const createApp = (options: AppOptions) => {
         repository,
         session,
         viewer: projection,
+        pullRequestsRefresh: persistence.getRefreshState(session.repositoryId, "pullRequests"),
         viewerRequestUrl,
         viewerLimit: limit,
       }));
