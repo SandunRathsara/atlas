@@ -19,6 +19,7 @@ const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9
 type OpenCodeOptions = {
   persistence: Persistence;
   onSlotReleased?: () => void;
+  onTerminal?: (session: Session) => void | Promise<void>;
   serviceFile?: string;
   pollMs?: number;
   requestTimeoutMs?: number;
@@ -451,7 +452,11 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
                 ? "OpenCode reports active execution."
                 : "OpenCode is idle without a terminal outcome.";
       const reconciled = options.persistence.reconcileOpenCode(session.atlasId, nextState, reason);
-      if (isTerminalState(nextState)) options.onSlotReleased?.();
+      if (isTerminalState(nextState)) {
+        options.onSlotReleased?.();
+        const terminalSession = reconciled ?? options.persistence.getSession(session.atlasId) ?? session;
+        void Promise.resolve(options.onTerminal?.(terminalSession)).catch(() => undefined);
+      }
       return reconciled;
     } catch {
       options.persistence.markOpenCodeStale(

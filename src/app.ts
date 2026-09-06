@@ -41,6 +41,7 @@ import {
   renderPullRequestsPage,
   renderPendingStartSessionPage,
   renderRepositoriesPage,
+  renderReservationReleasePage,
   renderSessionDetailPage,
   renderSessionViewerFragment,
   renderSessionsPage,
@@ -403,6 +404,17 @@ export const createApp = (options: AppOptions) => {
   const openCode = options.openCode ?? createOpenCodeHandoffService({
     persistence,
     onSlotReleased: preparation.enqueue,
+    onTerminal: async (session) => {
+      const repository = persistence.getRepository(session.repositoryId);
+      if (repository) {
+        try {
+          await refreshPullRequests(repository);
+        } catch {
+          // A failed fresh read retains the reservation; periodic/webhook refresh retries it.
+        }
+      }
+      preparation.enqueue();
+    },
   });
   const sessionViewer = createSessionViewerService(openCode);
   preparation.start();
@@ -1170,6 +1182,7 @@ export const createApp = (options: AppOptions) => {
       repository,
       sessions: persistence.listSessions(repositoryId, filter),
       filter,
+      pullRequestsRefresh: persistence.getRefreshState(repositoryId, "pullRequests"),
     }));
   });
 
@@ -1180,6 +1193,7 @@ export const createApp = (options: AppOptions) => {
     if (!session) return c.text("Session not found", 404);
     const repository = persistence.getRepository(session.repositoryId);
     if (!repository) return c.text("Repository not found", 404);
+    const pullRequestsRefresh = persistence.getRefreshState(session.repositoryId, "pullRequests");
     const identity = c.get("auth");
     const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
     let viewer: SessionViewerProjection | undefined;
@@ -1194,7 +1208,74 @@ export const createApp = (options: AppOptions) => {
       repository,
       session,
       viewer,
+      pullRequestsRefresh,
     }));
+  });
+
+  app.get("/sessions/:sessionId/reservation/release", (c) => {
+    const sessionId = c.req.param("sessionId");
+    if (!sessionIdPattern.test(sessionId)) return c.text("Invalid Session ID", 400);
+    const session = persistence.getSession(sessionId);
+    if (!session) return c.text("Session not found", 404);
+    const repository = persistence.getRepository(session.repositoryId);
+    if (!repository) return c.text("Repository not found", 404);
+    const pullRequestsRefresh = persistence.getRefreshState(session.repositoryId, "pullRequests");
+    const identity = c.get("auth");
+    setPrivateHtmlHeaders(c);
+    return c.html(renderReservationReleasePage({
+      csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
+      repository,
+      session,
+      pullRequestsRefresh,
+    }), session.reservationState !== "held" || ["succeeded", "failed", "interrupted"].includes(session.state) ? 200 : 409);
+  });
+
+  app.post("/sessions/:sessionId/reservation/release", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    if (!sessionIdPattern.test(sessionId)) return c.text("Invalid Session ID", 400);
+    const session = persistence.getSession(sessionId);
+    if (!session) return c.text("Session not found", 404);
+    const repository = persistence.getRepository(session.repositoryId);
+    if (!repository) return c.text("Repository not found", 404);
+    const pullRequestsRefresh = persistence.getRefreshState(session.repositoryId, "pullRequests");
+
+    let form: Record<string, unknown>;
+    try {
+      form = await parseForm(c.req.raw);
+    } catch (error) {
+      if (error instanceof FormBodyTooLarge) return c.text("Request body is too large", 413);
+      return c.text("Malformed reservation release request", 400);
+    }
+    const identity = c.get("auth");
+    setPrivateHtmlHeaders(c);
+    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) {
+      return c.text("Request rejected", 403);
+    }
+
+    const renderError = (error: string, status: 409 | 503) => c.html(renderReservationReleasePage({
+      csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
+      repository,
+      session: persistence.getSession(sessionId) ?? session,
+      pullRequestsRefresh,
+      error,
+    }), status);
+
+    if (session.reservationState !== "held") return redirectToSession(c, session);
+    if (!["succeeded", "failed", "interrupted"].includes(session.state)) {
+      return renderError("Atlas can release a reservation only after a confirmed terminal OpenCode outcome. Active or uncertain execution remains held.", 409);
+    }
+
+    let result: ReturnType<Persistence["releaseReservation"]>;
+    try {
+      result = persistence.releaseReservation(sessionId);
+    } catch {
+      return renderError("Atlas could not durably record the reservation release. Ownership remains held.", 503);
+    }
+    if (result.kind === "not_terminal") {
+      return renderError("Atlas can release a reservation only after a confirmed terminal OpenCode outcome.", 409);
+    }
+    preparation.enqueue();
+    return redirectToSession(c, result.session);
   });
 
   app.get("/sessions/:sessionId/view", async (c) => {
@@ -1234,6 +1315,7 @@ export const createApp = (options: AppOptions) => {
         repository,
         session,
         viewer: projection,
+        pullRequestsRefresh: persistence.getRefreshState(session.repositoryId, "pullRequests"),
         viewerRequestUrl,
         viewerLimit: limit,
       }));

@@ -505,6 +505,46 @@ const sessionFreshnessMarkup = (session: Session) => {
   return `${stale ? `<span class="badge badge-warning">Stale</span>` : ""}${preparationUncertain ? `<span class="badge badge-warning">Preparation unconfirmed</span>` : handoffUncertain ? `<span class="badge badge-warning">Start unconfirmed</span>` : ""}`;
 };
 
+const publicationStatusLabel = (status: Session["publicationStatus"]) => {
+  if (status === "not_observed") return "Not observed";
+  if (status === "unverified") return "Publication unverified";
+  if (status === "ambiguous") return "Publication ambiguous";
+  if (status === "identified") return "Publication identified";
+  if (status === "qualifying") return "Qualifying publication";
+  return "Reservation released";
+};
+
+const publicationStatusClass = (status: Session["publicationStatus"]) =>
+  status === "released" ? "badge-success" : status === "qualifying" ? "badge-info" : status === "identified" ? "badge-warning" : status === "not_observed" ? "badge-neutral" : "badge-warning";
+
+const publicationResultMarkup = (session: Session) => {
+  if (!session.resultPullRequestId) return "No resulting Pull request is identified yet.";
+  const url = safeExternalUrl(session.resultPullRequestUrl ?? "");
+  const label = `#${session.resultPullRequestNumber ?? "unknown"}`;
+  return url
+    ? `<a class="inline-flex min-h-11 items-center rounded-field px-1 text-brand-readable underline underline-offset-4" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Pull request ${escapeHtml(label)}</a> <code class="font-mono text-sm">${escapeHtml(session.resultPullRequestId)}</code>`
+    : `Pull request ${escapeHtml(label)} · <code class="font-mono text-sm">${escapeHtml(session.resultPullRequestId)}</code>`;
+};
+
+const publicationRefreshMarkup = (refresh: RefreshState | undefined) => {
+  if (!refresh) return "";
+  const pending = refresh.requestedGeneration > refresh.completedGeneration;
+  const unavailable = refresh.availability === "never" || refresh.availability === "unavailable" || refresh.availability === "partial";
+  if (!pending && !unavailable) return "";
+  const reason = pending
+    ? "A current complete Pull request read is pending."
+    : refresh.failureReason ?? "The latest GitHub Pull request read was unavailable.";
+  return `<div class="alert alert-warning mt-4 leading-normal" role="status"><strong>Waiting for GitHub verification.</strong> ${escapeHtml(reason)} Ownership remains held until current publication evidence is confirmed.</div>`;
+};
+
+const publicationMarkup = (session: Session, pullRequestsRefresh?: RefreshState) => `<div class="mt-5 rounded-box border border-base-300 bg-base-100 p-4">
+  <div class="flex flex-wrap items-center justify-between gap-3"><h2 class="font-medium">Publication</h2><span class="badge ${publicationStatusClass(session.publicationStatus)}">${escapeHtml(publicationStatusLabel(session.publicationStatus))}</span></div>
+  <p class="mt-3 break-words">${publicationResultMarkup(session)}</p>
+  ${publicationRefreshMarkup(pullRequestsRefresh)}
+  ${session.publicationReason ? `<p class="mt-2 text-sm leading-normal text-muted">${escapeHtml(session.publicationReason)}</p>` : ""}
+  <p class="mt-2 text-sm text-muted">Last publication evidence: ${escapeHtml(formatTime(session.publicationObservedAt))}</p>
+</div>`;
+
 const sessionHistoryRow = (session: Session) => `<li class="rounded-box bg-base-100 p-4 sm:p-5">
   <div class="flex flex-wrap items-start justify-between gap-4">
     <div class="min-w-0">
@@ -1252,7 +1292,7 @@ const sessionTargetLabel = (session: Session) => {
   return `Default branch · ${session.targetBranch}`;
 };
 
-const sessionListRow = (session: Session) => `<li class="rounded-box bg-base-100 p-4 sm:p-6">
+const sessionListRow = (session: Session, pullRequestsRefresh?: RefreshState) => `<li class="rounded-box bg-base-100 p-4 sm:p-6">
   <div class="flex flex-wrap items-start justify-between gap-4">
     <div class="min-w-0">
       <p class="font-mono text-sm text-muted">Session ${escapeHtml(session.atlasId)}</p>
@@ -1265,9 +1305,14 @@ const sessionListRow = (session: Session) => `<li class="rounded-box bg-base-100
     <div><dt class="font-medium text-base-content">Queue order</dt><dd class="mt-1 tabular-nums">${session.submissionOrder}</dd></div>
     <div><dt class="font-medium text-base-content">Target</dt><dd class="mt-1">${escapeHtml(sessionTargetLabel(session))}</dd></div>
     <div><dt class="font-medium text-base-content">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : "Not held"}</dd></div>
+    <div><dt class="font-medium text-base-content">Publication</dt><dd class="mt-1">${escapeHtml(publicationStatusLabel(session.publicationStatus))}</dd></div>
+    <div><dt class="font-medium text-base-content">Stack reservation</dt><dd class="mt-1">${session.reservationState === "held" ? "Held" : session.reservationState === "released" ? "Released" : "None"}</dd></div>
   </dl>
   <p class="mt-5 max-w-prose truncate text-sm text-muted">Prompt: ${escapeHtml(session.prompt)}</p>
   ${session.stateReason ? `<p class="mt-3 max-w-prose text-sm leading-normal text-muted">${escapeHtml(session.stateReason)}</p>` : ""}
+  ${session.resultPullRequestId ? `<p class="mt-3 max-w-prose text-sm leading-normal">Publication: ${publicationResultMarkup(session)}</p>` : ""}
+  ${session.publicationReason ? `<p class="mt-3 max-w-prose text-sm leading-normal text-muted">Publication: ${escapeHtml(session.publicationReason)}</p>` : ""}
+  ${publicationRefreshMarkup(pullRequestsRefresh)}
   <a class="btn btn-ghost mt-5 min-h-11 border border-control-border" href="${`/sessions/${encodeURIComponent(session.atlasId)}`}">View Session</a>
 </li>`;
 
@@ -1276,11 +1321,13 @@ export const renderSessionsPage = ({
   repository,
   sessions,
   filter,
+  pullRequestsRefresh,
 }: {
   csrfToken: string;
   repository: Repository;
   sessions: Session[];
   filter: SessionFilter;
+  pullRequestsRefresh?: RefreshState;
 }) => {
   const filters: SessionFilter[] = ["active", "all", "queued", "preparing", "running", "waiting", "idle", "succeeded", "failed", "interrupted", "failed_setup"];
   const heading = filter === "active" ? "Active Sessions" : filter === "all" ? "Sessions" : `${sessionFilterLabel(filter)} Sessions`;
@@ -1301,7 +1348,7 @@ export const renderSessionsPage = ({
         ${filters.map((value) => `<a class="btn ${value === filter ? "btn-primary border border-control-border" : "btn-ghost border border-control-border"} min-h-11" href="${value === "active" ? sessionsLink(repository) : `${sessionsLink(repository)}?status=${encodeURIComponent(value)}`}"${value === filter ? ' aria-current="page"' : ""}>${escapeHtml(sessionFilterLabel(value))}</a>`).join("")}
       </nav>
       ${sessions.length > 0
-        ? `<ul class="mt-8 grid gap-4" aria-label="${escapeHtml(heading)}">${sessions.map(sessionListRow).join("")}</ul>`
+        ? `<ul class="mt-8 grid gap-4" aria-label="${escapeHtml(heading)}">${sessions.map((session) => sessionListRow(session, pullRequestsRefresh)).join("")}</ul>`
         : `<div class="mt-8 rounded-box bg-base-100 p-6"><p class="text-lg font-semibold">${escapeHtml(filter === "active" ? "No active Sessions" : "No matching Sessions")}</p><p class="mt-2 max-w-prose leading-relaxed text-muted">${escapeHtml(emptyText)}</p></div>`}
     </section>`,
   });
@@ -1446,6 +1493,7 @@ export const renderSessionDetailPage = ({
   repository,
   session,
   viewer,
+  pullRequestsRefresh,
   viewerRequestUrl,
   viewerLimit,
 }: {
@@ -1453,6 +1501,7 @@ export const renderSessionDetailPage = ({
   repository: Repository;
   session: Session;
   viewer?: SessionViewerProjection;
+  pullRequestsRefresh?: RefreshState;
   viewerRequestUrl?: string;
   viewerLimit?: number;
 }) => {
@@ -1503,13 +1552,15 @@ export const renderSessionDetailPage = ({
         </div>
         <span class="flex flex-wrap items-center gap-2"><span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>${sessionFreshnessMarkup(session)}</span>
        </div>
-       ${accessNotice(repository)}
-       ${preparationNotice}
-       <div class="mt-8 flex flex-wrap gap-4">
-         <a class="btn btn-ghost min-h-11 border border-control-border" href="${specPath}">Back to Spec</a>
-         <a class="btn btn-ghost min-h-11 border border-control-border" href="${sessionsLink(repository)}">Repository Sessions</a>
-         ${repositoryAction(repository, csrfToken)}
-       </div>
+        ${accessNotice(repository)}
+        ${preparationNotice}
+         ${publicationMarkup(session, pullRequestsRefresh)}
+        <div class="mt-8 flex flex-wrap gap-4">
+          <a class="btn btn-ghost min-h-11 border border-control-border" href="${specPath}">Back to Spec</a>
+          <a class="btn btn-ghost min-h-11 border border-control-border" href="${sessionsLink(repository)}">Repository Sessions</a>
+          ${session.reservationState === "held" && ["succeeded", "failed", "interrupted"].includes(session.state) ? `<a class="btn btn-error min-h-11 border border-control-border" href="/sessions/${encodeURIComponent(session.atlasId)}/reservation/release">Review reservation release</a>` : ""}
+          ${repositoryAction(repository, csrfToken)}
+        </div>
       <dl class="mt-8 grid gap-4 border-y border-base-300 py-5 text-sm sm:grid-cols-2">
         <div><dt class="font-medium text-muted">State</dt><dd class="mt-1">${escapeHtml(sessionStateLabel(session.state))}</dd></div>
         <div><dt class="font-medium text-muted">Submitted</dt><dd class="mt-1">${escapeHtml(formatTime(session.submittedAt))}</dd></div>
@@ -1523,8 +1574,8 @@ export const renderSessionDetailPage = ({
          <div><dt class="font-medium text-muted">Resolved trunk</dt><dd class="mt-1 break-words font-mono">${escapeHtml(session.resolvedTrunkBranch ?? session.baseBranch ?? session.targetBranch)}</dd></div>
          <div><dt class="font-medium text-muted">Resolved stack layers</dt><dd class="mt-1">${session.resolvedLayers.length > 0 ? escapeHtml(session.resolvedLayers.map((layer) => `#${layer.pullRequestNumber} ${layer.branch}`).join(" → ")) : "Default branch"}</dd></div>
          <div><dt class="font-medium text-muted">Working branch</dt><dd class="mt-1 break-words font-mono">${session.workingBranch ? escapeHtml(session.workingBranch) : "Not assigned before admission"}</dd></div>
-         <div><dt class="font-medium text-muted">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : session.state === "queued" ? "Not held while Queued" : "Not held"}</dd></div>
-         <div><dt class="font-medium text-muted">Stack reservation</dt><dd class="mt-1">${session.reservationState === "held" ? `Held${session.reservationId ? ` · ${escapeHtml(session.reservationId)}` : ""}` : session.reservationState === "released" ? "Released" : "None for default-branch work"}</dd></div>
+          <div><dt class="font-medium text-muted">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : session.state === "queued" ? "Not held while Queued" : "Not held"}</dd></div>
+          <div><dt class="font-medium text-muted">Stack reservation</dt><dd class="mt-1">${session.reservationState === "held" ? `Held${session.reservationId ? ` · ${escapeHtml(session.reservationId)}` : ""}` : session.reservationState === "released" ? "Released" : "None for default-branch work"}</dd></div>
          <div><dt class="font-medium text-muted">Session directory</dt><dd class="mt-1 break-words font-mono">${session.directory ? escapeHtml(session.directory) : "Not assigned before admission"}</dd></div>
         <div><dt class="font-medium text-muted">OpenCode intended Session</dt><dd class="mt-1 break-all font-mono">${session.opencodeIntendedSessionId ? escapeHtml(session.opencodeIntendedSessionId) : "Not assigned before local preparation"}</dd></div>
         <div><dt class="font-medium text-muted">OpenCode Session</dt><dd class="mt-1 break-all font-mono">${session.openCodeSessionId ? escapeHtml(session.openCodeSessionId) : "Not associated"}</dd></div>
@@ -1564,6 +1615,50 @@ export const renderSessionDetailPage = ({
          limit: viewerLimit,
        })}
      </section>`,
+  });
+};
+
+export const renderReservationReleasePage = ({
+  csrfToken,
+  repository,
+  session,
+  pullRequestsRefresh,
+  error,
+}: {
+  csrfToken: string;
+  repository: Repository;
+  session: Session;
+  pullRequestsRefresh?: RefreshState;
+  error?: string;
+}) => {
+  const terminal = ["succeeded", "failed", "interrupted"].includes(session.state);
+  const held = session.reservationState === "held";
+  const errorMarkup = error ? `<div class="alert alert-error mt-6 leading-normal" role="alert">${escapeHtml(error)}</div>` : "";
+  const statusMarkup = !held
+    ? `<div class="alert alert-info mt-6 leading-normal" role="status">This reservation is already released or no longer exists. Releasing it again is harmless.</div>`
+    : !terminal
+      ? `<div class="alert alert-warning mt-6 leading-normal" role="alert">Only a confirmed terminal OpenCode outcome can release this reservation. Active or uncertain execution remains held.</div>`
+      : `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>This may release unpublished or unverified work.</strong> Atlas will not delete resources, cancel execution, change branches, change Pull requests, or bypass the next target's current eligibility checks.</div></div>`;
+
+  return renderShell({
+    title: `Release reservation · ${session.atlasId}`,
+    active: "sessions",
+    repository,
+    csrfToken,
+    content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
+       <a class="inline-flex min-h-11 items-center rounded-field px-2 text-sm text-brand-readable underline underline-offset-4" href="/sessions/${encodeURIComponent(session.atlasId)}">← Back to Session</a>
+      <p class="mt-6 font-mono text-sm text-muted">${escapeHtml(repository.fullName)}</p>
+      <h1 id="page-title" class="mt-3 break-words text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Release stack reservation</h1>
+      <p class="mt-4 max-w-prose leading-relaxed text-muted">Session ${escapeHtml(session.atlasId)} · ${escapeHtml(sessionStateLabel(session.state))} · ${escapeHtml(sessionTargetLabel(session))}</p>
+      ${errorMarkup}${statusMarkup}
+       ${publicationMarkup(session, pullRequestsRefresh)}
+       ${held && terminal ? `<form class="mt-8 flex flex-wrap items-center gap-4" action="/sessions/${encodeURIComponent(session.atlasId)}/reservation/release" method="post" hx-post="/sessions/${encodeURIComponent(session.atlasId)}/reservation/release" hx-disabled-elt="button[type='submit']">
+         <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
+         <p id="release-form-status" data-form-status class="sr-only" role="status" aria-live="polite"></p>
+         <button class="btn btn-error min-h-11 border border-control-border outline-brand-readable" type="submit" aria-describedby="release-form-status">Release reservation</button>
+        <span class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Releasing reservation…</span>
+      </form>` : ""}
+    </section>`,
   });
 };
 
