@@ -1207,21 +1207,43 @@ const shellOutputHref = (node: ViewerSessionNode, rootId: string, endpoint: stri
   return `${url.pathname}${url.search}`;
 };
 
-const nextShellOutputCursor = (output: { cursor: number; size: number; truncated: boolean }) =>
-  output.truncated && output.cursor > 0 && output.cursor < output.size ? output.cursor : undefined;
+const requestedShellOutputCursor = (requestUrl: string | undefined, shellId: string) => {
+  try {
+    const value = new URL(requestUrl ?? "", "http://atlas.invalid").searchParams;
+    if (value.get("shell") !== shellId) return 0;
+    const cursor = Number(value.get("shellCursor") ?? "0");
+    return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0;
+  } catch {
+    return 0;
+  }
+};
+
+const shellOutputHasMore = (output: { cursor: number; size: number }) =>
+  Number.isSafeInteger(output.cursor) && Number.isSafeInteger(output.size) && output.cursor >= 0 && output.cursor < output.size;
+
+const nextShellOutputCursor = (output: { cursor: number; size: number }, requestedCursor = 0) =>
+  shellOutputHasMore(output) && output.cursor > requestedCursor ? output.cursor : undefined;
 
 const renderShellOutput = (
   output: { output: string; cursor: number; size: number; truncated: boolean },
   nextHref?: string,
-) => `<pre class="mt-4 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded-field bg-base-300 p-4 font-mono text-sm leading-relaxed">${escapeHtml(output.output)}</pre>${output.truncated ? `<div class="alert alert-warning mt-3 leading-normal" role="status"><strong>Output is capped in this projection.</strong> Additional bytes are not loaded automatically.${nextHref ? ` <a class="link link-hover font-medium" href="${escapeHtml(nextHref)}">Load next output page</a>.` : ""}</div>` : ""}`;
+  requestedCursor = 0,
+) => {
+  const more = shellOutputHasMore(output);
+  const stalled = more && output.cursor <= requestedCursor;
+  const warning = more
+    ? `<div class="alert alert-warning mt-3 leading-normal" role="status"><strong>${output.truncated ? "Output is capped in this projection; more output is available." : "Output continues in a later page."}</strong> This page ends at byte ${escapeHtml(String(output.cursor))} of ${escapeHtml(String(output.size))}.${nextHref ? ` <a class="link link-hover font-medium" href="${escapeHtml(nextHref)}">Load next output page</a>.` : stalled ? " The upstream cursor did not advance, so no continuation link is offered." : ""}</div>`
+    : "";
+  return `<pre class="mt-4 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded-field bg-base-300 p-4 font-mono text-sm leading-relaxed">${escapeHtml(output.output)}</pre>${warning}`;
+};
 
-const renderViewerMessage = (message: ViewerSessionNode["messages"][number], nextShellOutputHref?: string) => {
+const renderViewerMessage = (message: ViewerSessionNode["messages"][number], nextShellOutputHref?: string, requestedShellCursor = 0) => {
   const time = viewerTimestamp(message.time.created);
   if (message.type === "assistant") {
     return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><div class="flex flex-wrap items-center justify-between gap-3"><h3 class="font-medium">Assistant</h3><time class="text-sm text-muted" datetime="${escapeHtml(new Date(message.time.created).toISOString())}">${escapeHtml(time)}</time></div>${renderAssistantContent(message)}${message.error ? `<div class="alert alert-error mt-4 leading-normal" role="alert"><strong>${escapeHtml(message.error.type)}</strong>: ${escapeHtml(message.error.message)}</div>` : ""}${message.retry ? `<p class="mt-4 text-sm text-warning">Retry ${message.retry.attempt} scheduled: ${escapeHtml(message.retry.error.message)}</p>` : ""}</li>`;
   }
   if (message.type === "user") return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><div class="flex flex-wrap items-center justify-between gap-3"><h3 class="font-medium">User message</h3><time class="text-sm text-muted">${escapeHtml(time)}</time></div><div class="mt-4 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(message.text)}</div>${renderUserAttachments(message)}</li>`;
-  if (message.type === "shell") return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><div class="flex flex-wrap items-center justify-between gap-3"><h3 class="font-medium">Session shell · ${escapeHtml(message.command)}</h3><span class="badge ${message.status === "exited" ? "badge-success" : message.status === "running" ? "badge-info" : "badge-warning"}">${escapeHtml(message.status)}</span></div><p class="mt-2 text-sm text-muted">${escapeHtml(time)}${message.exit !== undefined ? ` · exit ${escapeHtml(String(message.exit))}` : ""}</p>${message.output ? renderShellOutput(message.output, nextShellOutputHref) : `<p class="mt-4 text-sm text-muted">Shell output is not present in this projection.</p>`}</li>`;
+  if (message.type === "shell") return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><div class="flex flex-wrap items-center justify-between gap-3"><h3 class="font-medium">Session shell · ${escapeHtml(message.command)}</h3><span class="badge ${message.status === "exited" ? "badge-success" : message.status === "running" ? "badge-info" : "badge-warning"}">${escapeHtml(message.status)}</span></div><p class="mt-2 text-sm text-muted">${escapeHtml(time)}${message.exit !== undefined ? ` · exit ${escapeHtml(String(message.exit))}` : ""}</p>${message.output ? renderShellOutput(message.output, nextShellOutputHref, requestedShellCursor) : `<p class="mt-4 text-sm text-muted">Shell output is not present in this projection.</p>`}</li>`;
   if (message.type === "compaction") return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><div class="flex flex-wrap items-center justify-between gap-3"><h3 class="font-medium">Context compaction</h3><span class="badge badge-warning">${escapeHtml(message.status)}</span></div><p class="mt-3 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(message.status === "failed" ? message.error.message : message.summary)}</p></li>`;
   if (message.type === "system" || message.type === "synthetic") return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><h3 class="font-medium">${message.type === "system" ? "System" : "Synthetic"}</h3><p class="mt-3 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(message.text)}</p></li>`;
   if (message.type === "skill") return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><h3 class="font-medium">Skill · ${escapeHtml(message.name)}</h3><p class="mt-3 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(message.text)}</p></li>`;
@@ -1236,7 +1258,7 @@ const renderViewerPending = (node: ViewerSessionNode) => {
   return `<section class="mt-8" aria-labelledby="pending-${escapeHtml(node.info.id)}"><h3 id="pending-${escapeHtml(node.info.id)}" class="text-lg font-semibold">Pending OpenCode work</h3><p class="mt-2 text-sm leading-normal text-muted">These records are displayed view-only. Atlas does not reply, cancel, or resume them.</p>${permissions.length > 0 ? `<div class="mt-4 rounded-box bg-base-100 p-4"><h4 class="font-medium">Permission requests</h4><ul class="mt-3 grid gap-3">${permissions.map((permission) => `<li class="rounded-field border border-base-300 p-3"><p class="font-medium">${escapeHtml(permission.action)}</p><p class="mt-1 break-words text-sm text-muted">${escapeHtml(permission.resources.join(", "))}</p>${permission.message ? `<p class="mt-2 whitespace-pre-wrap break-words text-sm">${escapeHtml(permission.message)}</p>` : ""}</li>`).join("")}</ul></div>` : ""}${forms.length > 0 ? `<div class="mt-4 rounded-box bg-base-100 p-4"><h4 class="font-medium">Forms</h4><ul class="mt-3 grid gap-3">${forms.map((form) => `<li class="rounded-field border border-base-300 p-3"><p class="font-medium">${escapeHtml(form.title)}</p><p class="mt-1 text-sm text-muted">${form.fields.length} field${form.fields.length === 1 ? "" : "s"} · response controls are disabled</p></li>`).join("")}</ul></div>` : ""}${inbox.length > 0 ? `<div class="mt-4 rounded-box bg-base-100 p-4"><h4 class="font-medium">Queued inbox work</h4><p class="mt-2 text-sm leading-normal text-muted">Inbox work is not treated as proof that a person is being asked to respond.</p><p class="mt-2 text-sm">${inbox.length} queued item${inbox.length === 1 ? "" : "s"}</p></div>` : ""}</section>`;
 };
 
-const renderViewerShells = (node: ViewerSessionNode, rootId: string, endpoint: string, limit: number, requestUrl?: string) => node.shells.length === 0 ? "" : `<section class="mt-8" aria-labelledby="shells-${escapeHtml(node.info.id)}"><h3 id="shells-${escapeHtml(node.info.id)}" class="text-lg font-semibold">Running generic shells</h3><p class="mt-2 text-sm leading-normal text-muted">Only shells explicitly correlated to this Session are shown. Exited generic shells may not be recoverable after a disconnect.</p><ul class="mt-4 grid gap-4">${node.shells.map((shell) => `<li class="rounded-box bg-base-100 p-4"><div class="flex flex-wrap items-center justify-between gap-3"><code class="break-words font-mono">${escapeHtml(shell.info.command)}</code><span class="badge badge-info">${escapeHtml(shell.info.status)}</span></div><p class="mt-2 text-sm text-muted">${escapeHtml(shell.info.cwd)}</p>${shell.output ? renderShellOutput(shell.output, nextShellOutputCursor(shell.output) === undefined ? undefined : shellOutputHref(node, rootId, endpoint, limit, requestUrl, shell.info.id, nextShellOutputCursor(shell.output)!)) : shell.outputUnavailable ? `<p class="mt-4 text-sm text-warning">Shell output is currently unavailable.</p>` : ""}</li>`).join("")}</ul></section>`;
+const renderViewerShells = (node: ViewerSessionNode, rootId: string, endpoint: string, limit: number, requestUrl?: string) => node.shells.length === 0 ? "" : `<section class="mt-8" aria-labelledby="shells-${escapeHtml(node.info.id)}"><h3 id="shells-${escapeHtml(node.info.id)}" class="text-lg font-semibold">Running generic shells</h3><p class="mt-2 text-sm leading-normal text-muted">Only shells explicitly correlated to this Session are shown. Exited generic shells may not be recoverable after a disconnect.</p><ul class="mt-4 grid gap-4">${node.shells.map((shell) => { const requestedCursor = requestedShellOutputCursor(requestUrl, shell.info.id); const nextCursor = shell.output ? nextShellOutputCursor(shell.output, requestedCursor) : undefined; return `<li class="rounded-box bg-base-100 p-4"><div class="flex flex-wrap items-center justify-between gap-3"><code class="break-words font-mono">${escapeHtml(shell.info.command)}</code><span class="badge badge-info">${escapeHtml(shell.info.status)}</span></div><p class="mt-2 text-sm text-muted">${escapeHtml(shell.info.cwd)}</p>${shell.output ? renderShellOutput(shell.output, nextCursor === undefined ? undefined : shellOutputHref(node, rootId, endpoint, limit, requestUrl, shell.info.id, nextCursor), requestedCursor) : shell.outputUnavailable ? `<p class="mt-4 text-sm text-warning">Shell output is currently unavailable.</p>` : ""}</li>`; }).join("")}</ul></section>`;
 
 const renderViewerNode = (node: ViewerSessionNode, selectedId: string, rootId: string, endpoint: string, limit: number, requestUrl?: string) => {
   const childLinks = node.children.length > 0
@@ -1244,7 +1266,7 @@ const renderViewerNode = (node: ViewerSessionNode, selectedId: string, rootId: s
     : "";
   const messagePage = node.messagesLoaded
     ? node.messages.length > 0
-      ? `<ol class="mt-5 grid gap-4" aria-label="Session messages">${node.messages.map((message) => renderViewerMessage(message, message.type === "shell" && message.output ? (nextShellOutputCursor(message.output) === undefined ? undefined : shellOutputHref(node, rootId, endpoint, limit, requestUrl, message.shellID, nextShellOutputCursor(message.output)!)) : undefined)).join("")}</ol>`
+      ? `<ol class="mt-5 grid gap-4" aria-label="Session messages">${node.messages.map((message) => { const requestedCursor = message.type === "shell" ? requestedShellOutputCursor(requestUrl, message.shellID) : 0; const nextCursor = message.type === "shell" && message.output ? nextShellOutputCursor(message.output, requestedCursor) : undefined; return renderViewerMessage(message, nextCursor === undefined || message.type !== "shell" ? undefined : shellOutputHref(node, rootId, endpoint, limit, requestUrl, message.shellID, nextCursor), requestedCursor); }).join("")}</ol>`
       : `<div class="mt-5 rounded-box bg-base-100 p-5"><p class="font-medium">No messages in this projected page</p><p class="mt-2 text-sm leading-normal text-muted">An empty final page is valid; it does not imply missing or completed execution.</p></div>`
     : `<div class="mt-5 alert alert-warning leading-normal" role="status">${escapeHtml(node.unavailableReason ?? "Messages are not currently available.")}</div>`;
   const next = node.nextMessageCursor

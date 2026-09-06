@@ -259,6 +259,40 @@ const attachmentHtml = renderSessionViewerFragment({
 assert(attachmentHtml.includes("notes.txt") && attachmentHtml.includes("text/plain") && attachmentHtml.includes("Inline attachment"), "user attachment metadata must be rendered");
 assert(!attachmentHtml.includes("secret-inline-data"), "user attachment bytes must not be rendered");
 
+const realShapeShellOutput = { output: "x".repeat(65_536), cursor: 65_536, size: 70_018, truncated: false };
+const realShapeShellNode = {
+  ...attachmentNode,
+  messages: [{ id: "real-session-shell", time: { created: 1 }, type: "shell", shellID: "sh_session_real", command: "printf", status: "running", output: realShapeShellOutput }],
+  shells: [{ info: { id: "sh_generic_real", command: "printf", cwd: directory, status: "running", metadata: { sessionID: rootId } }, output: realShapeShellOutput }],
+};
+const realShapeHtml = renderSessionViewerFragment({
+  session: atlasSession,
+  viewer: { available: true, atlasSessionId: atlasSession.atlasId, root: realShapeShellNode as never, selected: realShapeShellNode as never, selectedSessionId: rootId, freshness: "fresh", partialReasons: [] },
+  endpoint: `/sessions/${atlasSession.atlasId}/view`,
+  eventsEndpoint: `/events?session=${atlasSession.atlasId}`,
+  requestUrl: `/sessions/${atlasSession.atlasId}/view?shell=sh_generic_real&shellCursor=0&limit=10`,
+});
+assert(realShapeHtml.includes("Output continues") && realShapeHtml.includes("Load next output page") && realShapeHtml.includes("shellCursor=65536"), "real beta-19135 shell pages must show a continuation when cursor is below size");
+
+const stalledShapeHtml = renderSessionViewerFragment({
+  session: atlasSession,
+  viewer: { available: true, atlasSessionId: atlasSession.atlasId, root: { ...realShapeShellNode, messages: [] } as never, selected: { ...realShapeShellNode, messages: [] } as never, selectedSessionId: rootId, freshness: "fresh", partialReasons: [] },
+  endpoint: `/sessions/${atlasSession.atlasId}/view`,
+  eventsEndpoint: `/events?session=${atlasSession.atlasId}`,
+  requestUrl: `/sessions/${atlasSession.atlasId}/view?shell=sh_generic_real&shellCursor=65536&limit=10`,
+});
+assert(stalledShapeHtml.includes("did not advance") && !stalledShapeHtml.includes("Load next output page"), "non-advancing shell cursors must not create a paging loop");
+
+const completeShapeNode = { ...realShapeShellNode, messages: realShapeShellNode.messages.map((message) => ({ ...message, output: { ...realShapeShellOutput, output: "complete", cursor: 70_018 } })), shells: realShapeShellNode.shells.map((shell) => ({ ...shell, output: { ...realShapeShellOutput, output: "complete", cursor: 70_018 } })) };
+const completeShapeHtml = renderSessionViewerFragment({
+  session: atlasSession,
+  viewer: { available: true, atlasSessionId: atlasSession.atlasId, root: completeShapeNode as never, selected: completeShapeNode as never, selectedSessionId: rootId, freshness: "fresh", partialReasons: [] },
+  endpoint: `/sessions/${atlasSession.atlasId}/view`,
+  eventsEndpoint: `/events?session=${atlasSession.atlasId}`,
+  requestUrl: `/sessions/${atlasSession.atlasId}/view?shell=sh_generic_real&shellCursor=70018&limit=10`,
+});
+assert(!completeShapeHtml.includes("Output continues") && !completeShapeHtml.includes("Load next output page"), "complete shell output must not be labelled as incomplete");
+
 const httpPersistence = createPersistence({ path: ":memory:" });
 httpPersistence.upsertRepository({
   githubId: "1",
