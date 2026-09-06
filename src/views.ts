@@ -174,15 +174,15 @@ const renderShell = ({
     title,
     `${skipLink}
     <header class="atlas-glass sticky top-0 z-20 border-b border-base-content/16">
-      <div class="mx-auto flex min-h-20 max-w-7xl flex-wrap items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+      <div class="relative mx-auto flex min-h-20 max-w-7xl flex-wrap items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
         <div class="flex min-w-0 items-center gap-4">
           <a class="rounded-field px-1 py-2 text-lg font-semibold tracking-tight text-base-content" href="/repositories">Atlas</a>
           <span class="hidden max-w-[18rem] truncate text-sm text-muted sm:inline" title="${escapeHtml(repositoryName)}">${escapeHtml(repositoryName)}</span>
         </div>
-        <div class="relative flex flex-wrap items-center gap-3">
+        <div class="flex flex-wrap items-center gap-3">
           <details class="lg:hidden" data-mobile-navigation>
             <summary class="btn btn-ghost min-h-11 list-none border border-control-border" data-mobile-navigation-trigger aria-label="Open primary navigation">Navigation</summary>
-            <nav class="absolute right-0 top-14 z-30 w-64 rounded-box border border-base-300 bg-base-100 p-3 shadow-xl" aria-label="Primary navigation">
+            <nav class="absolute right-4 top-full z-30 w-64 max-w-[calc(100vw-2rem)] rounded-box border border-base-300 bg-base-100 p-3 shadow-xl" aria-label="Primary navigation">
               ${mobileLinks}
             </nav>
           </details>
@@ -1138,7 +1138,7 @@ export const renderSessionDetailPage = ({
         <div class="min-w-0">
           <p class="font-mono text-sm text-muted">${escapeHtml(repository.fullName)}</p>
           <h1 id="page-title" class="mt-3 break-words text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Session ${escapeHtml(session.atlasId)}</h1>
-          <p class="mt-4 max-w-prose leading-relaxed text-muted">Spec #${escapeHtml(session.specIssueNumber)}: ${escapeHtml(session.specTitle)}</p>
+          <p class="mt-4 max-w-prose break-words leading-relaxed text-muted">Spec #${escapeHtml(session.specIssueNumber)}: ${escapeHtml(session.specTitle)}</p>
         </div>
         <span class="flex flex-wrap items-center gap-2"><span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>${sessionFreshnessMarkup(session)}</span>
       </div>
@@ -1156,7 +1156,7 @@ export const renderSessionDetailPage = ({
         <div><dt class="font-medium text-muted">OpenCode handoff</dt><dd class="mt-1">${escapeHtml(handoffLabel)}</dd></div>
         <div><dt class="font-medium text-muted">Starting base</dt><dd class="mt-1 break-words font-mono">Default branch · ${escapeHtml(session.baseBranch ?? session.targetBranch)}${session.baseSha ? ` · ${escapeHtml(session.baseSha)}` : " · waiting for verified SHA"}</dd></div>
          <div><dt class="font-medium text-muted">Working branch</dt><dd class="mt-1 break-words font-mono">${session.workingBranch ? escapeHtml(session.workingBranch) : "Not assigned before admission"}</dd></div>
-         <div><dt class="font-medium text-muted">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : "Not held while Queued"}</dd></div>
+         <div><dt class="font-medium text-muted">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : session.state === "queued" ? "Not held while Queued" : "Not held"}</dd></div>
          <div><dt class="font-medium text-muted">Session directory</dt><dd class="mt-1 break-words font-mono">${session.directory ? escapeHtml(session.directory) : "Not assigned before admission"}</dd></div>
         <div><dt class="font-medium text-muted">OpenCode intended Session</dt><dd class="mt-1 break-all font-mono">${session.opencodeIntendedSessionId ? escapeHtml(session.opencodeIntendedSessionId) : "Not assigned before local preparation"}</dd></div>
         <div><dt class="font-medium text-muted">OpenCode Session</dt><dd class="mt-1 break-all font-mono">${session.openCodeSessionId ? escapeHtml(session.openCodeSessionId) : "Not associated"}</dd></div>
@@ -1176,7 +1176,7 @@ export const renderSessionDetailPage = ({
         <p class="mt-2 max-w-prose leading-relaxed text-muted">Atlas retains the Spec snapshot and prompt that were accepted. Later GitHub edits do not rewrite this attempt.</p>
         <dl class="mt-5 grid gap-4 border-y border-base-300 py-5 text-sm sm:grid-cols-2">
           <div><dt class="font-medium text-muted">Repository</dt><dd class="mt-1 break-words font-mono">${escapeHtml(repository.fullName)}</dd></div>
-          <div><dt class="font-medium text-muted">Spec snapshot</dt><dd class="mt-1">${githubUrl ? `<a class="text-brand-readable underline underline-offset-4" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(session.specTitle)}</a>` : escapeHtml(session.specTitle)}</dd></div>
+          <div><dt class="font-medium text-muted">Spec snapshot</dt><dd class="mt-1 break-words">${githubUrl ? `<a class="text-brand-readable underline underline-offset-4" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(session.specTitle)}</a>` : escapeHtml(session.specTitle)}</dd></div>
         </dl>
         <article class="mt-6 rounded-box bg-base-100 p-5 sm:p-6">
           <h3 class="font-medium">Spec description at submission</h3>
