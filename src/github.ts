@@ -38,6 +38,7 @@ export type GitHubPullRequest = {
   mergedAt: string | null;
   headRef: string;
   headSha: string;
+  headRepositoryId: string | null;
   baseRef: string;
   baseSha: string;
   mergeableState: string | null;
@@ -195,6 +196,7 @@ const parsePullRequest = (value: unknown): GitHubPullRequest => {
   const item = object(value, "pull request");
   const head = object(item.head, "pull request head");
   const base = object(item.base, "pull request base");
+  const headRepository = head.repo === null || head.repo === undefined ? null : object(head.repo, "pull request head repository");
   const autoMerge = item.auto_merge;
   const mergeQueue = item.merge_queue_entry ?? item.merge_queue;
 
@@ -208,6 +210,7 @@ const parsePullRequest = (value: unknown): GitHubPullRequest => {
     mergedAt: nullableString(item.merged_at, "pull request merge time"),
     headRef: string(head.ref, "pull request head ref"),
     headSha: string(head.sha, "pull request head SHA"),
+    headRepositoryId: headRepository ? losslessInteger(headRepository.id, "pull request head repository id") : null,
     baseRef: string(base.ref, "pull request base ref"),
     baseSha: string(base.sha, "pull request base SHA"),
     mergeableState: nullableString(item.mergeable_state, "pull request mergeable state"),

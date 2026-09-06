@@ -62,6 +62,7 @@ export type PullRequest = {
   mergedAt: string | null;
   headRef: string;
   headSha: string;
+  headRepositoryId: string | null;
   baseRef: string;
   baseSha: string;
   mergeableState: string | null;
@@ -177,6 +178,7 @@ type PullRequestRow = {
   merged_at: string | null;
   head_ref: string;
   head_sha: string;
+  head_repository_id: string | null;
   base_ref: string;
   base_sha: string;
   mergeable_state: string | null;
@@ -354,6 +356,14 @@ const migrations = [
         ON pr_stacks (repository_id, is_current, number);
     `,
   },
+  {
+    version: 4,
+    sql: `
+      ALTER TABLE pull_requests ADD COLUMN head_repository_id TEXT;
+      CREATE UNIQUE INDEX pr_stacks_repository_number_unique
+        ON pr_stacks (repository_id, number);
+    `,
+  },
 ];
 
 const isoNow = (now: () => number) => new Date(now()).toISOString();
@@ -428,6 +438,7 @@ const toPullRequest = (row: PullRequestRow): PullRequest => ({
   mergedAt: row.merged_at,
   headRef: row.head_ref,
   headSha: row.head_sha,
+  headRepositoryId: row.head_repository_id,
   baseRef: row.base_ref,
   baseSha: row.base_sha,
   mergeableState: row.mergeable_state,
@@ -693,6 +704,23 @@ export const createPersistence = (options: PersistenceOptions) => {
     refreshReason: string | null = null,
   ) => {
     const replace = database.transaction(() => {
+      for (const pullRequest of pullRequests) {
+        const existing = database.query(`
+          SELECT repository_id FROM pull_requests WHERE github_id = ?
+        `).get(pullRequest.githubId) as { repository_id: string } | null;
+        if (existing && existing.repository_id !== repositoryId) {
+          throw new Error("Pull request identity cannot move between Repositories");
+        }
+      }
+      for (const stack of stacks) {
+        const existing = database.query(`
+          SELECT repository_id FROM pr_stacks WHERE github_id = ?
+        `).get(stack.githubId) as { repository_id: string } | null;
+        if (existing && existing.repository_id !== repositoryId) {
+          throw new Error("Native stack identity cannot move between Repositories");
+        }
+      }
+
       database.query("UPDATE pull_requests SET is_current = 0 WHERE repository_id = ?").run(repositoryId);
       database.query("UPDATE pr_stacks SET is_current = 0 WHERE repository_id = ?").run(repositoryId);
       database.query(`
@@ -703,11 +731,10 @@ export const createPersistence = (options: PersistenceOptions) => {
       const upsertPullRequest = database.query(`
         INSERT INTO pull_requests (
           github_id, repository_id, number, title, html_url, state, draft, merged_at,
-          head_ref, head_sha, base_ref, base_sha, mergeable_state, auto_merge_enabled,
+          head_ref, head_sha, head_repository_id, base_ref, base_sha, mergeable_state, auto_merge_enabled,
           merge_queue_state, head_ref_exists, observed_head_sha, updated_at, observed_at, is_current
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         ON CONFLICT (github_id) DO UPDATE SET
-          repository_id = excluded.repository_id,
           number = excluded.number,
           title = excluded.title,
           html_url = excluded.html_url,
@@ -716,6 +743,7 @@ export const createPersistence = (options: PersistenceOptions) => {
           merged_at = excluded.merged_at,
           head_ref = excluded.head_ref,
           head_sha = excluded.head_sha,
+          head_repository_id = excluded.head_repository_id,
           base_ref = excluded.base_ref,
           base_sha = excluded.base_sha,
           mergeable_state = excluded.mergeable_state,
@@ -740,6 +768,7 @@ export const createPersistence = (options: PersistenceOptions) => {
           pullRequest.mergedAt,
           pullRequest.headRef,
           pullRequest.headSha,
+          pullRequest.headRepositoryId,
           pullRequest.baseRef,
           pullRequest.baseSha,
           pullRequest.mergeableState,
@@ -757,7 +786,6 @@ export const createPersistence = (options: PersistenceOptions) => {
           github_id, repository_id, node_id, number, trunk_ref, open, observed_at, is_current
         ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
         ON CONFLICT (github_id) DO UPDATE SET
-          repository_id = excluded.repository_id,
           node_id = excluded.node_id,
           number = excluded.number,
           trunk_ref = excluded.trunk_ref,

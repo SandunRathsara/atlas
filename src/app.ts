@@ -239,7 +239,7 @@ export const createApp = (options: AppOptions) => {
     const stacks = await github.listStacks(githubRepository);
     const headRefs = new Set(
       pullRequests
-        .filter((pullRequest) => pullRequest.state === "open")
+        .filter((pullRequest) => pullRequest.state === "open" && pullRequest.headRepositoryId === githubRepository.id)
         .map((pullRequest) => pullRequest.headRef),
     );
     const refs = new Map<string, string | null>();
@@ -250,7 +250,8 @@ export const createApp = (options: AppOptions) => {
 
     const observedAt = new Date(now()).toISOString();
     const pullRequestInputs: PullRequestInput[] = pullRequests.map((pullRequest: GitHubPullRequest) => {
-      const observedHeadSha = pullRequest.state === "open" ? refs.get(pullRequest.headRef) ?? null : null;
+      const sameRepository = pullRequest.headRepositoryId === githubRepository.id;
+      const observedHeadSha = pullRequest.state === "open" && sameRepository ? refs.get(pullRequest.headRef) ?? null : null;
       return {
         githubId: pullRequest.id,
         number: pullRequest.number,
@@ -261,12 +262,13 @@ export const createApp = (options: AppOptions) => {
         mergedAt: pullRequest.mergedAt,
         headRef: pullRequest.headRef,
         headSha: pullRequest.headSha,
+        headRepositoryId: pullRequest.headRepositoryId ?? null,
         baseRef: pullRequest.baseRef,
         baseSha: pullRequest.baseSha,
         mergeableState: pullRequest.mergeableState,
         autoMergeEnabled: pullRequest.autoMergeEnabled,
         mergeQueueState: pullRequest.mergeQueueState,
-        headRefExists: pullRequest.state === "open" ? observedHeadSha !== null : null,
+        headRefExists: pullRequest.state === "open" && sameRepository ? observedHeadSha !== null : null,
         observedHeadSha,
         updatedAt: pullRequest.updatedAt,
         observedAt,
