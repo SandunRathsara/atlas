@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
+import { streamSSE } from "hono/streaming";
 import {
   createAuth,
   safeReturnTo,
@@ -13,6 +14,7 @@ import {
 import {
   createPersistence,
   type Persistence,
+  type RefreshState,
   type Repository,
   type Session,
   type SessionFilter,
@@ -21,6 +23,11 @@ import { createPreparationService } from "./preparation.ts";
 import type { CredentialBoundary } from "./credentials.ts";
 import { createOpenCodeHandoffService } from "./opencode.ts";
 import type { OpenCodeHandoffService } from "./opencode.ts";
+import {
+  createSessionViewerService,
+  ViewerScopeError,
+  type SessionViewerProjection,
+} from "./session-viewer.ts";
 import {
   createRefreshCoordinator,
   githubFailureMessage,
@@ -34,6 +41,7 @@ import {
   renderPendingStartSessionPage,
   renderRepositoriesPage,
   renderSessionDetailPage,
+  renderSessionViewerFragment,
   renderSessionsPage,
   renderStartSessionForm,
   renderStartSessionPage,
@@ -172,6 +180,7 @@ const isCurrentSpec = (spec: { isCurrent: boolean; state: string; hasSpecLabel: 
 
 const isEligibleRepository = (repository: Repository) =>
   repository.accessStatus === "available" &&
+  !repository.removedAt &&
   !repository.archived &&
   !repository.disabled &&
   repository.hasIssues &&
@@ -179,7 +188,74 @@ const isEligibleRepository = (repository: Repository) =>
 
 const promptCharacterCount = (prompt: string) => Array.from(prompt).length;
 
+const refreshIsCurrent = (state: RefreshState | undefined, minimumGeneration: number) => Boolean(
+  state &&
+  state.availability === "available" &&
+  state.requestedGeneration >= minimumGeneration &&
+  state.requestedGeneration <= state.completedGeneration,
+);
+
+const nextRefreshGeneration = (persistence: Persistence, repositoryId: string, view: "access" | "specs" | "pullRequests") =>
+  (persistence.getRefreshState(repositoryId, view)?.requestedGeneration ?? 0) + 1;
+
 const sessionLocation = (session: Pick<Session, "atlasId">) => `/sessions/${encodeURIComponent(session.atlasId)}`;
+
+const viewerLimit = (value: string | undefined) => {
+  if (value === undefined || value === "") return 40;
+  if (!/^\d{1,3}$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 100 ? parsed : undefined;
+};
+
+const viewerCursor = (value: string | undefined) => {
+  if (!value) return undefined;
+  if (value.length > 2048 || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  return value;
+};
+
+const openCodeEventData = (event: unknown) => {
+  const value = (event as { data?: unknown })?.data;
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+};
+
+const openCodeEventSessionId = (event: unknown) => {
+  const data = openCodeEventData(event);
+  if (typeof data.sessionID === "string") return data.sessionID;
+  const form = data.form;
+  if (form && typeof form === "object" && !Array.isArray(form) && typeof (form as Record<string, unknown>).sessionID === "string") {
+    return (form as Record<string, unknown>).sessionID as string;
+  }
+  return undefined;
+};
+
+const openCodeEventLocation = (event: unknown) => {
+  const location = (event as { location?: { directory?: unknown } })?.location;
+  return typeof location?.directory === "string" ? location.directory : undefined;
+};
+
+const isViewerEventRelevant = (
+  event: unknown,
+  scope: { remoteSessionId?: string; directory?: string; repositoryId?: string },
+  repositorySessions: readonly Session[],
+) => {
+  const type = (event as { type?: unknown })?.type;
+  if (typeof type !== "string") return false;
+  if (type === "server.connected") return false;
+  const location = openCodeEventLocation(event);
+  if (scope.directory && location && location !== scope.directory) return false;
+  const sessionId = openCodeEventSessionId(event);
+  if (scope.remoteSessionId && sessionId === scope.remoteSessionId) return true;
+  const data = openCodeEventData(event);
+  if (scope.remoteSessionId && (type === "session.created" || type === "session.forked") && data.parentID === scope.remoteSessionId) return true;
+  if (scope.remoteSessionId && scope.directory === location && type.startsWith("session.")) return true;
+  if (scope.repositoryId && repositorySessions.some((session) =>
+    session.openCodeSessionId === sessionId ||
+    (session.directory && location === session.directory),
+  )) return true;
+  return false;
+};
 
 const pendingStartSession = (form: Record<string, unknown>): PendingStartSession | undefined => {
   const action = stringField(form.pending_action);
@@ -230,23 +306,27 @@ export const createApp = (options: AppOptions) => {
   });
 
   const refreshRepository = async (existing: Repository) => {
+    const accessGeneration = nextRefreshGeneration(persistence, existing.githubId, "access");
+    const specsGeneration = nextRefreshGeneration(persistence, existing.githubId, "specs");
     await refreshCoordinator.refresh(existing.githubId, ["access", "specs"]);
     const repository = persistence.getRepository(existing.githubId)!;
     const access = persistence.getRefreshState(existing.githubId, "access");
     const specs = persistence.getRefreshState(existing.githubId, "specs");
     return {
-      ok: repository.accessStatus === "available" && access?.availability === "available" && specs?.availability === "available",
+      ok: repository.accessStatus === "available" && refreshIsCurrent(access, accessGeneration) && refreshIsCurrent(specs, specsGeneration),
       repository,
     };
   };
 
   const refreshPullRequests = async (existing: Repository) => {
+    const accessGeneration = nextRefreshGeneration(persistence, existing.githubId, "access");
+    const pullRequestsGeneration = nextRefreshGeneration(persistence, existing.githubId, "pullRequests");
     await refreshCoordinator.refresh(existing.githubId, ["access", "pullRequests"]);
     const repository = persistence.getRepository(existing.githubId)!;
     const access = persistence.getRefreshState(existing.githubId, "access");
     const pullRequests = persistence.getRefreshState(existing.githubId, "pullRequests");
     return {
-      ok: repository.accessStatus === "available" && access?.availability === "available" && pullRequests?.availability === "available",
+      ok: repository.accessStatus === "available" && refreshIsCurrent(access, accessGeneration) && refreshIsCurrent(pullRequests, pullRequestsGeneration),
       repository,
     };
   };
@@ -268,6 +348,7 @@ export const createApp = (options: AppOptions) => {
       hasIssues: candidate.hasIssues,
     });
     const result = await refreshRepository(repository);
+    if (result.ok && result.repository.removedAt) persistence.restoreRepository(result.repository.githubId);
     return { ...result, repository: persistence.getRepository(repository.githubId)! };
   };
 
@@ -289,6 +370,7 @@ export const createApp = (options: AppOptions) => {
     persistence,
     onSlotReleased: preparation.enqueue,
   });
+  const sessionViewer = createSessionViewerService(openCode);
   preparation.start();
   openCode.start();
 
@@ -450,6 +532,103 @@ export const createApp = (options: AppOptions) => {
   app.use("/repositories/*", auth.middleware);
   app.use("/sessions", auth.middleware);
   app.use("/sessions/*", auth.middleware);
+  app.use("/events", auth.middleware);
+
+  app.get("/events", (c) => {
+    const sessionId = c.req.query("session");
+    const repositoryId = c.req.query("repository");
+    if ((sessionId && !sessionIdPattern.test(sessionId)) || (repositoryId && !repositoryIdPattern.test(repositoryId))) {
+      return c.text("Invalid event scope", 400);
+    }
+    if (!sessionId && !repositoryId) return c.text("An event scope is required", 400);
+
+    const scopedSession = sessionId ? persistence.getSession(sessionId) : undefined;
+    const scopedRepository = repositoryId ? persistence.getRepository(repositoryId) : scopedSession ? persistence.getRepository(scopedSession.repositoryId) : undefined;
+    if (sessionId && !scopedSession) return c.text("Session not found", 404);
+    if (repositoryId && !scopedRepository) return c.text("Repository not found", 404);
+    if (scopedSession && repositoryId && scopedSession.repositoryId !== repositoryId) return c.text("Event scope does not match the Session Repository", 404);
+    if (!scopedRepository) return c.text("Repository not found", 404);
+
+    const initialIdentity = c.get("auth");
+    const scope = {
+      remoteSessionId: scopedSession?.openCodeSessionId ?? undefined,
+      directory: scopedSession?.directory ?? undefined,
+      repositoryId: scopedRepository.githubId,
+    };
+
+    setPrivateHtmlHeaders(c);
+    c.header("Connection", "keep-alive");
+    return streamSSE(c, async (stream) => {
+      let wake: (() => void) | undefined;
+      let closed = false;
+      const queue: Array<{ event: string; data: string }> = [];
+      const enqueue = (event: string, data: Record<string, unknown>) => {
+        if (closed) return;
+        const existing = queue.find((item) => item.event === event);
+        const encoded = JSON.stringify(data);
+        if (existing) existing.data = encoded;
+        else queue.push({ event, data: encoded });
+        wake?.();
+        wake = undefined;
+      };
+
+      const unsubscribeEvent = openCode.onEvent((event) => {
+        const sessions = scopedSession
+          ? [scopedSession]
+          : persistence.listOpenCodeSessions().filter((candidate) => candidate.repositoryId === scopedRepository.githubId);
+        if (!isViewerEventRelevant(event, scope, sessions)) return;
+        enqueue("refresh", { scope: sessionId ? "session" : "repository", reason: "OpenCode projection changed" });
+      });
+      const unsubscribeTransport = openCode.onTransport((state, reason) => {
+        enqueue(state === "connected" ? "reconcile" : "stale", {
+          scope: sessionId ? "session" : "repository",
+          ...(reason ? { reason } : {}),
+        });
+      });
+
+      stream.onAbort(() => {
+        closed = true;
+        unsubscribeEvent();
+        unsubscribeTransport();
+        wake?.();
+        wake = undefined;
+      });
+
+      const connection = openCode.getClient().then(() => {
+        enqueue("connected", { scope: sessionId ? "session" : "repository" });
+      }).catch(() => {
+        enqueue("stale", {
+          scope: sessionId ? "session" : "repository",
+          reason: "OpenCode connection is unavailable; canonical reconciliation is pending.",
+        });
+      });
+
+      enqueue("connected", { scope: sessionId ? "session" : "repository" });
+      while (!closed && !stream.aborted && !stream.closed) {
+        const current = auth.authenticate(c);
+        if (!current || (initialIdentity.type === "browser" && current.type !== "browser")) {
+          enqueue("auth-expired", { scope: sessionId ? "session" : "repository" });
+        }
+
+        const next = queue.shift();
+        if (next) {
+          await stream.writeSSE(next);
+          if (next.event === "auth-expired") break;
+          continue;
+        }
+
+        await Promise.race([
+          new Promise<void>((resolve) => {
+            wake = resolve;
+          }),
+          stream.sleep(15_000).then(() => undefined),
+        ]);
+      }
+      await connection.catch(() => undefined);
+      unsubscribeEvent();
+      unsubscribeTransport();
+    });
+  });
 
   app.get("/repositories", (c) => {
     const identity = c.get("auth");
@@ -461,7 +640,7 @@ export const createApp = (options: AppOptions) => {
     }));
     const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
     setPrivateHtmlHeaders(c);
-    return c.html(renderRepositoriesPage(csrfToken, repositories));
+    return c.html(renderRepositoriesPage(csrfToken, repositories, includeRemoved));
   });
 
   app.get("/repositories/new", async (c) => {
@@ -476,10 +655,11 @@ export const createApp = (options: AppOptions) => {
       error = githubFailureMessage(reason);
     }
 
-    const enrolled = new Set(persistence.listRepositories(true).map((repository) => repository.githubId));
+    const enrolled = new Map(persistence.listRepositories(true).map((repository) => [repository.githubId, repository]));
     const repositoryForms = available.map((repository) => ({
       repository,
       enrolled: enrolled.has(repository.id),
+      removedAt: enrolled.get(repository.id)?.removedAt,
       csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
     }));
 
@@ -519,6 +699,40 @@ export const createApp = (options: AppOptions) => {
 
     const result = await saveCandidate(candidate);
     const destination = `/repositories/${encodeURIComponent(result.repository.githubId)}/specs`;
+    if (isHtmx(c)) {
+      c.header("HX-Redirect", destination);
+      return c.body(null, 200);
+    }
+    return c.redirect(destination, 303);
+  });
+
+  app.post("/repositories/:repositoryId/remove", async (c) => {
+    setPrivateHtmlHeaders(c);
+    const repositoryId = c.req.param("repositoryId");
+    if (!repositoryIdPattern.test(repositoryId)) return c.text("Invalid Repository ID", 400);
+    if (!persistence.getRepository(repositoryId)) return c.text("Repository not found", 404);
+
+    let form: Record<string, unknown>;
+    try {
+      form = await parseForm(c.req.raw);
+    } catch (error) {
+      if (error instanceof FormBodyTooLarge) return c.text("Request body is too large", 413);
+      return c.text("Malformed Repository removal request", 400);
+    }
+
+    const identity = c.get("auth");
+    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) {
+      return c.text("Request rejected", 403);
+    }
+
+    try {
+      persistence.removeRepository(repositoryId);
+    } catch {
+      return c.text("Atlas could not save the Repository removal.", 503);
+    }
+    preparation.enqueue();
+
+    const destination = "/repositories?removed=1";
     if (isHtmx(c)) {
       c.header("HX-Redirect", destination);
       return c.body(null, 200);
@@ -827,7 +1041,7 @@ export const createApp = (options: AppOptions) => {
     }));
   });
 
-  app.get("/sessions/:sessionId", (c) => {
+  app.get("/sessions/:sessionId", async (c) => {
     const sessionId = c.req.param("sessionId");
     if (!sessionIdPattern.test(sessionId)) return c.text("Invalid Session ID", 400);
     const session = persistence.getSession(sessionId);
@@ -836,11 +1050,69 @@ export const createApp = (options: AppOptions) => {
     if (!repository) return c.text("Repository not found", 404);
     const identity = c.get("auth");
     const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
+    let viewer: SessionViewerProjection | undefined;
+    try {
+      viewer = await sessionViewer.hydrate(session);
+    } catch {
+      viewer = undefined;
+    }
     setPrivateHtmlHeaders(c);
     return c.html(renderSessionDetailPage({
       csrfToken,
       repository,
       session,
+      viewer,
+    }));
+  });
+
+  app.get("/sessions/:sessionId/view", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    if (!sessionIdPattern.test(sessionId)) return c.text("Invalid Session ID", 400);
+    const session = persistence.getSession(sessionId);
+    if (!session) return c.text("Session not found", 404);
+    if (!persistence.getRepository(session.repositoryId)) return c.text("Repository not found", 404);
+
+    const childId = c.req.query("child");
+    if (childId !== undefined && !sessionIdPattern.test(childId)) return c.text("Invalid child Session ID", 400);
+    const cursorValue = viewerCursor(c.req.query("cursor"));
+    if (cursorValue === null) return c.text("Invalid message cursor", 400);
+    const limit = viewerLimit(c.req.query("limit"));
+    if (limit === undefined) return c.text("Invalid viewer page size", 400);
+
+    let projection: SessionViewerProjection;
+    try {
+      projection = await sessionViewer.hydrate(session, {
+        childId,
+        cursor: cursorValue,
+        limit,
+      });
+    } catch (error) {
+      if (error instanceof ViewerScopeError) return c.text("Child Session is not a verified descendant", 404);
+      return c.text("Session viewer unavailable", 503);
+    }
+
+    setPrivateHtmlHeaders(c);
+    const repository = persistence.getRepository(session.repositoryId)!;
+    const requestUrl = new URL(c.req.url);
+    const viewerRequestUrl = `${requestUrl.pathname}${requestUrl.search}`;
+    if (!isHtmx(c)) {
+      const identity = c.get("auth");
+      return c.html(renderSessionDetailPage({
+        csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
+        repository,
+        session,
+        viewer: projection,
+        viewerRequestUrl,
+        viewerLimit: limit,
+      }));
+    }
+    return c.html(renderSessionViewerFragment({
+      session,
+      viewer: projection,
+      endpoint: `/sessions/${encodeURIComponent(session.atlasId)}/view`,
+      eventsEndpoint: `/events?session=${encodeURIComponent(session.atlasId)}`,
+      requestUrl: viewerRequestUrl,
+      limit,
     }));
   });
 

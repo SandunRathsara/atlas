@@ -170,7 +170,30 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   let stopped = false;
   let started = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let connectionPromise: Promise<OpenCodeClient> | undefined;
+  const eventListeners = new Set<(event: OpenCodeEvent) => void>();
+  const transportListeners = new Set<(state: "connected" | "stale", reason?: string) => void>();
   const evidence = new Map<string, EventEvidence>();
+
+  const notifyEvent = (event: OpenCodeEvent) => {
+    for (const listener of eventListeners) {
+      try {
+        listener(event);
+      } catch {
+        // A viewer or browser stream cannot interrupt the shared observer.
+      }
+    }
+  };
+
+  const notifyTransport = (state: "connected" | "stale", reason?: string) => {
+    for (const listener of transportListeners) {
+      try {
+        listener(state, reason);
+      } catch {
+        // A status consumer cannot interrupt connection recovery.
+      }
+    }
+  };
 
   const markStaleSessions = (reason: string) => {
     for (const session of options.persistence.listOpenCodeSessions()) {
@@ -191,6 +214,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     retryAt = Date.now() + retryDelay;
     retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
     markStaleSessions(reason);
+    notifyTransport("stale", reason);
   };
 
   const consumeEvents = async (
@@ -202,6 +226,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     try {
       while (!next.done) {
         const event = next.value;
+        notifyEvent(event);
         const remoteId = eventSessionId(event);
         if (remoteId) {
           const session = options.persistence.listOpenCodeSessions().find((candidate) =>
@@ -239,7 +264,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     }
   };
 
-  const ensureClient = async () => {
+  const connectClient = async () => {
     if (client && streamReady) return client;
     if (Date.now() < retryAt) throw new Error("OpenCode service retry delay is active");
 
@@ -284,8 +309,19 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     streamController = controller;
     streamReady = true;
     retryDelay = 1_000;
+    notifyTransport("connected");
     void consumeEvents(iterator, first, controller).catch(() => undefined);
     return nextClient;
+  };
+
+  const ensureClient = async () => {
+    if (client && streamReady) return client;
+    if (!connectionPromise) {
+      connectionPromise = connectClient().finally(() => {
+        connectionPromise = undefined;
+      });
+    }
+    return connectionPromise;
   };
 
   const saveIntent = (session: Session) => {
@@ -587,6 +623,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     streamController = undefined;
     streamReady = false;
     client = undefined;
+    connectionPromise = undefined;
   };
 
   const enqueue = () => {
@@ -597,7 +634,26 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     wake();
   };
 
-  return { start, stop, enqueue, process: runCycle };
+  const onEvent = (listener: (event: OpenCodeEvent) => void) => {
+    eventListeners.add(listener);
+    return () => eventListeners.delete(listener);
+  };
+
+  const onTransport = (listener: (state: "connected" | "stale", reason?: string) => void) => {
+    transportListeners.add(listener);
+    return () => transportListeners.delete(listener);
+  };
+
+  return {
+    start,
+    stop,
+    enqueue,
+    process: runCycle,
+    getClient: ensureClient,
+    onEvent,
+    onTransport,
+    transportState: () => (streamReady ? "connected" as const : "stale" as const),
+  };
 };
 
 export type OpenCodeHandoffService = ReturnType<typeof createOpenCodeHandoffService>;

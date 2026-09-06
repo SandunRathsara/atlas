@@ -1,5 +1,7 @@
 import type { GitHubRepository } from "./github.ts";
 import type { PrStack, PullRequest, RefreshState, Repository, Session, SessionFilter, SessionState, Spec } from "./persistence.ts";
+import { DEFAULT_VIEWER_MESSAGE_LIMIT } from "./session-viewer.ts";
+import type { SessionViewerProjection, ViewerSessionNode } from "./session-viewer.ts";
 
 const escapeHtml = (value: string) =>
   value.replace(
@@ -207,6 +209,7 @@ const renderShell = ({
 };
 
 const accessLabel = (repository: Repository) => {
+  if (repository.removedAt) return "Removed from Atlas";
   if (repository.accessStatus === "unknown") return "Access unknown";
   if (repository.accessStatus === "revoked") return "Access unavailable";
   if (repository.accessStatus === "transferred") return "Transferred out of scope";
@@ -217,6 +220,7 @@ const accessLabel = (repository: Repository) => {
 };
 
 const accessBadgeClass = (repository: Repository) => {
+  if (repository.removedAt) return "badge-warning";
   if (repository.accessStatus === "unknown" || repository.accessStatus === "transferred" || repository.accessStatus === "suspended") {
     return "badge-warning";
   }
@@ -271,9 +275,25 @@ type RepositoryListEntry = {
   specsRefresh?: RefreshState;
 };
 
+const repositoryAction = (repository: Repository, csrfToken: string) => {
+  const id = encodeURIComponent(repository.githubId);
+  const action = repository.removedAt ? "/repositories" : `/repositories/${id}/remove`;
+  const label = repository.removedAt ? "Re-add Repository" : "Remove from Atlas";
+  const progress = repository.removedAt ? "Re-adding Repository..." : "Removing Repository...";
+  const buttonClass = repository.removedAt ? "btn-primary" : "btn-error";
+  return `<form id="repository-action-${escapeHtml(repository.githubId)}" class="flex flex-wrap items-center gap-3" action="${action}" method="post" hx-post="${action}" hx-target="none" hx-swap="none" hx-indicator="#repository-progress-${escapeHtml(repository.githubId)}" hx-disabled-elt="button[type='submit']">
+    <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
+    ${repository.removedAt ? `<input type="hidden" name="repository_id" value="${escapeHtml(repository.githubId)}">` : ""}
+    <span data-form-status class="sr-only" role="status" aria-live="polite"></span>
+    <button class="btn ${buttonClass} min-h-11 border border-control-border" type="submit">${label}</button>
+    <span id="repository-progress-${escapeHtml(repository.githubId)}" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">${progress}</span>
+  </form>`;
+};
+
 export const renderRepositoriesPage = (
   csrfToken: string,
   repositories: RepositoryListEntry[] = [],
+  includeRemoved = false,
 ) => {
   const list = repositories.length === 0
     ? `<div class="mt-8 rounded-box bg-base-100 p-6">
@@ -281,16 +301,17 @@ export const renderRepositoriesPage = (
         <p class="mt-2 max-w-prose leading-relaxed text-muted">Atlas does not enroll every Repository available to the GitHub App. Add one explicitly to begin browsing.</p>
         <a class="btn btn-primary mt-6 min-h-11 border border-control-border" href="/repositories/new">Add a Repository</a>
       </div>`
-    : `<ul class="mt-8 grid gap-4" aria-label="Enrolled Repositories">${repositories.map(({ repository, accessRefresh, specsRefresh }) => `
-        <li class="rounded-box bg-base-100 p-3 sm:p-6">
+    : `<ul class="mt-8 grid gap-4" aria-label="${includeRemoved ? "Enrolled and removed Repositories" : "Enrolled Repositories"}">${repositories.map(({ repository, accessRefresh, specsRefresh }) => `
+         <li class="rounded-box bg-base-100 p-3 sm:p-6">
           <div class="flex flex-wrap items-start justify-between gap-4">
             <div class="min-w-0">
               <p class="font-mono text-sm text-muted">${escapeHtml(repository.fullName)}</p>
               <h2 class="mt-2 break-words text-lg font-semibold"><a class="text-brand-readable underline decoration-brand-readable/50 underline-offset-4" href="${repositoryLink(repository)}">${escapeHtml(repository.name)}</a></h2>
               ${repository.description ? `<p class="mt-2 max-w-prose leading-normal text-muted">${escapeHtml(repository.description)}</p>` : ""}
-              <p class="mt-3 text-sm text-muted">Default branch: <code class="font-mono text-base-content">${escapeHtml(repository.defaultBranch ?? "none")}</code></p>
-              ${repository.defaultBranch ? "" : `<p class="mt-2 text-sm text-warning">No default-branch commit; cannot start Sessions.</p>`}
-            </div>
+               <p class="mt-3 text-sm text-muted">Default branch: <code class="font-mono text-base-content">${escapeHtml(repository.defaultBranch ?? "none")}</code></p>
+               ${repository.defaultBranch ? "" : `<p class="mt-2 text-sm text-warning">No default-branch commit; cannot start Sessions.</p>`}
+               ${repository.removedAt ? `<p class="mt-2 text-sm text-warning">Removed from Atlas; Sessions and local resources are preserved.</p>` : ""}
+             </div>
             <span class="badge ${accessBadgeClass(repository)}">${accessLabel(repository)}</span>
            </div>
            <div class="mt-5 grid gap-2 text-sm text-muted sm:grid-cols-2">
@@ -300,11 +321,12 @@ export const renderRepositoriesPage = (
            ${refreshWarning("Access", accessRefresh)}
            ${refreshWarning("Specs", specsRefresh)}
            <div class="mt-5 flex flex-wrap items-center gap-3">
-            <a class="btn btn-primary min-h-11 border border-control-border" href="${repositoryLink(repository)}">Browse Specs</a>
-            <a class="btn btn-ghost min-h-11 border border-control-border" href="${pullRequestsLink(repository)}">Browse Pull requests</a>
-            ${safeExternalUrl(repository.htmlUrl) ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(safeExternalUrl(repository.htmlUrl))}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
-          </div>
-        </li>`).join("")}</ul>`;
+             <a class="btn btn-primary min-h-11 border border-control-border" href="${repositoryLink(repository)}">Browse Specs</a>
+             <a class="btn btn-ghost min-h-11 border border-control-border" href="${pullRequestsLink(repository)}">Browse Pull requests</a>
+             ${safeExternalUrl(repository.htmlUrl) ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(safeExternalUrl(repository.htmlUrl))}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
+             ${repositoryAction(repository, csrfToken)}
+           </div>
+         </li>`).join("")}</ul>`;
 
   return renderShell({
     title: "Repositories",
@@ -312,13 +334,18 @@ export const renderRepositoriesPage = (
     csrfToken,
     content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
       <div class="flex flex-wrap items-start justify-between gap-6">
-        <div>
+         <div>
           <p class="text-sm font-medium uppercase tracking-[0.18em] text-brand-readable">Operations</p>
           <h1 id="page-title" class="mt-4 text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Repositories</h1>
           <p class="mt-4 max-w-prose leading-relaxed text-muted">Choose which GitHub Repositories Atlas should browse. App access is eligibility, not enrollment.</p>
-        </div>
-        <a class="btn btn-primary min-h-11 border border-control-border" href="/repositories/new">Add a Repository</a>
-      </div>
+         </div>
+         <div class="flex flex-wrap items-center gap-3">
+           <a class="btn btn-primary min-h-11 border border-control-border" href="/repositories/new">Add a Repository</a>
+           ${includeRemoved
+             ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="/repositories">Hide removed Repositories</a>`
+             : `<a class="btn btn-ghost min-h-11 border border-control-border" href="/repositories?removed=1">Show removed Repositories</a>`}
+         </div>
+       </div>
       ${list}
     </section>`,
   });
@@ -327,6 +354,7 @@ export const renderRepositoriesPage = (
 type AvailableRepository = {
   repository: GitHubRepository;
   enrolled: boolean;
+  removedAt?: string | null;
   csrfToken: string;
 };
 
@@ -348,7 +376,7 @@ export const renderAddRepositoryPage = ({
         <p class="mt-2 max-w-prose leading-relaxed text-muted">The configured GitHub App installation has no Repositories in the allowed organization, or none could be verified.</p>
       </div>`
     : available.length > 0
-      ? `<ul class="mt-8 grid gap-4" aria-label="Repositories available to Atlas">${available.map(({ repository, enrolled, csrfToken: repositoryCsrf }) => `
+      ? `<ul class="mt-8 grid gap-4" aria-label="Repositories available to Atlas">${available.map(({ repository, enrolled, removedAt, csrfToken: repositoryCsrf }) => `
           <li class="rounded-box bg-base-100 p-3 sm:p-6">
             <div class="flex flex-wrap items-start justify-between gap-4">
               <div class="min-w-0">
@@ -361,9 +389,11 @@ export const renderAddRepositoryPage = ({
               <span class="badge ${repository.archived || repository.disabled ? "badge-warning" : "badge-info"}">${repository.archived ? "Archived" : repository.disabled ? "Disabled" : "Available"} for browsing</span>
             </div>
             <div class="mt-5 flex flex-wrap items-center gap-3">
-              ${enrolled
-                ? `<a class="btn btn-primary min-h-11 border border-control-border" href="${repositoryLink({ githubId: repository.id })}">Open Specs</a><span class="text-sm text-muted">Already enrolled; adding again keeps the same Repository.</span>`
-                : `<form id="add-repository-${escapeHtml(repository.id)}" action="/repositories" method="post" hx-post="/repositories" hx-target="#add-repository-${escapeHtml(repository.id)}" hx-swap="none" hx-indicator="#add-progress-${escapeHtml(repository.id)}" hx-disabled-elt="button[type='submit']"><input type="hidden" name="csrf" value="${escapeHtml(repositoryCsrf || csrfToken)}"><input type="hidden" name="repository_id" value="${escapeHtml(repository.id)}"><span data-form-status class="sr-only" role="status" aria-live="polite"></span><button class="btn btn-primary min-h-11 border border-control-border" type="submit">Add Repository</button><span id="add-progress-${escapeHtml(repository.id)}" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Adding Repository...</span></form>`}
+              ${removedAt
+                ? `<form id="add-repository-${escapeHtml(repository.id)}" action="/repositories" method="post" hx-post="/repositories" hx-target="none" hx-swap="none" hx-indicator="#add-progress-${escapeHtml(repository.id)}" hx-disabled-elt="button[type='submit']"><input type="hidden" name="csrf" value="${escapeHtml(repositoryCsrf || csrfToken)}"><input type="hidden" name="repository_id" value="${escapeHtml(repository.id)}"><span data-form-status class="sr-only" role="status" aria-live="polite"></span><button class="btn btn-primary min-h-11 border border-control-border" type="submit">Re-add Repository</button><span id="add-progress-${escapeHtml(repository.id)}" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Re-adding Repository...</span></form><span class="text-sm text-warning">Removed from Atlas; history is preserved.</span>`
+                : enrolled
+                  ? `<a class="btn btn-primary min-h-11 border border-control-border" href="${repositoryLink({ githubId: repository.id })}">Open Specs</a><span class="text-sm text-muted">Already enrolled; adding again keeps the same Repository.</span>`
+                  : `<form id="add-repository-${escapeHtml(repository.id)}" action="/repositories" method="post" hx-post="/repositories" hx-target="none" hx-swap="none" hx-indicator="#add-progress-${escapeHtml(repository.id)}" hx-disabled-elt="button[type='submit']"><input type="hidden" name="csrf" value="${escapeHtml(repositoryCsrf || csrfToken)}"><input type="hidden" name="repository_id" value="${escapeHtml(repository.id)}"><span data-form-status class="sr-only" role="status" aria-live="polite"></span><button class="btn btn-primary min-h-11 border border-control-border" type="submit">Add Repository</button><span id="add-progress-${escapeHtml(repository.id)}" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Adding Repository...</span></form>`}
               ${safeExternalUrl(repository.htmlUrl) ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(safeExternalUrl(repository.htmlUrl))}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
             </div>
           </li>`).join("")}</ul>`
@@ -385,19 +415,23 @@ export const renderAddRepositoryPage = ({
 };
 
 const accessNotice = (repository: Repository) => {
-  if (repository.accessStatus === "unknown") {
-    return `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>GitHub access could not be verified.</strong> Showing the last complete Atlas data when available. This does not confirm that access was removed.</div></div>`;
-  }
-  if (repository.accessStatus === "revoked") {
-    return `<div class="alert alert-error mt-6 leading-normal" role="alert"><div><strong>GitHub App access is unavailable.</strong> This Repository was not present in the last complete installation inventory. Cached data is retained; Atlas will not treat it as eligible for new work.</div></div>`;
-  }
-  if (repository.accessStatus === "transferred") {
-    return `<div class="alert alert-error mt-6 leading-normal" role="alert"><div><strong>Repository is outside the configured organization.</strong> Its cached data is retained and new work is paused.</div></div>`;
-  }
-  if (repository.accessStatus === "suspended") {
-    return `<div class="alert alert-error mt-6 leading-normal" role="alert"><div><strong>The GitHub App installation is suspended.</strong> Cached data is retained and new work is paused.</div></div>`;
-  }
-  return "";
+  return [
+    repository.removedAt
+      ? `<div class="alert alert-warning mt-6 leading-normal" role="status"><div><strong>This Repository was removed from Atlas.</strong> Existing queued and executing Sessions, history, associations, and local resources are preserved. New starts are disabled until the same GitHub Repository is re-added and verified.</div></div>`
+      : "",
+    repository.accessStatus === "unknown"
+      ? `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>GitHub access could not be verified.</strong> Showing the last complete Atlas data when available. This does not confirm that access was removed.</div></div>`
+      : "",
+    repository.accessStatus === "revoked"
+      ? `<div class="alert alert-error mt-6 leading-normal" role="alert"><div><strong>GitHub App access is unavailable.</strong> This Repository was not present in the last complete installation inventory. Cached data is retained; Atlas will not treat it as eligible for new work.</div></div>`
+      : "",
+    repository.accessStatus === "transferred"
+      ? `<div class="alert alert-error mt-6 leading-normal" role="alert"><div><strong>Repository is outside the configured organization.</strong> Its cached data is retained and new work is paused.</div></div>`
+      : "",
+    repository.accessStatus === "suspended"
+      ? `<div class="alert alert-error mt-6 leading-normal" role="alert"><div><strong>The GitHub App installation is suspended.</strong> Cached data is retained and new work is paused.</div></div>`
+      : "",
+  ].filter(Boolean).join("");
 };
 
 const specsNotice = (refresh: RefreshState | undefined, specs: Spec[]) => {
@@ -420,7 +454,7 @@ const specsNotice = (refresh: RefreshState | undefined, specs: Spec[]) => {
   return "";
 };
 
-const renderRepositoryHeading = (repository: Repository, title: string, description: string) => {
+const renderRepositoryHeading = (repository: Repository, title: string, description: string, csrfToken?: string) => {
   const githubUrl = safeExternalUrl(repository.htmlUrl);
   const eligibility = eligibilityNotice(repository);
   return `<div class="flex flex-wrap items-start justify-between gap-6">
@@ -432,6 +466,7 @@ const renderRepositoryHeading = (repository: Repository, title: string, descript
     <div class="flex flex-wrap items-center gap-3">
       <span class="badge ${accessBadgeClass(repository)}">${accessLabel(repository)}</span>
       ${githubUrl ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open Repository on GitHub</a>` : ""}
+      ${csrfToken ? repositoryAction(repository, csrfToken) : ""}
     </div>
   </div>
   ${eligibility ? `<div class="alert alert-warning mt-6 leading-normal" role="status">${escapeHtml(eligibility)}</div>` : ""}`;
@@ -533,7 +568,7 @@ export const renderSpecsPage = ({
     repository,
     csrfToken,
     content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
-      ${renderRepositoryHeading(repository, "Specs", "Open, non-PR GitHub issues labelled exactly spec.")}
+       ${renderRepositoryHeading(repository, "Specs", "Open, non-PR GitHub issues labelled exactly spec.", csrfToken)}
       ${accessNotice(repository)}
       ${refreshWarning("Access", accessRefresh)}
       ${specsNotice(specsRefresh, specs)}
@@ -809,7 +844,7 @@ export const renderPullRequestsPage = ({
     repository,
     csrfToken,
     content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
-      ${renderRepositoryHeading(repository, "Pull requests", "Active GitHub Pull requests, explicit native stack order, and read-only starting-target classification.")}
+       ${renderRepositoryHeading(repository, "Pull requests", "Active GitHub Pull requests, explicit native stack order, and read-only starting-target classification.", csrfToken)}
       ${accessNotice(repository)}
       ${refreshWarning("Access", accessRefresh)}
       ${notice}
@@ -839,7 +874,7 @@ export const renderSpecDetailPage = ({
 }) => {
   const githubUrl = safeExternalUrl(spec.htmlUrl);
   const retained = !(spec.isCurrent && spec.state === "open" && spec.hasSpecLabel && !spec.isPullRequest);
-  const canStart = !retained && repository.accessStatus === "available" && !repository.archived && !repository.disabled && repository.hasIssues && Boolean(repository.defaultBranch);
+   const canStart = !retained && repository.accessStatus === "available" && !repository.removedAt && !repository.archived && !repository.disabled && repository.hasIssues && Boolean(repository.defaultBranch);
   const labels = spec.labels.length > 0
     ? spec.labels.map((label) => `<span class="badge ${label === "spec" ? "badge-info" : ""}">${escapeHtml(label)}</span>`).join(" ")
     : `<span class="text-sm text-muted">No labels recorded</span>`;
@@ -972,9 +1007,10 @@ export const renderStartSessionPage = ({
       <div class="mt-6">
         <p class="font-mono text-sm text-muted">Spec #${escapeHtml(spec.issueNumber)}</p>
         <h1 id="page-title" class="mt-3 break-words text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Start Session</h1>
-        <p class="mt-4 max-w-prose leading-relaxed text-muted">Queue one Atlas implementation attempt for <strong class="text-base-content">${escapeHtml(spec.title)}</strong>. Opening or cancelling this form creates nothing.</p>
-      </div>
-      ${retained ? `<div class="alert alert-warning mt-6 leading-normal" role="alert">This is a retained Spec snapshot and is not currently eligible for a new Session.</div>` : ""}
+       <p class="mt-4 max-w-prose leading-relaxed text-muted">Queue one Atlas implementation attempt for <strong class="text-base-content">${escapeHtml(spec.title)}</strong>. Opening or cancelling this form creates nothing.</p>
+       </div>
+       ${accessNotice(repository)}
+       ${retained ? `<div class="alert alert-warning mt-6 leading-normal" role="alert">This is a retained Spec snapshot and is not currently eligible for a new Session.</div>` : ""}
       <dl class="mt-8 grid gap-4 border-y border-base-300 py-5 text-sm sm:grid-cols-2">
         <div><dt class="font-medium text-muted">Repository</dt><dd class="mt-1 break-words font-mono">${escapeHtml(repository.fullName)}</dd></div>
         <div><dt class="font-medium text-muted">Starting base</dt><dd class="mt-1 break-words font-mono">${escapeHtml(repository.defaultBranch ?? "not available")}</dd></div>
@@ -1075,7 +1111,7 @@ export const renderSessionsPage = ({
     repository,
     csrfToken,
     content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
-      ${renderRepositoryHeading(repository, heading, "Atlas implementation attempts for this Repository. Active includes every unfinished Session, including Queued.")}
+       ${renderRepositoryHeading(repository, heading, "Atlas implementation attempts for this Repository. Active includes every unfinished Session, including Queued.", csrfToken)}
       <nav class="mt-8 flex flex-wrap gap-2" aria-label="Session status filters">
         ${filters.map((value) => `<a class="btn ${value === filter ? "btn-primary border border-control-border" : "btn-ghost border border-control-border"} min-h-11" href="${value === "active" ? sessionsLink(repository) : `${sessionsLink(repository)}?status=${encodeURIComponent(value)}`}"${value === filter ? ' aria-current="page"' : ""}>${escapeHtml(sessionFilterLabel(value))}</a>`).join("")}
       </nav>
@@ -1086,14 +1122,154 @@ export const renderSessionsPage = ({
   });
 };
 
+const viewerJson = (value: unknown) => {
+  try {
+    return escapeHtml(JSON.stringify(value, null, 2) ?? "[unavailable]");
+  } catch {
+    return "[unavailable]";
+  }
+};
+
+const viewerTimestamp = (value: number | undefined) => value === undefined
+  ? "Unknown time"
+  : formatTime(new Date(value).toISOString());
+
+const viewerStatusLabel = (state: ViewerSessionNode["semanticState"]) => {
+  if (state === "running") return "Running";
+  if (state === "waiting") return "Waiting";
+  if (state === "succeeded") return "Succeeded";
+  if (state === "failed") return "Failed";
+  if (state === "interrupted") return "Interrupted";
+  return "Idle";
+};
+
+const viewerStatusClass = (state: ViewerSessionNode["semanticState"]) => {
+  if (state === "running") return "badge-info";
+  if (state === "waiting") return "badge-warning";
+  if (state === "succeeded") return "badge-success";
+  if (state === "failed" || state === "interrupted") return "badge-error";
+  return "badge-neutral";
+};
+
+const renderToolContent = (content: readonly { type: string; text?: string; uri?: string; mime?: string; name?: string | null }[] | undefined) =>
+  content && content.length > 0
+    ? `<ul class="mt-3 grid gap-2" aria-label="Tool output">${content.map((item) => {
+      if (item.type === "file") {
+        const link = item.uri ? safeExternalUrl(item.uri) : "";
+        return `<li class="rounded-field border border-base-300 px-3 py-3 text-sm"><span class="font-medium">File</span> · ${escapeHtml(item.name ?? item.uri ?? "unnamed")} <span class="text-muted">${escapeHtml(item.mime ?? "unknown type")}</span>${link ? ` · <a class="text-brand-readable underline underline-offset-4" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">Open safe link</a>` : ""}</li>`;
+      }
+      return `<li><pre class="max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded-field bg-base-300 p-3 font-mono text-sm leading-relaxed">${escapeHtml(item.text ?? "")}</pre></li>`;
+    }).join("")}</ul>`
+    : "";
+
+const renderTool = (tool: Extract<NonNullable<Extract<ViewerSessionNode["messages"][number], { type: "assistant" }>["content"]>[number], { type: "tool" }>) => {
+  const state = tool.state;
+  const stateLabel = state.status === "streaming" ? "Streaming input" : state.status === "running" ? "Running" : state.status === "completed" ? "Completed" : "Error";
+  const input = state.status === "streaming" ? state.input : state.input;
+  const details = state.status === "streaming"
+    ? `<pre class="mt-3 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded-field bg-base-300 p-3 font-mono text-sm leading-relaxed">${escapeHtml(String(input))}</pre>`
+    : `<dl class="mt-3 grid gap-3 text-sm sm:grid-cols-2"><div><dt class="font-medium text-muted">Input</dt><dd class="mt-1"><pre class="max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded-field bg-base-300 p-3 font-mono leading-relaxed">${viewerJson(input)}</pre></dd></div>${state.status === "running" ? `<div><dt class="font-medium text-muted">Progress</dt><dd class="mt-1"><pre class="max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded-field bg-base-300 p-3 font-mono leading-relaxed">${viewerJson(state.metadata)}</pre></dd></div>` : ""}</dl>`;
+  const output = state.status === "completed" || state.status === "error" ? renderToolContent(state.content) : "";
+  const error = state.status === "error" ? `<div class="alert alert-error mt-3 leading-normal" role="alert"><strong>${escapeHtml(state.error.type)}</strong>: ${escapeHtml(state.error.message)}</div>` : "";
+  return `<article class="mt-4 rounded-field border border-base-300 bg-base-100 p-4" data-tool-id="${escapeHtml(tool.id)}">
+    <div class="flex flex-wrap items-center justify-between gap-3"><h4 class="font-medium break-words">Tool · ${escapeHtml(tool.name)}</h4><span class="badge ${state.status === "error" ? "badge-error" : state.status === "completed" ? "badge-success" : state.status === "running" ? "badge-info" : "badge-warning"}">${stateLabel}</span></div>
+    ${details}${error}${output}
+  </article>`;
+};
+
+const renderAssistantContent = (message: Extract<ViewerSessionNode["messages"][number], { type: "assistant" }>) => message.content.map((part) => {
+  if (part.type === "text") return `<div class="mt-4 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(part.text)}</div>`;
+  if (part.type === "reasoning") return `<details class="mt-4 rounded-field border border-base-300 bg-base-100 p-4" open><summary class="cursor-pointer font-medium">Public reasoning</summary><div class="mt-3 whitespace-pre-wrap break-words leading-relaxed text-muted">${escapeHtml(part.text) || "No public reasoning text was exposed."}</div></details>`;
+  return renderTool(part);
+}).join("");
+
+const renderViewerMessage = (message: ViewerSessionNode["messages"][number]) => {
+  const time = viewerTimestamp(message.time.created);
+  if (message.type === "assistant") {
+    return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><div class="flex flex-wrap items-center justify-between gap-3"><h3 class="font-medium">Assistant</h3><time class="text-sm text-muted" datetime="${escapeHtml(new Date(message.time.created).toISOString())}">${escapeHtml(time)}</time></div>${renderAssistantContent(message)}${message.error ? `<div class="alert alert-error mt-4 leading-normal" role="alert"><strong>${escapeHtml(message.error.type)}</strong>: ${escapeHtml(message.error.message)}</div>` : ""}${message.retry ? `<p class="mt-4 text-sm text-warning">Retry ${message.retry.attempt} scheduled: ${escapeHtml(message.retry.error.message)}</p>` : ""}</li>`;
+  }
+  if (message.type === "user") return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><div class="flex flex-wrap items-center justify-between gap-3"><h3 class="font-medium">User message</h3><time class="text-sm text-muted">${escapeHtml(time)}</time></div><div class="mt-4 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(message.text)}</div></li>`;
+  if (message.type === "shell") return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><div class="flex flex-wrap items-center justify-between gap-3"><h3 class="font-medium">Session shell · ${escapeHtml(message.command)}</h3><span class="badge ${message.status === "exited" ? "badge-success" : message.status === "running" ? "badge-info" : "badge-warning"}">${escapeHtml(message.status)}</span></div><p class="mt-2 text-sm text-muted">${escapeHtml(time)}${message.exit !== undefined ? ` · exit ${escapeHtml(String(message.exit))}` : ""}</p>${message.output ? `<pre class="mt-4 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded-field bg-base-300 p-4 font-mono text-sm leading-relaxed">${escapeHtml(message.output.output)}</pre>` : `<p class="mt-4 text-sm text-muted">Shell output is not present in this projection.</p>`}</li>`;
+  if (message.type === "compaction") return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><div class="flex flex-wrap items-center justify-between gap-3"><h3 class="font-medium">Context compaction</h3><span class="badge badge-warning">${escapeHtml(message.status)}</span></div><p class="mt-3 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(message.status === "failed" ? message.error.message : message.summary)}</p></li>`;
+  if (message.type === "system" || message.type === "synthetic") return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><h3 class="font-medium">${message.type === "system" ? "System" : "Synthetic"}</h3><p class="mt-3 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(message.text)}</p></li>`;
+  if (message.type === "skill") return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><h3 class="font-medium">Skill · ${escapeHtml(message.name)}</h3><p class="mt-3 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(message.text)}</p></li>`;
+  if (message.type === "agent-switched") return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><p class="font-medium">Agent selected: <code class="font-mono">${escapeHtml(message.agent)}</code></p></li>`;
+  if (message.type === "model-switched") return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><p class="font-medium">Model selected: <code class="font-mono">${escapeHtml(message.model.providerID)}/${escapeHtml(message.model.id)}</code></p></li>`;
+  return `<li class="rounded-box bg-base-100 p-4 sm:p-6" data-message-id="${escapeHtml(message.id)}"><p class="font-medium">Location changed</p><p class="mt-2 text-sm text-muted">${escapeHtml(message.location.directory)}</p></li>`;
+};
+
+const renderViewerPending = (node: ViewerSessionNode) => {
+  const { permissions, forms, inbox } = node.pending;
+  if (permissions.length === 0 && forms.length === 0 && inbox.length === 0) return "";
+  return `<section class="mt-8" aria-labelledby="pending-${escapeHtml(node.info.id)}"><h3 id="pending-${escapeHtml(node.info.id)}" class="text-lg font-semibold">Pending OpenCode work</h3><p class="mt-2 text-sm leading-normal text-muted">These records are displayed view-only. Atlas does not reply, cancel, or resume them.</p>${permissions.length > 0 ? `<div class="mt-4 rounded-box bg-base-100 p-4"><h4 class="font-medium">Permission requests</h4><ul class="mt-3 grid gap-3">${permissions.map((permission) => `<li class="rounded-field border border-base-300 p-3"><p class="font-medium">${escapeHtml(permission.action)}</p><p class="mt-1 break-words text-sm text-muted">${escapeHtml(permission.resources.join(", "))}</p>${permission.message ? `<p class="mt-2 whitespace-pre-wrap break-words text-sm">${escapeHtml(permission.message)}</p>` : ""}</li>`).join("")}</ul></div>` : ""}${forms.length > 0 ? `<div class="mt-4 rounded-box bg-base-100 p-4"><h4 class="font-medium">Forms</h4><ul class="mt-3 grid gap-3">${forms.map((form) => `<li class="rounded-field border border-base-300 p-3"><p class="font-medium">${escapeHtml(form.title)}</p><p class="mt-1 text-sm text-muted">${form.fields.length} field${form.fields.length === 1 ? "" : "s"} · response controls are disabled</p></li>`).join("")}</ul></div>` : ""}${inbox.length > 0 ? `<div class="mt-4 rounded-box bg-base-100 p-4"><h4 class="font-medium">Queued inbox work</h4><p class="mt-2 text-sm leading-normal text-muted">Inbox work is not treated as proof that a person is being asked to respond.</p><p class="mt-2 text-sm">${inbox.length} queued item${inbox.length === 1 ? "" : "s"}</p></div>` : ""}</section>`;
+};
+
+const renderViewerShells = (node: ViewerSessionNode) => node.shells.length === 0 ? "" : `<section class="mt-8" aria-labelledby="shells-${escapeHtml(node.info.id)}"><h3 id="shells-${escapeHtml(node.info.id)}" class="text-lg font-semibold">Running generic shells</h3><p class="mt-2 text-sm leading-normal text-muted">Only shells explicitly correlated to this Session are shown. Exited generic shells may not be recoverable after a disconnect.</p><ul class="mt-4 grid gap-4">${node.shells.map((shell) => `<li class="rounded-box bg-base-100 p-4"><div class="flex flex-wrap items-center justify-between gap-3"><code class="break-words font-mono">${escapeHtml(shell.info.command)}</code><span class="badge badge-info">${escapeHtml(shell.info.status)}</span></div><p class="mt-2 text-sm text-muted">${escapeHtml(shell.info.cwd)}</p>${shell.output ? `<pre class="mt-4 max-h-96 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-field bg-base-300 p-4 font-mono text-sm leading-relaxed">${escapeHtml(shell.output.output)}</pre>` : shell.outputUnavailable ? `<p class="mt-4 text-sm text-warning">Shell output is currently unavailable.</p>` : ""}</li>`).join("")}</ul></section>`;
+
+const renderViewerNode = (node: ViewerSessionNode, selectedId: string, rootId: string, endpoint: string, limit: number) => {
+  const childLinks = node.children.length > 0
+    ? `<section class="mt-8" aria-labelledby="descendants-${escapeHtml(node.info.id)}"><h3 id="descendants-${escapeHtml(node.info.id)}" class="text-lg font-semibold">Descendant Sessions</h3><p class="mt-2 text-sm leading-normal text-muted">Relationships are verified through OpenCode Session records. A child is called an active subagent only when active execution and its agent mode both support that label.</p><ul class="mt-4 grid gap-3">${node.children.map((child) => `<li class="rounded-box bg-base-100 p-4"><div class="flex flex-wrap items-start justify-between gap-3"><div class="min-w-0"><p class="font-mono break-all text-sm text-muted">${escapeHtml(child.info.id)}</p><p class="mt-2 break-words font-medium">${escapeHtml(child.info.title ?? "Untitled child Session")}</p></div><span class="flex flex-wrap gap-2"><span class="badge ${child.activeSubagent ? "badge-info" : child.active ? "badge-warning" : "badge-neutral"}">${child.activeSubagent ? "Active subagent" : child.active ? "Active child Session" : "Child Session"}</span>${child.agentMode ? `<span class="badge badge-neutral">agent: ${escapeHtml(child.agentMode)}</span>` : ""}</span></div><a class="btn btn-ghost mt-4 min-h-11 border border-control-border" href="${escapeHtml(`${endpoint}?child=${encodeURIComponent(child.info.id)}&limit=${limit}`)}"${child.info.id === selectedId ? ' aria-current="page"' : ""}>Open child conversation</a></li>`).join("")}</ul></section>`
+    : "";
+  const messagePage = node.messagesLoaded
+    ? node.messages.length > 0
+      ? `<ol class="mt-5 grid gap-4" aria-label="Session messages">${node.messages.map(renderViewerMessage).join("")}</ol>`
+      : `<div class="mt-5 rounded-box bg-base-100 p-5"><p class="font-medium">No messages in this projected page</p><p class="mt-2 text-sm leading-normal text-muted">An empty final page is valid; it does not imply missing or completed execution.</p></div>`
+    : `<div class="mt-5 alert alert-warning leading-normal" role="status">${escapeHtml(node.unavailableReason ?? "Messages are not currently available.")}</div>`;
+  const next = node.nextMessageCursor
+    ? `<a class="btn btn-ghost mt-5 min-h-11 border border-control-border" href="${escapeHtml(`${endpoint}?${new URLSearchParams({ ...(node.info.id !== rootId ? { child: node.info.id } : {}), cursor: node.nextMessageCursor, limit: String(limit) }).toString()}`)}">Load next message page</a>`
+    : "";
+  return `${childLinks}${renderViewerPending(node)}${renderViewerShells(node)}<section class="mt-10" aria-labelledby="timeline-${escapeHtml(node.info.id)}"><div class="flex flex-wrap items-start justify-between gap-4"><div><h3 id="timeline-${escapeHtml(node.info.id)}" class="text-lg font-semibold">${node.info.id === selectedId ? "Conversation timeline" : "Conversation"}</h3><p class="mt-2 text-sm text-muted">${node.messagesLoaded ? `${node.messages.length} projected message${node.messages.length === 1 ? "" : "s"}` : "Message projection unavailable"} · last OpenCode update ${escapeHtml(viewerTimestamp(node.info.time.updated))}</p></div><span class="badge ${viewerStatusClass(node.semanticState)}">${viewerStatusLabel(node.semanticState)}</span></div>${messagePage}${next}</section>`;
+};
+
+export const renderSessionViewerFragment = ({
+  session,
+  viewer,
+  endpoint,
+  eventsEndpoint,
+  requestUrl,
+  limit: requestedLimit,
+}: {
+  session: Session;
+  viewer?: SessionViewerProjection;
+  endpoint: string;
+  eventsEndpoint: string;
+  requestUrl?: string;
+  limit?: number;
+}) => {
+  const limit = requestedLimit ?? DEFAULT_VIEWER_MESSAGE_LIMIT;
+  const freshness = viewer?.freshness ?? "partial";
+  const status = freshness === "stale"
+    ? `<div class="alert alert-warning mt-6 leading-normal" role="status" data-viewer-status data-viewer-stale><strong>Stale.</strong> ${escapeHtml(viewer?.staleReason ?? "OpenCode transport or reconciliation is unavailable. Visible content is retained.")}</div>`
+    : freshness === "partial"
+      ? `<div class="alert alert-warning mt-6 leading-normal" role="status" data-viewer-status><strong>Partial Session view.</strong> Missing or unavailable projections are shown as partial data, not as an empty conversation.</div>`
+      : `<div class="alert alert-success mt-6 leading-normal" role="status" data-viewer-status>Canonical OpenCode Session projections are fresh. Live updates remain view-only.</div>`;
+  const partial = viewer?.partialReasons && viewer.partialReasons.length > 0
+    ? `<details class="mt-4 rounded-box bg-base-100 p-4" data-viewer-notes><summary class="cursor-pointer font-medium">Projection notes</summary><ul class="mt-3 grid gap-2 text-sm leading-normal text-muted">${viewer.partialReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></details>`
+    : "";
+  const content = viewer?.available && viewer.selected && viewer.root
+    ? renderViewerNode(viewer.selected, viewer.selected.info.id, viewer.root.info.id, endpoint, limit)
+    : `<div class="mt-8 rounded-box bg-base-100 p-5"><p class="font-medium">OpenCode execution history unavailable</p><p class="mt-2 leading-normal text-muted">Atlas retains the Session and does not infer an empty or completed conversation from a missing upstream resource.</p></div>`;
+  return `<section id="session-viewer" class="mt-10 border-t border-base-300 pt-8" data-session-viewer data-viewer-freshness="${freshness}" data-session-viewer-url="${escapeHtml(requestUrl ?? endpoint)}" data-session-events-url="${escapeHtml(eventsEndpoint)}" data-session-id="${escapeHtml(session.atlasId)}" aria-labelledby="session-viewer-title">
+    <div class="flex flex-wrap items-start justify-between gap-4"><div><p class="text-sm font-medium uppercase tracking-[0.18em] text-brand-readable">Terminal desk</p><h2 id="session-viewer-title" class="mt-3 text-xl font-semibold">Live Session view</h2><p class="mt-2 max-w-prose leading-relaxed text-muted">Canonical messages, typed tool activity, pending records, and verified descendants. Atlas provides no execution controls here.</p></div><span class="badge ${freshness === "fresh" ? "badge-success" : "badge-warning"}" data-viewer-connection>${freshness === "fresh" ? "Fresh" : freshness === "stale" ? "Stale" : "Partial"}</span></div>
+    ${status}${partial}
+    <div data-viewer-content>${content}</div>
+  </section>`;
+};
+
 export const renderSessionDetailPage = ({
   csrfToken,
   repository,
   session,
+  viewer,
+  viewerRequestUrl,
+  viewerLimit,
 }: {
   csrfToken: string;
   repository: Repository;
   session: Session;
+  viewer?: SessionViewerProjection;
+  viewerRequestUrl?: string;
+  viewerLimit?: number;
 }) => {
   const specPath = `/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(session.specIssueNumber)}`;
   const githubUrl = safeExternalUrl(session.specHtmlUrl);
@@ -1141,12 +1317,14 @@ export const renderSessionDetailPage = ({
           <p class="mt-4 max-w-prose break-words leading-relaxed text-muted">Spec #${escapeHtml(session.specIssueNumber)}: ${escapeHtml(session.specTitle)}</p>
         </div>
         <span class="flex flex-wrap items-center gap-2"><span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>${sessionFreshnessMarkup(session)}</span>
-      </div>
-      ${preparationNotice}
-      <div class="mt-8 flex flex-wrap gap-4">
-        <a class="btn btn-ghost min-h-11 border border-control-border" href="${specPath}">Back to Spec</a>
-        <a class="btn btn-ghost min-h-11 border border-control-border" href="${sessionsLink(repository)}">Repository Sessions</a>
-      </div>
+       </div>
+       ${accessNotice(repository)}
+       ${preparationNotice}
+       <div class="mt-8 flex flex-wrap gap-4">
+         <a class="btn btn-ghost min-h-11 border border-control-border" href="${specPath}">Back to Spec</a>
+         <a class="btn btn-ghost min-h-11 border border-control-border" href="${sessionsLink(repository)}">Repository Sessions</a>
+         ${repositoryAction(repository, csrfToken)}
+       </div>
       <dl class="mt-8 grid gap-4 border-y border-base-300 py-5 text-sm sm:grid-cols-2">
         <div><dt class="font-medium text-muted">State</dt><dd class="mt-1">${escapeHtml(sessionStateLabel(session.state))}</dd></div>
         <div><dt class="font-medium text-muted">Submitted</dt><dd class="mt-1">${escapeHtml(formatTime(session.submittedAt))}</dd></div>
@@ -1185,9 +1363,17 @@ export const renderSessionDetailPage = ({
         <article class="mt-6 rounded-box bg-base-100 p-5 sm:p-6">
           <h3 class="font-medium">Initial prompt</h3>
           <pre class="mt-4 max-w-full overflow-x-auto whitespace-pre-wrap break-words font-mono text-sm leading-relaxed">${escapeHtml(session.prompt)}</pre>
-        </article>
-      </section>
-    </section>`,
+         </article>
+       </section>
+       ${renderSessionViewerFragment({
+         session,
+         viewer,
+         endpoint: `/sessions/${encodeURIComponent(session.atlasId)}/view`,
+         eventsEndpoint: `/events?session=${encodeURIComponent(session.atlasId)}`,
+         requestUrl: viewerRequestUrl,
+         limit: viewerLimit,
+       })}
+     </section>`,
   });
 };
 
@@ -1207,7 +1393,8 @@ export const renderSpecUnavailablePage = ({
   repository,
   csrfToken,
   content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
-     ${renderRepositoryHeading(repository, "Specs unavailable", "Atlas could not complete the first Specs read.")}
+     ${renderRepositoryHeading(repository, "Specs unavailable", "Atlas could not complete the first Specs read.", csrfToken)}
+     ${accessNotice(repository)}
      ${refreshWarning("Access", accessRefresh)}
      ${refreshWarning("Specs", specsRefresh)}
      <div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>GitHub synchronization is unavailable.</strong> Retry when the configured App access is available. Atlas has not invented an empty list.</div></div>

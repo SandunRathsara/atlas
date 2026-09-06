@@ -911,6 +911,22 @@ export const createPersistence = (options: PersistenceOptions) => {
     return getRepository(input.githubId)!;
   };
 
+  const removeRepository = (githubId: string) => {
+    database.query(`
+      UPDATE repositories
+      SET removed_at = COALESCE(removed_at, ?)
+      WHERE github_id = ?
+    `).run(isoNow(now), githubId);
+    return getRepository(githubId);
+  };
+
+  const restoreRepository = (githubId: string) => {
+    database.query(`
+      UPDATE repositories SET removed_at = NULL WHERE github_id = ?
+    `).run(githubId);
+    return getRepository(githubId);
+  };
+
   const saveRepositoryObservation = (
     input: RepositoryInput,
     generation: number,
@@ -1927,6 +1943,8 @@ export const createPersistence = (options: PersistenceOptions) => {
     getRepository,
     listRepositories,
     upsertRepository,
+    removeRepository,
+    restoreRepository,
     saveRepositoryObservation,
     updateAccess,
     markAccessObservation,
