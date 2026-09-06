@@ -128,7 +128,7 @@ export const renderLoginPage = (options: {
 const renderLogoutForm = (csrfToken: string) => `<form id="logout-form" class="flex flex-wrap items-center gap-3" action="/logout" method="post" hx-post="/logout" hx-target="#logout-form" hx-swap="none" hx-indicator="#logout-progress" hx-disabled-elt="button[type='submit']">
   <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
   <span data-form-status class="sr-only" role="status" aria-live="polite"></span>
-  <button class="btn btn-ghost min-h-11 border border-control-border/60" type="submit">Sign out</button>
+  <button class="btn btn-ghost min-h-11 border border-control-border" type="submit">Sign out</button>
   <span id="logout-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Signing out...</span>
 </form>`;
 
@@ -180,8 +180,8 @@ const renderShell = ({
           <span class="hidden max-w-[18rem] truncate text-sm text-muted sm:inline" title="${escapeHtml(repositoryName)}">${escapeHtml(repositoryName)}</span>
         </div>
         <div class="relative flex flex-wrap items-center gap-3">
-          <details class="lg:hidden">
-            <summary class="btn btn-ghost min-h-11 list-none border border-control-border/60" aria-label="Open primary navigation">Navigation</summary>
+          <details class="lg:hidden" data-mobile-navigation>
+            <summary class="btn btn-ghost min-h-11 list-none border border-control-border" data-mobile-navigation-trigger aria-label="Open primary navigation">Navigation</summary>
             <nav class="absolute right-0 top-14 z-30 w-64 rounded-box border border-base-300 bg-base-100 p-3 shadow-xl" aria-label="Primary navigation">
               ${mobileLinks}
             </nav>
@@ -301,8 +301,8 @@ export const renderRepositoriesPage = (
            ${refreshWarning("Specs", specsRefresh)}
            <div class="mt-5 flex flex-wrap items-center gap-3">
             <a class="btn btn-primary min-h-11 border border-control-border" href="${repositoryLink(repository)}">Browse Specs</a>
-            <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${pullRequestsLink(repository)}">Browse Pull requests</a>
-            ${safeExternalUrl(repository.htmlUrl) ? `<a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(safeExternalUrl(repository.htmlUrl))}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
+            <a class="btn btn-ghost min-h-11 border border-control-border" href="${pullRequestsLink(repository)}">Browse Pull requests</a>
+            ${safeExternalUrl(repository.htmlUrl) ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(safeExternalUrl(repository.htmlUrl))}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
           </div>
         </li>`).join("")}</ul>`;
 
@@ -364,7 +364,7 @@ export const renderAddRepositoryPage = ({
               ${enrolled
                 ? `<a class="btn btn-primary min-h-11 border border-control-border" href="${repositoryLink({ githubId: repository.id })}">Open Specs</a><span class="text-sm text-muted">Already enrolled; adding again keeps the same Repository.</span>`
                 : `<form id="add-repository-${escapeHtml(repository.id)}" action="/repositories" method="post" hx-post="/repositories" hx-target="#add-repository-${escapeHtml(repository.id)}" hx-swap="none" hx-indicator="#add-progress-${escapeHtml(repository.id)}" hx-disabled-elt="button[type='submit']"><input type="hidden" name="csrf" value="${escapeHtml(repositoryCsrf || csrfToken)}"><input type="hidden" name="repository_id" value="${escapeHtml(repository.id)}"><span data-form-status class="sr-only" role="status" aria-live="polite"></span><button class="btn btn-primary min-h-11 border border-control-border" type="submit">Add Repository</button><span id="add-progress-${escapeHtml(repository.id)}" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Adding Repository...</span></form>`}
-              ${safeExternalUrl(repository.htmlUrl) ? `<a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(safeExternalUrl(repository.htmlUrl))}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
+              ${safeExternalUrl(repository.htmlUrl) ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(safeExternalUrl(repository.htmlUrl))}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
             </div>
           </li>`).join("")}</ul>`
       : "";
@@ -379,7 +379,7 @@ export const renderAddRepositoryPage = ({
       <p class="mt-4 max-w-prose leading-relaxed text-muted">Select a Repository that is available to the configured App installation. Atlas will save it before attempting its first Specs synchronization.</p>
       ${errorMarkup}
       ${list}
-      <a class="btn btn-ghost mt-8 min-h-11 border border-control-border/60" href="/repositories">Back to Repositories</a>
+      <a class="btn btn-ghost mt-8 min-h-11 border border-control-border" href="/repositories">Back to Repositories</a>
     </section>`,
   });
 };
@@ -431,7 +431,7 @@ const renderRepositoryHeading = (repository: Repository, title: string, descript
     </div>
     <div class="flex flex-wrap items-center gap-3">
       <span class="badge ${accessBadgeClass(repository)}">${accessLabel(repository)}</span>
-      ${githubUrl ? `<a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open Repository on GitHub</a>` : ""}
+      ${githubUrl ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open Repository on GitHub</a>` : ""}
     </div>
   </div>
   ${eligibility ? `<div class="alert alert-warning mt-6 leading-normal" role="status">${escapeHtml(eligibility)}</div>` : ""}`;
@@ -858,7 +858,7 @@ export const renderSpecDetailPage = ({
         </div>
         <div class="flex flex-wrap items-center gap-3">
           <span class="badge ${retained ? "badge-warning" : "badge-info"}">${retained ? "Retained snapshot" : "Open Spec"}</span>
-          ${githubUrl ? `<a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
+          ${githubUrl ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>` : ""}
           ${canStart ? `<a class="btn btn-primary min-h-11 border border-control-border" href="${`/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(spec.issueNumber)}/sessions/new`}">Start Session</a>` : ""}
         </div>
       </div>
@@ -926,7 +926,7 @@ export const renderStartSessionForm = ({
     ${errorMarkup}
     <div class="mt-8 flex flex-wrap items-center gap-4">
       <button class="btn btn-primary min-h-11 border border-control-border" type="submit">Start Session</button>
-      <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${escapeHtml(action.replace(/\/sessions$/, ""))}">Cancel</a>
+      <a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(action.replace(/\/sessions$/, ""))}">Cancel</a>
       <span id="start-session-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Starting Session…</span>
     </div>
     <p data-form-status class="sr-only" role="status" aria-live="polite"></p>
@@ -1047,7 +1047,7 @@ const sessionListRow = (session: Session) => `<li class="rounded-box bg-base-100
   </dl>
   <p class="mt-5 max-w-prose truncate text-sm text-muted">Prompt: ${escapeHtml(session.prompt)}</p>
   ${session.stateReason ? `<p class="mt-3 max-w-prose text-sm leading-normal text-muted">${escapeHtml(session.stateReason)}</p>` : ""}
-  <a class="btn btn-ghost mt-5 min-h-11 border border-control-border/60" href="${`/sessions/${encodeURIComponent(session.atlasId)}`}">View Session</a>
+  <a class="btn btn-ghost mt-5 min-h-11 border border-control-border" href="${`/sessions/${encodeURIComponent(session.atlasId)}`}">View Session</a>
 </li>`;
 
 export const renderSessionsPage = ({
@@ -1077,7 +1077,7 @@ export const renderSessionsPage = ({
     content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
       ${renderRepositoryHeading(repository, heading, "Atlas implementation attempts for this Repository. Active includes every unfinished Session, including Queued.")}
       <nav class="mt-8 flex flex-wrap gap-2" aria-label="Session status filters">
-        ${filters.map((value) => `<a class="btn ${value === filter ? "btn-primary border border-control-border" : "btn-ghost border border-control-border/60"} min-h-11" href="${value === "active" ? sessionsLink(repository) : `${sessionsLink(repository)}?status=${encodeURIComponent(value)}`}"${value === filter ? ' aria-current="page"' : ""}>${escapeHtml(sessionFilterLabel(value))}</a>`).join("")}
+        ${filters.map((value) => `<a class="btn ${value === filter ? "btn-primary border border-control-border" : "btn-ghost border border-control-border"} min-h-11" href="${value === "active" ? sessionsLink(repository) : `${sessionsLink(repository)}?status=${encodeURIComponent(value)}`}"${value === filter ? ' aria-current="page"' : ""}>${escapeHtml(sessionFilterLabel(value))}</a>`).join("")}
       </nav>
       ${sessions.length > 0
         ? `<ul class="mt-8 grid gap-4" aria-label="${escapeHtml(heading)}">${sessions.map(sessionListRow).join("")}</ul>`
@@ -1144,8 +1144,8 @@ export const renderSessionDetailPage = ({
       </div>
       ${preparationNotice}
       <div class="mt-8 flex flex-wrap gap-4">
-        <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${specPath}">Back to Spec</a>
-        <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${sessionsLink(repository)}">Repository Sessions</a>
+        <a class="btn btn-ghost min-h-11 border border-control-border" href="${specPath}">Back to Spec</a>
+        <a class="btn btn-ghost min-h-11 border border-control-border" href="${sessionsLink(repository)}">Repository Sessions</a>
       </div>
       <dl class="mt-8 grid gap-4 border-y border-base-300 py-5 text-sm sm:grid-cols-2">
         <div><dt class="font-medium text-muted">State</dt><dd class="mt-1">${escapeHtml(sessionStateLabel(session.state))}</dd></div>
@@ -1212,6 +1212,6 @@ export const renderSpecUnavailablePage = ({
      ${refreshWarning("Specs", specsRefresh)}
      <div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>GitHub synchronization is unavailable.</strong> Retry when the configured App access is available. Atlas has not invented an empty list.</div></div>
     <p class="mt-6 text-sm text-muted">${refreshLine("Access", accessRefresh)} · ${refreshLine("Specs", specsRefresh)}</p>
-    <a class="btn btn-ghost mt-8 min-h-11 border border-control-border/60" href="${repositoryLink(repository)}">Back to Specs</a>
+    <a class="btn btn-ghost mt-8 min-h-11 border border-control-border" href="${repositoryLink(repository)}">Back to Specs</a>
   </section>`,
 });

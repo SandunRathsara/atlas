@@ -28,6 +28,15 @@
     });
   });
 
+  document.body.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const navigation = event.target instanceof Element ? event.target.closest("[data-mobile-navigation]") : null;
+    if (!navigation?.open) return;
+    event.preventDefault();
+    navigation.open = false;
+    navigation.querySelector("[data-mobile-navigation-trigger]")?.focus();
+  });
+
   window.addEventListener("DOMContentLoaded", () => {
     document.querySelector("[data-focus-on-swap], [data-page-heading]")?.focus();
   });
