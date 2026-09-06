@@ -199,7 +199,10 @@ export const createWebhookApp = (options: WebhookAppOptions) => {
       return c.text("Invalid webhook JSON", 400);
     }
 
-    if (event === "ping") return c.body(null, 204);
+    if (event === "ping") {
+      if (!scopeIsValid(payload, event, options.organization, options.installationId)) return c.text("Webhook scope rejected", 403);
+      return c.body(null, 204);
+    }
     const action = string(payload.action);
     if (!knownEvent(event)) return c.text("Unsupported webhook event", 400);
     if (!validAction(event, action)) return c.text("Unsupported webhook action", 400);

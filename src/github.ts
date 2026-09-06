@@ -66,18 +66,21 @@ export type GitHubRef = {
 export class GitHubError extends Error {
   readonly status: number | undefined;
   readonly kind: "configuration" | "access" | "suspended" | "not-found" | "temporary" | "invalid";
+  readonly retryAfterMs: number | undefined;
 
   constructor(
     message: string,
     options: {
       status?: number;
       kind: GitHubError["kind"];
+      retryAfterMs?: number;
     },
   ) {
     super(message);
     this.name = "GitHubError";
     this.status = options.status;
     this.kind = options.kind;
+    this.retryAfterMs = options.retryAfterMs;
   }
 }
 
@@ -274,10 +277,30 @@ const nextPageUrl = (url: string) => {
 
 const isTemporaryStatus = (status: number) => status === 408 || status === 425 || status === 429 || status >= 500;
 
+const retryAfterMilliseconds = (value: string | null) => {
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : 0;
+};
+
+const rateLimitResetMilliseconds = (value: string | null) => {
+  const seconds = Number(value);
+  if (!Number.isSafeInteger(seconds) || seconds < 0) return 0;
+  return Math.max(0, seconds * 1000 - Date.now());
+};
+
+const rateLimited = (status: number, message: string, response: Response) =>
+  status === 429
+  || (status === 403 && response.headers.get("x-ratelimit-remaining")?.trim() === "0")
+  || /rate limit|secondary rate limit|abuse detection|retry later/i.test(message);
+
 export const createGitHubClient = (options: GitHubClientOptions): GitHubClient => {
   const fetcher = options.fetcher ?? fetch;
   const baseUrl = (options.baseUrl ?? "https://api.github.com").replace(/\/$/, "");
   const apiVersion = options.apiVersion ?? DEFAULT_API_VERSION;
+  let rateLimitBlockedUntil = 0;
 
   const request = async (pathOrUrl: string, init: Pick<RequestInit, "method" | "body"> = {}) => {
     const token = options.getToken();
@@ -297,6 +320,8 @@ export const createGitHubClient = (options: GitHubClientOptions): GitHubClient =
       if (error instanceof GitHubError) throw error;
       throw new GitHubError("GitHub returned an invalid request URL", { kind: "invalid" });
     }
+    const rateLimitDelay = rateLimitBlockedUntil - Date.now();
+    if (rateLimitDelay > 0) await new Promise((resolve) => setTimeout(resolve, rateLimitDelay));
     let response: Response;
     try {
       response = await fetcher(url, {
@@ -327,15 +352,36 @@ export const createGitHubClient = (options: GitHubClientOptions): GitHubClient =
       } catch {
         // The status still gives us a safe access/temporary classification.
       }
+      const retryAfterMs = Math.max(
+        retryAfterMilliseconds(response.headers.get("retry-after")),
+        rateLimited(status, errorMessage, response)
+          ? rateLimitResetMilliseconds(response.headers.get("x-ratelimit-reset"))
+          : 0,
+      );
+      if (retryAfterMs > 0) rateLimitBlockedUntil = Math.max(rateLimitBlockedUntil, Date.now() + retryAfterMs);
       const kind = status === 401 || status === 403
-        ? /suspend/i.test(errorMessage) ? "suspended" : "access"
+        ? rateLimited(status, errorMessage, response)
+          ? "temporary"
+          : /suspend/i.test(errorMessage) ? "suspended" : "access"
         : status === 404
           ? "not-found"
           : isTemporaryStatus(status)
             ? "temporary"
             : "invalid";
-      throw new GitHubError(`GitHub request failed with status ${status}`, { status, kind });
+      throw new GitHubError(`GitHub request failed with status ${status}`, {
+        status,
+        kind,
+        retryAfterMs: retryAfterMs || undefined,
+      });
     }
+
+    const retryAfterMs = Math.max(
+      retryAfterMilliseconds(response.headers.get("retry-after")),
+      response.headers.get("x-ratelimit-remaining")?.trim() === "0"
+        ? rateLimitResetMilliseconds(response.headers.get("x-ratelimit-reset"))
+        : 0,
+    );
+    if (retryAfterMs > 0) rateLimitBlockedUntil = Math.max(rateLimitBlockedUntil, Date.now() + retryAfterMs);
 
     let payload: unknown;
     try {

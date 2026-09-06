@@ -33,6 +33,11 @@ export type RefreshCoordinatorOptions = {
   now?: () => number;
 };
 
+type RefreshPassResult = {
+  failed: boolean;
+  retryAfterMs?: number;
+};
+
 const repositoryInput = (
   repository: GitHubRepository,
   organization: string,
@@ -200,16 +205,16 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
     }
   };
 
-  const runPass = async (repositoryId: string, views: RefreshView[]) => {
+  const runPass = async (repositoryId: string, views: RefreshView[]): Promise<RefreshPassResult> => {
     const generations = new Map<RefreshView, number>();
     for (const view of views) {
       const state = options.persistence.getRefreshState(repositoryId, view);
       if (state && state.requestedGeneration > state.completedGeneration) generations.set(view, state.requestedGeneration);
     }
-    if (generations.size === 0) return false;
+    if (generations.size === 0) return { failed: false };
 
     const existing = options.persistence.getRepository(repositoryId);
-    if (!existing) return false;
+    if (!existing) return { failed: false };
 
     let inventory: GitHubRepository[];
     try {
@@ -224,7 +229,10 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
       for (const [view, generation] of generations) {
         options.persistence.markRefreshFailure(repositoryId, view, reason, "unavailable", generation);
       }
-      return true;
+      return {
+        failed: true,
+        retryAfterMs: error instanceof GitHubError ? error.retryAfterMs : undefined,
+      };
     }
 
     const candidate = inventory.find((item) => item.id === existing.githubId);
@@ -238,7 +246,7 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
           generations.get("access"),
         );
       }
-      return generations.has("specs") || generations.has("pullRequests");
+      return { failed: generations.has("specs") || generations.has("pullRequests") };
     }
 
     if (candidate.owner.toLocaleLowerCase() !== options.organization.toLocaleLowerCase()) {
@@ -255,7 +263,7 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
         const generation = generations.get(view);
         if (generation !== undefined) options.persistence.markRefreshFailure(repositoryId, view, reason, "unavailable", generation);
       }
-      return generations.has("specs") || generations.has("pullRequests");
+      return { failed: generations.has("specs") || generations.has("pullRequests") };
     }
 
     const accessGeneration = generations.get("access");
@@ -268,12 +276,14 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
 
     const repository = options.persistence.getRepository(repositoryId)!;
     let failed = false;
+    let retryAfterMs = 0;
     const specsGeneration = generations.get("specs");
     if (specsGeneration !== undefined) {
       try {
         await saveSpecs(repository, candidate, specsGeneration);
       } catch (error) {
         failed = true;
+        retryAfterMs = Math.max(retryAfterMs, error instanceof GitHubError ? error.retryAfterMs ?? 0 : 0);
         options.persistence.markRefreshFailure(repositoryId, "specs", githubFailureMessage(error), "unavailable", specsGeneration);
       }
     }
@@ -284,18 +294,19 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
         await savePullRequests(repository, candidate, pullRequestsGeneration);
       } catch (error) {
         failed = true;
+        retryAfterMs = Math.max(retryAfterMs, error instanceof GitHubError ? error.retryAfterMs ?? 0 : 0);
         options.persistence.markRefreshFailure(repositoryId, "pullRequests", githubFailureMessage(error), "unavailable", pullRequestsGeneration);
       }
     }
 
-    return failed;
+    return { failed, retryAfterMs: retryAfterMs || undefined };
   };
 
-  const scheduleRetry = (repositoryId: string) => {
+  const scheduleRetry = (repositoryId: string, retryAfterMs = 0) => {
     if (retryTimers.has(repositoryId)) return;
     const attempt = retryAttempts.get(repositoryId) ?? 0;
     retryAttempts.set(repositoryId, Math.min(attempt + 1, RETRY_DELAYS.length - 1));
-    const delay = RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)]!;
+    const delay = Math.max(RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)]!, retryAfterMs);
     const timer = setTimeout(() => {
       retryTimers.delete(repositoryId);
       schedule(repositoryId);
@@ -305,10 +316,10 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
   };
 
   const process = async (repositoryId: string) => {
-    let failed = false;
+    let result: RefreshPassResult = { failed: false };
     for (let pass = 0; pass < 8; pass += 1) {
-      failed = await runPass(repositoryId, refreshViews);
-      if (failed) break;
+      result = await runPass(repositoryId, refreshViews);
+      if (result.failed) break;
 
       const pending = refreshViews.some((view) => {
         const state = options.persistence.getRefreshState(repositoryId, view);
@@ -316,7 +327,7 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
       });
       if (!pending) break;
     }
-    if (failed) scheduleRetry(repositoryId);
+    if (result.failed) scheduleRetry(repositoryId, result.retryAfterMs);
     else retryAttempts.delete(repositoryId);
   };
 
@@ -326,6 +337,7 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
       wakeAfter.add(repositoryId);
       return current;
     }
+    if (retryTimers.has(repositoryId)) return Promise.resolve();
 
     const run = process(repositoryId)
       .catch(() => scheduleRetry(repositoryId))
@@ -365,6 +377,7 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
     interval = undefined;
     for (const timer of retryTimers.values()) clearTimeout(timer);
     retryTimers.clear();
+    wakeAfter.clear();
   };
 
   return { refresh, request, wake, start, stop };
