@@ -38,6 +38,10 @@
   --color-control-border: #7086A5;
 }
 
+:root {
+  --fx-noise: none;
+}
+
 @source "./";
 
 @layer base {
