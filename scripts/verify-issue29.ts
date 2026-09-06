@@ -175,6 +175,7 @@ httpPersistence.database.query(`
 `).run(directory, atlasSession.submittedAt, rootId, rootId, "msg_initial", "inbox", "exact", atlasSession.submittedAt, atlasSession.atlasId);
 
 const openCodeListeners = new Set<(event: OpenCodeEvent) => void>();
+let currentToken = "secret";
 const fakeOpenCode = {
   start: () => undefined,
   stop: () => undefined,
@@ -191,6 +192,7 @@ const fakeOpenCode = {
 const httpApp = createApp({
   persistence: httpPersistence,
   sharedToken: "secret",
+  getSharedToken: () => currentToken,
   github: {} as never,
   openCode: fakeOpenCode as never,
 });
@@ -207,9 +209,18 @@ const fragmentView = await httpApp.fetch(new Request(`http://atlas.test/sessions
 const fragmentBody = await fragmentView.text();
 assert.equal(fragmentView.status, 200);
 assert(fragmentBody.includes("child"), "verified child fragment should render the child conversation");
+const cursorFragment = await httpApp.fetch(new Request(`http://atlas.test/sessions/${atlasSession.atlasId}/view?cursor=opaque&limit=10`, {
+  headers: { ...authHeaders, "HX-Request": "true" },
+}));
+assert.equal(cursorFragment.status, 200);
+assert(messageInputs.some((input) => input.sessionID === rootId && input.cursor === "opaque" && !Object.hasOwn(input, "order")), "HTTP cursor route should follow opaque message cursors without order");
 
 const unrelated = await httpApp.fetch(new Request(`http://atlas.test/sessions/${atlasSession.atlasId}/view?child=ses_00000000-0000-4000-8000-000000000099`, { headers: authHeaders }));
 assert.equal(unrelated.status, 404);
+const invalidCursor = await httpApp.fetch(new Request(`http://atlas.test/sessions/${atlasSession.atlasId}/view?cursor=%00`, { headers: authHeaders }));
+assert.equal(invalidCursor.status, 400);
+const invalidLimit = await httpApp.fetch(new Request(`http://atlas.test/sessions/${atlasSession.atlasId}/view?limit=0`, { headers: authHeaders }));
+assert.equal(invalidLimit.status, 400);
 
 const unauthenticatedEvents = await httpApp.fetch(new Request(`http://atlas.test/events?session=${atlasSession.atlasId}`, { headers: { Accept: "text/event-stream" } }));
 assert.equal(unauthenticatedEvents.status, 401);
@@ -217,7 +228,19 @@ const events = await httpApp.fetch(new Request(`http://atlas.test/events?session
 const eventReader = events.body?.getReader();
 const firstEvent = eventReader ? await eventReader.read() : { value: undefined };
 assert.equal(events.status, 200);
-assert(new TextDecoder().decode(firstEvent.value).includes("event: connected"), "authenticated SSE should send only bounded connection signals");
+const firstEventText = new TextDecoder().decode(firstEvent.value);
+assert(firstEventText.includes("event: connected"), "authenticated SSE should send only bounded connection signals");
+assert((firstEventText.match(/event: connected/g) ?? []).length === 1, "SSE should not duplicate its initial connection signal");
+assert(!firstEventText.includes("root") && !firstEventText.includes("child"), "SSE must not expose transcript or child projection data");
+for (const listener of openCodeListeners) listener({ id: "http-refresh", created: 4, type: "session.text.delta", data: { sessionID: rootId, assistantMessageID: "msg_root", ordinal: 0, delta: "live" } } as OpenCodeEvent);
+const refreshEvent = eventReader ? await eventReader.read() : { value: undefined };
+assert(new TextDecoder().decode(refreshEvent.value).includes("event: refresh"), "relevant upstream events should produce a bounded refresh signal");
+currentToken = "rotated";
+for (const listener of openCodeListeners) listener({ id: "http-auth-check", created: 5, type: "session.text.delta", data: { sessionID: rootId, assistantMessageID: "msg_root", ordinal: 0, delta: "auth" } } as OpenCodeEvent);
+const postRotationRefresh = eventReader ? await eventReader.read() : { value: undefined };
+const authExpiredEvent = eventReader ? await eventReader.read() : { value: undefined };
+assert(new TextDecoder().decode(postRotationRefresh.value).includes("event: refresh"), "auth rotation should not turn a relevant event into transcript data");
+assert(new TextDecoder().decode(authExpiredEvent.value).includes("event: auth-expired"), "existing SSE streams should detect token rotation");
 await eventReader?.cancel();
 httpPersistence.close();
 

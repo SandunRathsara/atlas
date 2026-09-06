@@ -603,7 +603,6 @@ export const createApp = (options: AppOptions) => {
         });
       });
 
-      enqueue("connected", { scope: sessionId ? "session" : "repository" });
       while (!closed && !stream.aborted && !stream.closed) {
         const current = auth.authenticate(c);
         if (!current || (initialIdentity.type === "browser" && current.type !== "browser")) {

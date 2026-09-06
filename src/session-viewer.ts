@@ -141,14 +141,17 @@ const initialSemanticState = (
 const listPages = async <T>(
   read: (cursor?: string) => Promise<{ data: T[]; cursor?: { next?: string | null } }>,
   maxPages = MAX_DESCENDANTS,
+  maxItems = MAX_DESCENDANTS,
 ) => {
   const result: T[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < maxPages; page += 1) {
     const response = await read(cursor);
     result.push(...response.data);
+    if (result.length > maxItems) return { data: result.slice(0, maxItems), complete: false };
     const next = response.cursor?.next ?? undefined;
     if (!next) return { data: result, complete: true };
+    if (result.length >= maxItems) return { data: result, complete: false };
     cursor = next;
   }
   return { data: result, complete: false };
@@ -357,7 +360,7 @@ const readShells = async (client: OpenCodeClient, info: SessionInfo, partialReas
 
     const shells = response.data.filter((shell) => {
       const metadata = shell.metadata;
-      return metadata && typeof metadata === "object" && metadata.sessionID === info.id;
+      return shell.status === "running" && metadata && typeof metadata === "object" && metadata.sessionID === info.id;
     });
     return Promise.all(shells.map(async (shell): Promise<ViewerShell> => {
       try {
