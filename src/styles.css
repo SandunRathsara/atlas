@@ -40,6 +40,7 @@
 
 :root {
   --fx-noise: none;
+  --spacing: 4px;
 }
 
 @source "./";
@@ -71,8 +72,17 @@
     white-space: normal;
   }
 
-  .grid > * {
+  .grid > *,
+  .flex > * {
     min-width: 0;
+  }
+
+  .font-mono {
+    overflow-wrap: anywhere;
+  }
+
+  h1 {
+    overflow-wrap: anywhere;
   }
 
   .atlas-skip-link {

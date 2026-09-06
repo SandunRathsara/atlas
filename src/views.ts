@@ -153,8 +153,8 @@ const renderShell = ({
           <a class="rounded-field px-1 py-2 text-lg font-semibold tracking-tight text-base-content" href="/repositories">Atlas</a>
           <span class="hidden max-w-[18rem] truncate text-sm text-muted sm:inline" title="${escapeHtml(repositoryName)}">${escapeHtml(repositoryName)}</span>
         </div>
-        <div class="flex flex-wrap items-center gap-3">
-          <details class="relative lg:hidden">
+        <div class="relative flex flex-wrap items-center gap-3">
+          <details class="lg:hidden">
             <summary class="btn btn-ghost min-h-11 list-none border border-control-border/60" aria-label="Open primary navigation">Navigation</summary>
             <nav class="absolute right-0 top-14 z-30 w-64 rounded-box border border-base-300 bg-base-100 p-3 shadow-xl" aria-label="Primary navigation">
               ${mobileLinks}
@@ -233,7 +233,7 @@ export const renderRepositoriesPage = (
         <a class="btn btn-primary mt-6 min-h-11 border border-control-border" href="/repositories/new">Add a Repository</a>
       </div>`
     : `<ul class="mt-8 grid gap-4" aria-label="Enrolled Repositories">${repositories.map(({ repository, accessRefresh, specsRefresh }) => `
-        <li class="rounded-box bg-base-100 p-5 sm:p-6">
+        <li class="rounded-box bg-base-100 p-3 sm:p-6">
           <div class="flex flex-wrap items-start justify-between gap-4">
             <div class="min-w-0">
               <p class="font-mono text-sm text-muted">${escapeHtml(repository.fullName)}</p>
@@ -258,7 +258,7 @@ export const renderRepositoriesPage = (
     title: "Repositories",
     active: "repositories",
     csrfToken,
-    content: `<section class="atlas-glass rounded-box p-6 sm:p-8">
+    content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
       <div class="flex flex-wrap items-start justify-between gap-6">
         <div>
           <p class="text-sm font-medium uppercase tracking-[0.18em] text-brand-readable">Operations</p>
@@ -297,7 +297,7 @@ export const renderAddRepositoryPage = ({
       </div>`
     : available.length > 0
       ? `<ul class="mt-8 grid gap-4" aria-label="Repositories available to Atlas">${available.map(({ repository, enrolled, csrfToken: repositoryCsrf }) => `
-          <li class="rounded-box bg-base-100 p-5 sm:p-6">
+          <li class="rounded-box bg-base-100 p-3 sm:p-6">
             <div class="flex flex-wrap items-start justify-between gap-4">
               <div class="min-w-0">
                 <p class="font-mono text-sm text-muted">${escapeHtml(repository.fullName)}</p>
@@ -321,7 +321,7 @@ export const renderAddRepositoryPage = ({
     title: "Add Repository",
     active: "new-repository",
     csrfToken,
-    content: `<section class="atlas-glass rounded-box p-6 sm:p-8">
+    content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
       <p class="text-sm font-medium uppercase tracking-[0.18em] text-brand-readable">GitHub App access</p>
       <h1 id="page-title" class="mt-4 text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Add a Repository</h1>
       <p class="mt-4 max-w-prose leading-relaxed text-muted">Select a Repository that is available to the configured App installation. Atlas will save it before attempting its first Specs synchronization.</p>
@@ -381,7 +381,7 @@ const renderRepositoryHeading = (repository: Repository, title: string, descript
 
 const specRow = (spec: Spec) => {
   const githubUrl = safeExternalUrl(spec.htmlUrl);
-  return `<li class="rounded-box bg-base-100 p-5 sm:p-6">
+  return `<li class="rounded-box bg-base-100 p-3 sm:p-6">
     <div class="flex flex-wrap items-start justify-between gap-4">
       <div class="min-w-0">
         <p class="font-mono text-sm text-muted">Spec #${escapeHtml(spec.issueNumber)}</p>
@@ -423,7 +423,7 @@ export const renderSpecsPage = ({
     active: "specs",
     repository,
     csrfToken,
-    content: `<section class="atlas-glass rounded-box p-6 sm:p-8">
+    content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
       ${renderRepositoryHeading(repository, "Specs", "Open, non-PR GitHub issues labelled exactly spec.")}
       ${accessNotice(repository)}
       ${specsNotice(specsRefresh, specs)}
@@ -457,7 +457,7 @@ export const renderSpecDetailPage = ({
     active: "spec",
     repository,
     csrfToken,
-    content: `<section class="atlas-glass rounded-box p-6 sm:p-8">
+    content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
       <a class="text-sm text-brand-readable underline underline-offset-4" href="${repositoryLink(repository)}">← Back to Specs</a>
       <div class="mt-6 flex flex-wrap items-start justify-between gap-6">
         <div class="min-w-0">
@@ -478,7 +478,7 @@ export const renderSpecDetailPage = ({
         <div><dt class="font-medium text-muted">Last observed</dt><dd class="mt-1">${formatTime(spec.observedAt)}</dd></div>
         <div><dt class="font-medium text-muted">Specs freshness</dt><dd class="mt-1">${refreshLine("Specs", specsRefresh)}</dd></div>
       </dl>
-      <article class="mt-8 max-w-prose rounded-box bg-base-100 p-6">
+      <article class="mt-8 max-w-prose rounded-box bg-base-100 p-5 sm:p-6">
         <h2 class="text-lg font-semibold">Spec description</h2>
         <div class="mt-5 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(spec.body) || "No description provided."}</div>
       </article>
@@ -501,7 +501,7 @@ export const renderSpecUnavailablePage = ({
   active: "specs",
   repository,
   csrfToken,
-  content: `<section class="atlas-glass rounded-box p-6 sm:p-8">
+  content: `<section class="atlas-glass rounded-box p-4 sm:p-8">
     ${renderRepositoryHeading(repository, "Specs unavailable", "Atlas could not complete the first Specs read.")}
     <div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>GitHub synchronization is unavailable.</strong> Retry when the configured App access is available. Atlas has not invented an empty list.</div></div>
     <p class="mt-6 text-sm text-muted">${refreshLine("Access", accessRefresh)} · ${refreshLine("Specs", specsRefresh)}</p>
