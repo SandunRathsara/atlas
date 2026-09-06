@@ -249,6 +249,7 @@ export const createPreparationService = (options: PreparationOptions) => {
   const verifyTarget = async (session: Session) => {
     const existing = options.persistence.getRepository(session.repositoryId);
     if (!existing) throw new PreparationError("Waiting for Repository verification.");
+    if (existing.removedAt) throw new PreparationError("Waiting: this Repository was removed from Atlas.");
     if (authorized && !authorized.has(existing.fullName.toLocaleLowerCase("en-US"))) {
       throw new PreparationError("Waiting: this Repository is outside the authorized preparation scope.");
     }
@@ -256,6 +257,7 @@ export const createPreparationService = (options: PreparationOptions) => {
 
     const refreshed = await options.refreshRepository(existing);
     if (!refreshed.ok) throw new PreparationError("Waiting for current GitHub access and Spec verification.");
+    if (refreshed.repository.removedAt) throw new PreparationError("Waiting: this Repository was removed from Atlas.");
     const repositories = await options.github.listInstallationRepositories();
     const candidate = repositories.find((repository) => repository.id === session.repositoryId);
     if (!candidate || candidate.owner.toLocaleLowerCase("en-US") !== existing.organization.toLocaleLowerCase("en-US")) {

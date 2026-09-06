@@ -172,6 +172,7 @@ const isCurrentSpec = (spec: { isCurrent: boolean; state: string; hasSpecLabel: 
 
 const isEligibleRepository = (repository: Repository) =>
   repository.accessStatus === "available" &&
+  !repository.removedAt &&
   !repository.archived &&
   !repository.disabled &&
   repository.hasIssues &&
@@ -268,6 +269,7 @@ export const createApp = (options: AppOptions) => {
       hasIssues: candidate.hasIssues,
     });
     const result = await refreshRepository(repository);
+    if (result.ok && result.repository.removedAt) persistence.restoreRepository(result.repository.githubId);
     return { ...result, repository: persistence.getRepository(repository.githubId)! };
   };
 
@@ -461,7 +463,7 @@ export const createApp = (options: AppOptions) => {
     }));
     const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
     setPrivateHtmlHeaders(c);
-    return c.html(renderRepositoriesPage(csrfToken, repositories));
+    return c.html(renderRepositoriesPage(csrfToken, repositories, includeRemoved));
   });
 
   app.get("/repositories/new", async (c) => {
@@ -476,10 +478,11 @@ export const createApp = (options: AppOptions) => {
       error = githubFailureMessage(reason);
     }
 
-    const enrolled = new Set(persistence.listRepositories(true).map((repository) => repository.githubId));
+    const enrolled = new Map(persistence.listRepositories(true).map((repository) => [repository.githubId, repository]));
     const repositoryForms = available.map((repository) => ({
       repository,
       enrolled: enrolled.has(repository.id),
+      removedAt: enrolled.get(repository.id)?.removedAt,
       csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
     }));
 
@@ -519,6 +522,40 @@ export const createApp = (options: AppOptions) => {
 
     const result = await saveCandidate(candidate);
     const destination = `/repositories/${encodeURIComponent(result.repository.githubId)}/specs`;
+    if (isHtmx(c)) {
+      c.header("HX-Redirect", destination);
+      return c.body(null, 200);
+    }
+    return c.redirect(destination, 303);
+  });
+
+  app.post("/repositories/:repositoryId/remove", async (c) => {
+    setPrivateHtmlHeaders(c);
+    const repositoryId = c.req.param("repositoryId");
+    if (!repositoryIdPattern.test(repositoryId)) return c.text("Invalid Repository ID", 400);
+    if (!persistence.getRepository(repositoryId)) return c.text("Repository not found", 404);
+
+    let form: Record<string, unknown>;
+    try {
+      form = await parseForm(c.req.raw);
+    } catch (error) {
+      if (error instanceof FormBodyTooLarge) return c.text("Request body is too large", 413);
+      return c.text("Malformed Repository removal request", 400);
+    }
+
+    const identity = c.get("auth");
+    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) {
+      return c.text("Request rejected", 403);
+    }
+
+    try {
+      persistence.removeRepository(repositoryId);
+    } catch {
+      return c.text("Atlas could not save the Repository removal.", 503);
+    }
+    preparation.enqueue();
+
+    const destination = "/repositories?removed=1";
     if (isHtmx(c)) {
       c.header("HX-Redirect", destination);
       return c.body(null, 200);
