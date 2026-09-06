@@ -1,0 +1,162 @@
+@import "tailwindcss";
+
+@plugin "daisyui" {
+  themes: dim --default;
+}
+
+@plugin "daisyui/theme" {
+  name: "dim";
+  default: true;
+  color-scheme: dark;
+  --color-base-100: #132238;
+  --color-base-200: #0B1628;
+  --color-base-300: #08101E;
+  --color-base-content: #F4F7FC;
+  --color-primary: #012B68;
+  --color-primary-content: #F4F7FC;
+  --color-secondary: #012B68;
+  --color-secondary-content: #F4F7FC;
+  --color-accent: #012B68;
+  --color-accent-content: #F4F7FC;
+  --color-neutral: #1D304A;
+  --color-neutral-content: #F4F7FC;
+  --color-info: #8BB8FF;
+  --color-info-content: #08101E;
+  --color-success: #6ED6B5;
+  --color-success-content: #08101E;
+  --color-warning: #F2C66D;
+  --color-warning-content: #08101E;
+  --color-error: #F49AA6;
+  --color-error-content: #08101E;
+  --radius-field: 0.75rem;
+  --radius-box: 1.25rem;
+}
+
+@theme {
+  --color-brand-readable: #8BB8FF;
+  --color-muted: #A9B8CC;
+  --color-control-border: #7086A5;
+}
+
+:root {
+  --fx-noise: none;
+  --spacing: 4px;
+}
+
+@source "./";
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-brand-readable);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .atlas-glass {
+    background-color: var(--color-base-100);
+    border: 1px solid rgb(244 247 252 / 0.16);
+    box-shadow: inset 0 1px 0 rgb(244 247 252 / 0.10), 0 12px 30px rgb(0 0 0 / 0.18);
+  }
+
+  .btn {
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .grid > *,
+  .flex > * {
+    min-width: 0;
+  }
+
+  .font-mono {
+    overflow-wrap: anywhere;
+  }
+
+  h1 {
+    overflow-wrap: anywhere;
+  }
+
+  .atlas-skip-link {
+    position: fixed;
+    left: 1rem;
+    top: 1rem;
+    z-index: 50;
+    transform: translateY(-200%);
+    border-radius: 0.75rem;
+    background: var(--color-primary);
+    color: var(--color-primary-content);
+    padding: 0.75rem 1rem;
+  }
+
+  .atlas-skip-link:focus {
+    transform: translateY(0);
+    outline: 2px solid var(--color-brand-readable);
+    outline-offset: 2px;
+  }
+
+  .htmx-indicator {
+    display: none;
+  }
+
+  .htmx-request .htmx-indicator,
+  .htmx-indicator.htmx-request {
+    display: inline;
+  }
+
+  .input:focus-visible,
+  .btn:focus-visible,
+  summary:focus-visible,
+  a:focus-visible {
+    outline-color: var(--color-brand-readable);
+  }
+}
+
+@supports (backdrop-filter: blur(4px)) {
+  .atlas-glass {
+    background-color: color-mix(in srgb, var(--color-base-100) 60%, transparent);
+    backdrop-filter: blur(4px);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+  .atlas-glass {
+    background-color: var(--color-base-100);
+    backdrop-filter: none;
+  }
+}
+
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@layer utilities {
+  .btn {
+    height: auto;
+  }
+
+  .atlas-backdrop {
+    background-image: radial-gradient(circle at top left, rgb(1 43 104 / 0.2), transparent 36rem);
+  }
+}
+
+.radio.radio-primary {
+  --input-color: var(--color-control-border);
+}
