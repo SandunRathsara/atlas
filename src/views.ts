@@ -45,7 +45,7 @@ const document = (title: string, content: string) => `<!doctype html>
     <script src="/assets/htmx.min.js" defer></script>
     <script src="/assets/app.js" defer></script>
   </head>
-  <body class="atlas-backdrop min-h-screen overflow-x-hidden bg-base-200 font-sans text-base-content">
+  <body class="atlas-backdrop min-h-screen bg-base-200 font-sans text-base-content">
     ${content}
   </body>
 </html>`;
