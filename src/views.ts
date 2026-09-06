@@ -930,18 +930,20 @@ export const renderStartTargetOptions = (
   accessRefresh: RefreshState | undefined,
   pullRequestsRefresh: RefreshState | undefined,
   selected: string,
+  targetInvalid = false,
+  targetErrorId = "target-reconfirmation-error",
 ) => {
   const options = startTargetOptions(repository, pullRequests, stacks, accessRefresh, pullRequestsRefresh);
   const observations = Object.fromEntries(options.map((option) => [option.value, option.observation]));
   const targetHelp = options.length === 1
     ? `<p class="mt-2 text-sm leading-normal text-muted">Native stack and standalone parent choices appear after a complete Pull request/stack read.</p>`
     : "";
-  return `<fieldset class="mt-8 max-w-3xl" aria-describedby="target-help">
+  return `<fieldset class="mt-8 max-w-3xl" aria-describedby="${targetInvalid ? `target-help ${targetErrorId}` : "target-help"}">
     <legend class="label mb-2 block p-0">Starting target</legend>
     <input type="hidden" name="target_observations" value="${escapeHtml(JSON.stringify(observations))}">
     <div class="grid gap-3">
       ${options.map((option) => `<label class="flex min-h-14 items-start gap-3 rounded-field border border-control-border bg-base-100 p-3 ${option.status.kind === "eligible" ? "cursor-pointer" : "opacity-90"}">
-        <input class="radio radio-primary mt-1" type="radio" name="target" value="${escapeHtml(option.value)}"${option.value === selected ? " checked" : ""}${option.status.kind === "eligible" ? "" : " disabled"}>
+        <input class="radio radio-primary mt-1" type="radio" name="target" value="${escapeHtml(option.value)}"${option.value === selected ? " checked" : ""}${option.status.kind === "eligible" ? "" : " disabled"}${targetInvalid ? ' aria-invalid="true"' : ""}>
         <span class="min-w-0"><span class="block break-words font-medium">${escapeHtml(option.label)}</span><span class="mt-1 block text-sm leading-normal ${option.status.kind === "eligible" ? "text-muted" : option.status.kind === "warning" ? "text-warning" : "text-error"}">${escapeHtml(option.status.label)} · ${escapeHtml(option.reason)}</span></span>
       </label>`).join("")}
     </div>
@@ -1197,6 +1199,7 @@ export const renderStartSessionPage = ({
   stacks,
   pullRequestsRefresh,
   target,
+  targetInvalid = false,
 }: {
   action?: string;
   csrfToken: string;
@@ -1213,6 +1216,7 @@ export const renderStartSessionPage = ({
   stacks?: PrStack[];
   pullRequestsRefresh?: RefreshState;
   target?: string;
+  targetInvalid?: boolean;
 }) => {
   const formAction = action ?? `/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(spec.issueNumber)}/sessions`;
   const githubUrl = safeExternalUrl(spec.htmlUrl);
@@ -1239,7 +1243,7 @@ export const renderStartSessionPage = ({
          <div><dt class="font-medium text-muted">Queueing</dt><dd class="mt-1">The selected target is queued; preparation is deferred.</dd></div>
        </dl>
         ${notice ? `<div class="alert alert-info mt-8 leading-normal" role="status" tabindex="-1" data-focus-on-swap>${escapeHtml(notice)}</div>` : ""}
-        ${renderStartSessionForm({ action: formAction, csrfToken, submissionId, prompt, error, existingSession, targetOptions: renderStartTargetOptions(repository, pullRequests, stacks, accessRefresh, pullRequestsRefresh, target ?? "default"), target: target ?? "default" })}
+        ${renderStartSessionForm({ action: formAction, csrfToken, submissionId, prompt, error, existingSession, targetOptions: renderStartTargetOptions(repository, pullRequests, stacks, accessRefresh, pullRequestsRefresh, target ?? "default", targetInvalid, "prompt-error"), target: target ?? "default" })}
       <details class="mt-8 max-w-prose rounded-box bg-base-100 p-5 sm:p-6">
         <summary class="min-h-11 cursor-pointer text-lg font-semibold">View Spec context</summary>
         <div class="mt-5 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(spec.body) || "No description provided."}</div>

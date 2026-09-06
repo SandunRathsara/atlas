@@ -772,6 +772,7 @@ export const createApp = (options: AppOptions) => {
     try {
       inventory = await scopedInventory();
     } catch (error) {
+      auth.restoreCsrf(stringField(form.csrf), identity.type === "browser" ? identity.sessionId : undefined);
       return c.text(githubFailureMessage(error), 503);
     }
 
@@ -809,6 +810,7 @@ export const createApp = (options: AppOptions) => {
     try {
       persistence.removeRepository(repositoryId);
     } catch {
+      auth.restoreCsrf(stringField(form.csrf), identity.type === "browser" ? identity.sessionId : undefined);
       return c.text("Atlas could not save the Repository removal.", 503);
     }
     preparation.enqueue();
@@ -1026,7 +1028,9 @@ export const createApp = (options: AppOptions) => {
       spec = persistence.getSpec(repositoryId, issueNumber) ?? knownSpec,
       existingSession?: Session,
     ) => {
+      if (status === 503) auth.restoreCsrf(stringField(form.csrf), identity.type === "browser" ? identity.sessionId : undefined);
       const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
+      const targetInvalid = status === 422 && (selectedTarget === undefined || (form.target !== undefined && typeof form.target !== "string"));
       const options = {
         action,
         csrfToken,
@@ -1044,7 +1048,7 @@ export const createApp = (options: AppOptions) => {
       if (isHtmx(c)) {
         return c.html(renderStartSessionForm({
           ...options,
-          targetOptions: renderStartTargetOptions(repository, targetPullRequests, targetStacks, targetAccessRefresh, targetPullRequestsRefresh, targetValue),
+          targetOptions: renderStartTargetOptions(repository, targetPullRequests, targetStacks, targetAccessRefresh, targetPullRequestsRefresh, targetValue, targetInvalid, "prompt-error"),
         }), status);
       }
       return c.html(renderStartSessionPage({
@@ -1056,6 +1060,7 @@ export const createApp = (options: AppOptions) => {
         pullRequests: targetPullRequests,
         stacks: targetStacks,
         pullRequestsRefresh: targetPullRequestsRefresh,
+        targetInvalid,
       }), status);
     };
 
@@ -1322,6 +1327,7 @@ export const createApp = (options: AppOptions) => {
     let stacks = persistence.listPrStacks(repository.githubId);
     let pullRequestsRefresh = persistence.getRefreshState(repository.githubId, "pullRequests");
     const renderError = (message: string, status: 409 | 422 | 503) => {
+      if (status === 503) auth.restoreCsrf(stringField(form.csrf), identity.type === "browser" ? identity.sessionId : undefined);
       setPrivateHtmlHeaders(c);
       const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
       const currentSession = persistence.getSession(sessionId) ?? session;
@@ -1333,6 +1339,7 @@ export const createApp = (options: AppOptions) => {
         persistence.getRefreshState(repository.githubId, "access"),
         pullRequestsRefresh,
         targetValue,
+        status === 422,
       );
       if (isHtmx(c)) return c.html(renderTargetReconfirmationForm({ action, csrfToken, targetOptions, error: message }), status);
       return c.html(renderTargetReconfirmationPage({
@@ -1455,6 +1462,7 @@ export const createApp = (options: AppOptions) => {
     }
 
     const renderError = (error: string, status: 409 | 422 | 503) => {
+      if (status === 503) auth.restoreCsrf(stringField(form.csrf), identity.type === "browser" ? identity.sessionId : undefined);
       const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
       const currentSession = persistence.getSession(sessionId) ?? session;
       if (isHtmx(c) && status !== 503) {
