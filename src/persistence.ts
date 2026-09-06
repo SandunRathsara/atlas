@@ -162,6 +162,33 @@ export type OpenCodeFreshness = "unknown" | "fresh" | "stale";
 
 export type SessionFilter = "active" | "all" | SessionState;
 
+export type TargetKind = "default" | "native_stack" | "standalone_parent";
+
+export type SessionTarget = {
+  kind: TargetKind;
+  stackId?: string | null;
+  stackNumber?: string | null;
+  parentPullRequestId?: string | null;
+  parentPullRequestNumber?: string | null;
+};
+
+export type ResolvedTarget = {
+  kind: TargetKind;
+  stackId: string | null;
+  stackNumber: string | null;
+  parentPullRequestId: string | null;
+  parentPullRequestNumber: string | null;
+  parentPullRequestUrl: string | null;
+  parentBranch: string;
+  trunkBranch: string;
+  layers: Array<{
+    pullRequestId: string;
+    pullRequestNumber: string;
+    branch: string;
+    sha: string;
+  }>;
+};
+
 export type Session = {
   atlasId: string;
   repositoryId: string;
@@ -174,14 +201,32 @@ export type Session = {
   submissionOrder: number;
   submittedAt: string;
   prompt: string;
-  targetKind: "default";
+  targetKind: TargetKind;
   targetBranch: string;
+  originalTargetBranch: string;
+  targetStackId: string | null;
+  targetStackNumber: string | null;
+  targetParentPullRequestId: string | null;
+  targetParentPullRequestNumber: string | null;
+  originalTargetKind: TargetKind;
+  originalTargetStackId: string | null;
+  originalTargetStackNumber: string | null;
+  originalTargetParentPullRequestId: string | null;
+  originalTargetParentPullRequestNumber: string | null;
   state: SessionState;
   stateReason: string | null;
   directory: string | null;
   baseBranch: string | null;
   baseSha: string | null;
   workingBranch: string | null;
+  resolvedStackId: string | null;
+  resolvedStackNumber: string | null;
+  resolvedParentPullRequestId: string | null;
+  resolvedParentPullRequestNumber: string | null;
+  resolvedParentPullRequestUrl: string | null;
+  resolvedParentBranch: string | null;
+  resolvedTrunkBranch: string | null;
+  resolvedLayers: ResolvedTarget["layers"];
   preparationCheckpoint: PreparationCheckpoint;
   preparationReason: string | null;
   preparedAt: string | null;
@@ -196,6 +241,9 @@ export type Session = {
   opencodeLastSuccessAt: string | null;
   opencodeLastFailureAt: string | null;
   executionSlotHeld: boolean;
+  reservationId: string | null;
+  reservationState: "held" | "released" | null;
+  reservationReason: string | null;
   updatedAt: string;
 };
 
@@ -206,8 +254,9 @@ export type QueueSessionInput = {
   submissionId: string;
   submissionOrderTime: string;
   prompt: string;
-  targetKind: "default";
+  targetKind: TargetKind;
   targetBranch: string;
+  target?: SessionTarget;
 };
 
 export type QueueSessionResult =
@@ -221,6 +270,8 @@ export type PreparationIntent = {
   baseBranch: string;
   baseSha: string;
   workingBranch: string;
+  target?: SessionTarget;
+  resolvedTarget?: ResolvedTarget;
 };
 
 type PersistenceOptions = {
@@ -328,14 +379,32 @@ type SessionRow = {
   submission_order: number;
   submitted_at: string;
   prompt: string;
-  target_kind: "default";
+  target_kind: TargetKind;
   target_branch: string;
+  target_stack_id: string | null;
+  target_stack_number: string | null;
+  target_parent_pull_request_id: string | null;
+  target_parent_pull_request_number: string | null;
+  original_target_kind: TargetKind;
+  original_target_branch: string;
+  original_target_stack_id: string | null;
+  original_target_stack_number: string | null;
+  original_target_parent_pull_request_id: string | null;
+  original_target_parent_pull_request_number: string | null;
   state: SessionState;
   state_reason: string | null;
   directory: string | null;
   base_branch: string | null;
   base_sha: string | null;
   working_branch: string | null;
+  resolved_stack_id: string | null;
+  resolved_stack_number: string | null;
+  resolved_parent_pull_request_id: string | null;
+  resolved_parent_pull_request_number: string | null;
+  resolved_parent_pull_request_url: string | null;
+  resolved_parent_branch: string | null;
+  resolved_trunk_branch: string | null;
+  resolved_layers_json: string | null;
   preparation_checkpoint: PreparationCheckpoint;
   preparation_reason: string | null;
   prepared_at: string | null;
@@ -350,6 +419,9 @@ type SessionRow = {
   opencode_last_success_at: string | null;
   opencode_last_failure_at: string | null;
   execution_slot_held: number;
+  reservation_id?: string | null;
+  reservation_state?: "held" | "released" | null;
+  reservation_reason?: string | null;
   updated_at: string;
 };
 
@@ -602,6 +674,192 @@ const migrations = [
         WHERE initial_message_id IS NOT NULL;
     `,
   },
+  {
+    version: 10,
+    sql: `
+      DROP INDEX IF EXISTS sessions_unfinished_spec_idx;
+      DROP INDEX IF EXISTS sessions_repository_order_idx;
+      DROP INDEX IF EXISTS sessions_spec_order_idx;
+      DROP INDEX IF EXISTS sessions_repository_working_branch_idx;
+      DROP INDEX IF EXISTS sessions_opencode_intended_session_idx;
+      DROP INDEX IF EXISTS sessions_opencode_session_idx;
+      DROP INDEX IF EXISTS sessions_initial_message_idx;
+
+      ALTER TABLE sessions RENAME TO sessions_legacy;
+
+      CREATE TABLE sessions (
+        atlas_id TEXT PRIMARY KEY NOT NULL,
+        repository_id TEXT NOT NULL REFERENCES repositories (github_id),
+        spec_github_id TEXT NOT NULL,
+        spec_issue_number TEXT NOT NULL,
+        spec_title TEXT NOT NULL,
+        spec_body TEXT NOT NULL,
+        spec_html_url TEXT NOT NULL,
+        submission_id TEXT NOT NULL UNIQUE,
+        submission_order INTEGER NOT NULL UNIQUE CHECK (submission_order > 0),
+        submitted_at TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        target_kind TEXT NOT NULL CHECK (target_kind IN ('default', 'native_stack', 'standalone_parent')),
+        target_branch TEXT NOT NULL,
+        target_stack_id TEXT,
+        target_stack_number TEXT,
+        target_parent_pull_request_id TEXT,
+        target_parent_pull_request_number TEXT,
+        original_target_kind TEXT NOT NULL CHECK (original_target_kind IN ('default', 'native_stack', 'standalone_parent')),
+        original_target_branch TEXT NOT NULL,
+        original_target_stack_id TEXT,
+        original_target_stack_number TEXT,
+        original_target_parent_pull_request_id TEXT,
+        original_target_parent_pull_request_number TEXT,
+        state TEXT NOT NULL CHECK (state IN ('queued', 'preparing', 'running', 'waiting', 'idle', 'succeeded', 'failed', 'interrupted', 'failed_setup')),
+        state_reason TEXT,
+        directory TEXT,
+        base_branch TEXT,
+        base_sha TEXT,
+        working_branch TEXT,
+        resolved_stack_id TEXT,
+        resolved_stack_number TEXT,
+        resolved_parent_pull_request_id TEXT,
+        resolved_parent_pull_request_number TEXT,
+        resolved_parent_pull_request_url TEXT,
+        resolved_parent_branch TEXT,
+        resolved_trunk_branch TEXT,
+        resolved_layers_json TEXT,
+        preparation_checkpoint TEXT NOT NULL DEFAULT 'queued'
+          CHECK (preparation_checkpoint IN ('queued', 'intent_saved', 'clone_started', 'clone_complete', 'branch_started', 'prepared', 'start_unconfirmed', 'failed_setup')),
+        preparation_reason TEXT,
+        prepared_at TEXT,
+        opencode_session_id TEXT,
+        initial_message_id TEXT,
+        exact_message TEXT,
+        execution_slot_held INTEGER NOT NULL DEFAULT 0 CHECK (execution_slot_held IN (0, 1)),
+        updated_at TEXT NOT NULL,
+        admission_blocked INTEGER NOT NULL DEFAULT 0 CHECK (admission_blocked IN (0, 1)),
+        handoff_checkpoint TEXT NOT NULL DEFAULT 'not_started'
+          CHECK (handoff_checkpoint IN ('not_started', 'intent_saved', 'events_consuming', 'create_sent', 'create_confirmed', 'associated', 'prompt_sent', 'prompt_accepted')),
+        opencode_intended_session_id TEXT,
+        initial_inbox_id TEXT,
+        handoff_uncertain_reason TEXT,
+        opencode_freshness TEXT NOT NULL DEFAULT 'unknown'
+          CHECK (opencode_freshness IN ('unknown', 'fresh', 'stale')),
+        opencode_last_success_at TEXT,
+        opencode_last_failure_at TEXT,
+        FOREIGN KEY (repository_id, spec_github_id) REFERENCES specs (repository_id, github_id),
+        FOREIGN KEY (repository_id, spec_issue_number) REFERENCES specs (repository_id, issue_number)
+      );
+
+      INSERT INTO sessions (
+        atlas_id, repository_id, spec_github_id, spec_issue_number, spec_title,
+        spec_body, spec_html_url, submission_id, submission_order, submitted_at,
+        prompt, target_kind, target_branch, original_target_kind, original_target_branch,
+        state, state_reason, directory, base_branch, base_sha, working_branch,
+        preparation_checkpoint, preparation_reason, prepared_at,
+        opencode_session_id, initial_message_id, exact_message, execution_slot_held,
+        updated_at, admission_blocked, handoff_checkpoint,
+        opencode_intended_session_id, initial_inbox_id, handoff_uncertain_reason,
+        opencode_freshness, opencode_last_success_at, opencode_last_failure_at
+      )
+      SELECT
+        atlas_id, repository_id, spec_github_id, spec_issue_number, spec_title,
+        spec_body, spec_html_url, submission_id, submission_order, submitted_at,
+        prompt, target_kind, target_branch, target_kind, target_branch,
+        state, state_reason, directory, base_branch, base_sha, working_branch,
+        preparation_checkpoint, preparation_reason, prepared_at,
+        opencode_session_id, initial_message_id, exact_message, execution_slot_held,
+        updated_at, admission_blocked, handoff_checkpoint,
+        opencode_intended_session_id, initial_inbox_id, handoff_uncertain_reason,
+        opencode_freshness, opencode_last_success_at, opencode_last_failure_at
+      FROM sessions_legacy;
+
+      DROP TABLE sessions_legacy;
+
+      CREATE UNIQUE INDEX sessions_unfinished_spec_idx
+        ON sessions (spec_github_id)
+        WHERE state IN ('queued', 'preparing', 'running', 'waiting', 'idle');
+      CREATE INDEX sessions_repository_order_idx
+        ON sessions (repository_id, submission_order DESC);
+      CREATE INDEX sessions_spec_order_idx
+        ON sessions (spec_github_id, submission_order DESC);
+      CREATE UNIQUE INDEX sessions_repository_working_branch_idx
+        ON sessions (repository_id, working_branch)
+        WHERE working_branch IS NOT NULL;
+      CREATE UNIQUE INDEX sessions_opencode_intended_session_idx
+        ON sessions (opencode_intended_session_id)
+        WHERE opencode_intended_session_id IS NOT NULL;
+      CREATE UNIQUE INDEX sessions_opencode_session_idx
+        ON sessions (opencode_session_id)
+        WHERE opencode_session_id IS NOT NULL;
+      CREATE UNIQUE INDEX sessions_initial_message_idx
+        ON sessions (initial_message_id)
+        WHERE initial_message_id IS NOT NULL;
+
+      CREATE TABLE stack_reservations (
+        reservation_id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL UNIQUE REFERENCES sessions (atlas_id),
+        repository_id TEXT NOT NULL REFERENCES repositories (github_id),
+        original_target_kind TEXT NOT NULL CHECK (original_target_kind IN ('native_stack', 'standalone_parent')),
+        original_stack_id TEXT,
+        original_stack_number TEXT,
+        original_parent_pull_request_id TEXT,
+        original_parent_pull_request_number TEXT,
+        accepted_target_kind TEXT NOT NULL CHECK (accepted_target_kind IN ('native_stack', 'standalone_parent')),
+        accepted_stack_id TEXT,
+        accepted_stack_number TEXT,
+        accepted_parent_pull_request_id TEXT,
+        accepted_parent_pull_request_number TEXT,
+        state TEXT NOT NULL CHECK (state IN ('held', 'released')),
+        held_at TEXT NOT NULL,
+        released_at TEXT,
+        release_kind TEXT,
+        release_reason TEXT,
+        publication_evidence TEXT
+      );
+
+      CREATE INDEX stack_reservations_target_idx
+        ON stack_reservations (repository_id, accepted_target_kind, accepted_stack_id, accepted_parent_pull_request_id, state);
+      CREATE INDEX stack_reservations_session_idx
+        ON stack_reservations (session_id);
+
+      CREATE TABLE reservation_prs (
+        reservation_id TEXT NOT NULL REFERENCES stack_reservations (reservation_id),
+        pull_request_id TEXT NOT NULL REFERENCES pull_requests (github_id),
+        evidence_role TEXT NOT NULL CHECK (evidence_role IN ('observed_member', 'preparation_parent', 'result')),
+        observed_at TEXT NOT NULL,
+        PRIMARY KEY (reservation_id, pull_request_id, evidence_role)
+      );
+
+      CREATE INDEX reservation_prs_pull_request_idx
+        ON reservation_prs (pull_request_id, reservation_id);
+
+      CREATE TABLE reservation_conflict_holds (
+        reservation_id TEXT NOT NULL REFERENCES stack_reservations (reservation_id),
+        repository_id TEXT NOT NULL REFERENCES repositories (github_id),
+        target_kind TEXT NOT NULL CHECK (target_kind IN ('native_stack', 'standalone_parent')),
+        stack_id TEXT,
+        stack_number TEXT,
+        parent_pull_request_id TEXT,
+        parent_pull_request_number TEXT,
+        created_at TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        PRIMARY KEY (reservation_id, target_kind, stack_id, parent_pull_request_id)
+      );
+
+      CREATE INDEX reservation_conflict_target_idx
+        ON reservation_conflict_holds (repository_id, target_kind, stack_id, parent_pull_request_id);
+
+      CREATE TABLE session_history (
+        history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL REFERENCES sessions (atlas_id),
+        event_kind TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        reason TEXT,
+        details_json TEXT
+      );
+
+      CREATE INDEX session_history_session_idx
+        ON session_history (session_id, history_id);
+    `,
+  },
 ];
 
 const isoNow = (now: () => number) => new Date(now()).toISOString();
@@ -725,12 +983,44 @@ const toSession = (row: SessionRow): Session => ({
   prompt: row.prompt,
   targetKind: row.target_kind,
   targetBranch: row.target_branch,
+  originalTargetBranch: row.original_target_branch,
+  targetStackId: row.target_stack_id,
+  targetStackNumber: row.target_stack_number,
+  targetParentPullRequestId: row.target_parent_pull_request_id,
+  targetParentPullRequestNumber: row.target_parent_pull_request_number,
+  originalTargetKind: row.original_target_kind,
+  originalTargetStackId: row.original_target_stack_id,
+  originalTargetStackNumber: row.original_target_stack_number,
+  originalTargetParentPullRequestId: row.original_target_parent_pull_request_id,
+  originalTargetParentPullRequestNumber: row.original_target_parent_pull_request_number,
   state: row.state,
   stateReason: row.state_reason,
   directory: row.directory,
   baseBranch: row.base_branch,
   baseSha: row.base_sha,
   workingBranch: row.working_branch,
+  resolvedStackId: row.resolved_stack_id,
+  resolvedStackNumber: row.resolved_stack_number,
+  resolvedParentPullRequestId: row.resolved_parent_pull_request_id,
+  resolvedParentPullRequestNumber: row.resolved_parent_pull_request_number,
+  resolvedParentPullRequestUrl: row.resolved_parent_pull_request_url,
+  resolvedParentBranch: row.resolved_parent_branch,
+  resolvedTrunkBranch: row.resolved_trunk_branch,
+  resolvedLayers: (() => {
+    if (!row.resolved_layers_json) return [];
+    try {
+      const value: unknown = JSON.parse(row.resolved_layers_json);
+      return Array.isArray(value) ? value.filter((layer): layer is ResolvedTarget["layers"][number] => Boolean(
+        layer && typeof layer === "object" &&
+        typeof (layer as Record<string, unknown>).pullRequestId === "string" &&
+        typeof (layer as Record<string, unknown>).pullRequestNumber === "string" &&
+        typeof (layer as Record<string, unknown>).branch === "string" &&
+        typeof (layer as Record<string, unknown>).sha === "string",
+      )) : [];
+    } catch {
+      return [];
+    }
+  })(),
   preparationCheckpoint: row.preparation_checkpoint,
   preparationReason: row.preparation_reason,
   preparedAt: row.prepared_at,
@@ -745,6 +1035,9 @@ const toSession = (row: SessionRow): Session => ({
   opencodeLastSuccessAt: row.opencode_last_success_at,
   opencodeLastFailureAt: row.opencode_last_failure_at,
   executionSlotHeld: row.execution_slot_held === 1,
+  reservationId: row.reservation_id ?? null,
+  reservationState: row.reservation_state ?? null,
+  reservationReason: row.reservation_reason ?? null,
   updatedAt: row.updated_at,
 });
 
@@ -1406,17 +1699,57 @@ export const createPersistence = (options: PersistenceOptions) => {
     return row ? toSpec(row) : undefined;
   };
 
+  const sessionSelect = `
+    SELECT s.*,
+           r.reservation_id,
+           r.state AS reservation_state,
+           r.release_reason AS reservation_reason
+    FROM sessions s
+    LEFT JOIN stack_reservations r ON r.session_id = s.atlas_id
+  `;
+
+  const targetColumns = (target: SessionTarget): [
+    TargetKind,
+    string | null,
+    string | null,
+    string | null,
+    string | null,
+  ] => [
+    target.kind,
+    target.stackId ?? null,
+    target.stackNumber ?? null,
+    target.parentPullRequestId ?? null,
+    target.parentPullRequestNumber ?? null,
+  ];
+
+  const targetFromSession = (session: Session): SessionTarget => ({
+    kind: session.targetKind,
+    stackId: session.targetStackId,
+    stackNumber: session.targetStackNumber,
+    parentPullRequestId: session.targetParentPullRequestId,
+    parentPullRequestNumber: session.targetParentPullRequestNumber,
+  });
+
   const getSession = (atlasId: string) => {
-    const row = database.query("SELECT * FROM sessions WHERE atlas_id = ?").get(atlasId) as SessionRow | null;
+    const row = database.query(`${sessionSelect} WHERE s.atlas_id = ?`).get(atlasId) as SessionRow | null;
     return row ? toSession(row) : undefined;
   };
 
   const getSessionBySubmissionId = (submissionId: string) => {
-    const row = database.query("SELECT * FROM sessions WHERE submission_id = ?").get(submissionId) as SessionRow | null;
+    const row = database.query(`${sessionSelect} WHERE s.submission_id = ?`).get(submissionId) as SessionRow | null;
     return row ? toSession(row) : undefined;
   };
 
   const queueSession = (input: QueueSessionInput): QueueSessionResult => {
+    const target: SessionTarget = input.target ?? { kind: input.targetKind };
+    if (target.kind === "native_stack" && !target.stackId) {
+      throw new Error("Native stack target identity is required");
+    }
+    if (target.kind === "standalone_parent" && !target.parentPullRequestId) {
+      throw new Error("Standalone parent target identity is required");
+    }
+
+    const [targetKind, targetStackId, targetStackNumber, targetParentPullRequestId, targetParentPullRequestNumber] = targetColumns(target);
     let result: QueueSessionResult;
     const queue = database.transaction(() => {
       const existingRow = database.query(
@@ -1428,16 +1761,21 @@ export const createPersistence = (options: PersistenceOptions) => {
         const sameSubmission = existing.repositoryId === input.repositoryId &&
           existing.specGithubId === input.spec.githubId &&
           existing.specIssueNumber === input.spec.issueNumber &&
-          existing.prompt === input.prompt;
+          existing.prompt === input.prompt &&
+          existing.originalTargetKind === target.kind &&
+          existing.originalTargetStackId === (target.stackId ?? null) &&
+          existing.originalTargetStackNumber === (target.stackNumber ?? null) &&
+          existing.originalTargetParentPullRequestId === (target.parentPullRequestId ?? null) &&
+          existing.originalTargetParentPullRequestNumber === (target.parentPullRequestNumber ?? null);
         result = { kind: sameSubmission ? "existing" : "conflict", session: existing };
         return;
       }
 
       const unfinishedRow = database.query(`
-        SELECT * FROM sessions
-        WHERE spec_github_id = ?
-          AND state IN ('queued', 'preparing', 'running', 'waiting', 'idle')
-        ORDER BY submission_order
+        ${sessionSelect}
+        WHERE s.spec_github_id = ?
+          AND s.state IN ('queued', 'preparing', 'running', 'waiting', 'idle')
+        ORDER BY s.submission_order
         LIMIT 1
       `).get(input.spec.githubId) as SessionRow | null;
 
@@ -1454,9 +1792,12 @@ export const createPersistence = (options: PersistenceOptions) => {
         INSERT INTO sessions (
           atlas_id, repository_id, spec_github_id, spec_issue_number, spec_title,
           spec_body, spec_html_url, submission_id, submission_order, submitted_at,
-          prompt, target_kind, target_branch, state, state_reason, execution_slot_held,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 0, ?)
+          prompt, target_kind, target_branch, target_stack_id, target_stack_number,
+          target_parent_pull_request_id, target_parent_pull_request_number,
+          original_target_kind, original_target_branch, original_target_stack_id, original_target_stack_number,
+          original_target_parent_pull_request_id, original_target_parent_pull_request_number,
+          state, state_reason, execution_slot_held, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 0, ?)
       `).run(
         input.atlasId,
         input.repositoryId,
@@ -1469,10 +1810,30 @@ export const createPersistence = (options: PersistenceOptions) => {
         orderRow.next_order,
         submittedAt,
         input.prompt,
-        input.targetKind,
+        targetKind,
         input.targetBranch,
+        targetStackId,
+        targetStackNumber,
+        targetParentPullRequestId,
+        targetParentPullRequestNumber,
+        targetKind,
+        input.targetBranch,
+        targetStackId,
+        targetStackNumber,
+        targetParentPullRequestId,
+        targetParentPullRequestNumber,
         "Awaiting downstream preparation.",
         submittedAt,
+      );
+
+      database.query(`
+        INSERT INTO session_history (session_id, event_kind, occurred_at, reason, details_json)
+        VALUES (?, 'queued', ?, ?, ?)
+      `).run(
+        input.atlasId,
+        submittedAt,
+        "Session durably queued before local preparation.",
+        JSON.stringify({ target }),
       );
 
       result = { kind: "created", session: getSession(input.atlasId)! };
@@ -1483,18 +1844,18 @@ export const createPersistence = (options: PersistenceOptions) => {
 
   const listQueuedSessions = () => {
     const rows = database.query(`
-      SELECT * FROM sessions
-      WHERE state = 'queued'
-      ORDER BY submission_order ASC
+      ${sessionSelect}
+      WHERE s.state = 'queued'
+      ORDER BY s.submission_order ASC
     `).all() as SessionRow[];
     return rows.map(toSession);
   };
 
   const listPreparingSessions = () => {
     const rows = database.query(`
-      SELECT * FROM sessions
-      WHERE state = 'preparing'
-      ORDER BY submission_order ASC
+      ${sessionSelect}
+      WHERE s.state = 'preparing'
+      ORDER BY s.submission_order ASC
     `).all() as SessionRow[];
     return rows.map(toSession);
   };
@@ -1534,14 +1895,17 @@ export const createPersistence = (options: PersistenceOptions) => {
           JOIN repositories r ON r.github_id = s.repository_id
           JOIN specs sp ON sp.repository_id = s.repository_id AND sp.github_id = s.spec_github_id
             AND sp.issue_number = s.spec_issue_number
-          WHERE s.state = 'queued'
+           WHERE s.state = 'queued'
             AND r.removed_at IS NULL
             AND r.access_status = 'available'
             AND r.archived = 0
             AND r.disabled = 0
             AND r.has_issues = 1
             AND r.default_branch IS NOT NULL
-            AND r.default_branch = s.target_branch
+             AND (
+               (s.target_kind = 'default' AND r.default_branch = s.target_branch)
+               OR s.target_kind IN ('native_stack', 'standalone_parent')
+             )
             AND sp.is_current = 1
             AND sp.state = 'open'
             AND sp.has_spec_label = 1
@@ -1560,15 +1924,165 @@ export const createPersistence = (options: PersistenceOptions) => {
       `).get(atlasId) as SessionRow | null;
       if (!eligible) return;
 
+      const current = toSession(eligible);
+      const target = intent.target ?? targetFromSession(current);
+      if (target.kind !== "default") {
+        const conflict = database.query(`
+          SELECT DISTINCT r.reservation_id
+          FROM stack_reservations r
+          LEFT JOIN reservation_prs rp ON rp.reservation_id = r.reservation_id
+          LEFT JOIN stack_members sm ON sm.pull_request_id = rp.pull_request_id
+          LEFT JOIN reservation_conflict_holds h ON h.reservation_id = r.reservation_id
+          WHERE r.repository_id = ?
+            AND r.state = 'held'
+            AND r.session_id != ?
+            AND (
+              (${target.kind === "native_stack" ? "r.accepted_target_kind = 'native_stack' AND r.accepted_stack_id = ?" : "0"})
+              OR (${target.kind === "standalone_parent" ? "r.accepted_target_kind = 'standalone_parent' AND r.accepted_parent_pull_request_id = ?" : "0"})
+              OR (${target.kind === "native_stack" ? "sm.stack_id = ?" : "0"})
+              OR (${target.kind === "standalone_parent" ? "rp.pull_request_id = ?" : "0"})
+              OR (${target.kind === "native_stack" ? "h.target_kind = 'native_stack' AND h.stack_id = ?" : "0"})
+              OR (${target.kind === "standalone_parent" ? "h.target_kind = 'standalone_parent' AND h.parent_pull_request_id = ?" : "0"})
+            )
+          LIMIT 1
+        `).get(
+          current.repositoryId,
+          atlasId,
+          ...(target.kind === "native_stack" ? [target.stackId ?? null] : []),
+          ...(target.kind === "standalone_parent" ? [target.parentPullRequestId ?? null] : []),
+          ...(target.kind === "native_stack" ? [target.stackId ?? null] : []),
+          ...(target.kind === "standalone_parent" ? [target.parentPullRequestId ?? null] : []),
+          ...(target.kind === "native_stack" ? [target.stackId ?? null] : []),
+          ...(target.kind === "standalone_parent" ? [target.parentPullRequestId ?? null] : []),
+        ) as { reservation_id: string } | null;
+        if (conflict) {
+          const holdValues = target.kind === "native_stack"
+            ? ["native_stack", target.stackId ?? null, target.stackNumber ?? null, null, null]
+            : ["standalone_parent", null, null, target.parentPullRequestId ?? null, target.parentPullRequestNumber ?? null];
+          database.query(`
+            INSERT INTO reservation_conflict_holds (
+              reservation_id, repository_id, target_kind, stack_id, stack_number,
+              parent_pull_request_id, parent_pull_request_number, created_at, reason
+            )
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE NOT EXISTS (
+              SELECT 1 FROM reservation_conflict_holds
+              WHERE reservation_id = ? AND target_kind = ?
+                AND stack_id IS ? AND parent_pull_request_id IS ?
+            )
+          `).run(
+            conflict.reservation_id,
+            current.repositoryId,
+            ...holdValues,
+            isoNow(now),
+            "Another held reservation owns this target or retained evidence.",
+            conflict.reservation_id,
+            holdValues[0],
+            holdValues[1],
+            holdValues[3],
+          );
+          return;
+        }
+      }
+
+      const resolved = intent.resolvedTarget ?? {
+        kind: target.kind,
+        stackId: target.stackId ?? null,
+        stackNumber: target.stackNumber ?? null,
+        parentPullRequestId: target.parentPullRequestId ?? null,
+        parentPullRequestNumber: target.parentPullRequestNumber ?? null,
+        parentPullRequestUrl: null,
+        parentBranch: intent.baseBranch,
+        trunkBranch: intent.baseBranch,
+        layers: [],
+      } satisfies ResolvedTarget;
+      const [currentKind, currentStackId, currentStackNumber, currentParentId, currentParentNumber] = targetColumns(target);
+      const existingReservation = target.kind === "default" ? null : database.query(`
+        SELECT reservation_id FROM stack_reservations
+        WHERE session_id = ? AND state = 'held'
+      `).get(atlasId) as { reservation_id: string } | null;
+      const reservationId = target.kind === "default"
+        ? null
+        : existingReservation?.reservation_id ?? `res_${crypto.randomUUID()}`;
       const timestamp = isoNow(now);
-      database.query(`
+
+      if (reservationId && !existingReservation) {
+        database.query(`
+          INSERT INTO stack_reservations (
+            reservation_id, session_id, repository_id,
+            original_target_kind, original_stack_id, original_stack_number,
+            original_parent_pull_request_id, original_parent_pull_request_number,
+            accepted_target_kind, accepted_stack_id, accepted_stack_number,
+            accepted_parent_pull_request_id, accepted_parent_pull_request_number,
+            state, held_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'held', ?)
+        `).run(
+          reservationId,
+          atlasId,
+          current.repositoryId,
+          current.originalTargetKind,
+          current.originalTargetStackId,
+          current.originalTargetStackNumber,
+          current.originalTargetParentPullRequestId,
+          current.originalTargetParentPullRequestNumber,
+          currentKind,
+          currentStackId,
+          currentStackNumber,
+          currentParentId,
+          currentParentNumber,
+          timestamp,
+        );
+      }
+      if (reservationId && existingReservation) {
+        database.query(`
+          UPDATE stack_reservations
+          SET accepted_target_kind = ?,
+              accepted_stack_id = ?,
+              accepted_stack_number = ?,
+              accepted_parent_pull_request_id = ?,
+              accepted_parent_pull_request_number = ?
+          WHERE reservation_id = ? AND state = 'held'
+        `).run(
+          currentKind,
+          currentStackId,
+          currentStackNumber,
+          currentParentId,
+          currentParentNumber,
+          reservationId,
+        );
+      }
+
+      if (reservationId) {
+        const addEvidence = database.query(`
+          INSERT OR IGNORE INTO reservation_prs (reservation_id, pull_request_id, evidence_role, observed_at)
+          VALUES (?, ?, ?, ?)
+        `);
+        for (const layer of resolved.layers) addEvidence.run(reservationId, layer.pullRequestId, "observed_member", timestamp);
+        if (resolved.parentPullRequestId) addEvidence.run(reservationId, resolved.parentPullRequestId, "preparation_parent", timestamp);
+      }
+
+      const updated = database.query(`
         UPDATE sessions
         SET state = 'preparing',
             state_reason = ?,
             directory = ?,
+            target_kind = ?,
+            target_branch = ?,
+            target_stack_id = ?,
+            target_stack_number = ?,
+            target_parent_pull_request_id = ?,
+            target_parent_pull_request_number = ?,
             base_branch = ?,
             base_sha = ?,
             working_branch = ?,
+            resolved_stack_id = ?,
+            resolved_stack_number = ?,
+            resolved_parent_pull_request_id = ?,
+            resolved_parent_pull_request_number = ?,
+            resolved_parent_pull_request_url = ?,
+            resolved_parent_branch = ?,
+            resolved_trunk_branch = ?,
+            resolved_layers_json = ?,
             preparation_checkpoint = 'intent_saved',
             preparation_reason = ?,
             prepared_at = NULL,
@@ -1578,12 +2092,36 @@ export const createPersistence = (options: PersistenceOptions) => {
       `).run(
         "Preparation admitted; local clone has not started.",
         intent.directory,
-        intent.baseBranch,
+        currentKind,
+        resolved.parentBranch,
+        currentStackId,
+        currentStackNumber,
+        currentParentId,
+        currentParentNumber,
+        resolved.parentBranch,
         intent.baseSha,
         intent.workingBranch,
+        resolved.stackId,
+        resolved.stackNumber,
+        resolved.parentPullRequestId,
+        resolved.parentPullRequestNumber,
+        resolved.parentPullRequestUrl,
+        resolved.parentBranch,
+        resolved.trunkBranch,
+        JSON.stringify(resolved.layers),
         "Preparation intent durably saved before filesystem work.",
         timestamp,
         atlasId,
+      );
+      if (updated.changes !== 1) throw new Error("Preparation claim changed before admission");
+      database.query(`
+        INSERT INTO session_history (session_id, event_kind, occurred_at, reason, details_json)
+        VALUES (?, 'admitted', ?, ?, ?)
+      `).run(
+        atlasId,
+        timestamp,
+        "Global execution slot and target reservation claimed atomically before local preparation.",
+        JSON.stringify({ reservationId, target, resolved }),
       );
       claimed = getSession(atlasId);
     });
@@ -1839,7 +2377,7 @@ export const createPersistence = (options: PersistenceOptions) => {
       const current = database.query("SELECT state FROM sessions WHERE atlas_id = ?").get(atlasId) as { state: SessionState } | null;
       if (!current) return;
       if ((current.state === "succeeded" || current.state === "failed" || current.state === "interrupted") && !terminal) return;
-      database.query(`
+      const updated = database.query(`
         UPDATE sessions
         SET state = ?,
             state_reason = ?,
@@ -1858,6 +2396,18 @@ export const createPersistence = (options: PersistenceOptions) => {
         isoNow(now),
         atlasId,
       );
+      if (updated.changes > 0) {
+        database.query(`
+          INSERT INTO session_history (session_id, event_kind, occurred_at, reason, details_json)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(
+          atlasId,
+          terminal ? "terminal" : "execution_state",
+          isoNow(now),
+          reason,
+          JSON.stringify({ state, executionSlotHeld: !terminal }),
+        );
+      }
     });
     reconcile.immediate();
     return getSession(atlasId);
@@ -1865,21 +2415,21 @@ export const createPersistence = (options: PersistenceOptions) => {
 
   const listOpenCodeSessions = () => {
     const rows = database.query(`
-      SELECT * FROM sessions
-      WHERE state IN ('preparing', 'running', 'waiting', 'idle')
+      ${sessionSelect}
+      WHERE s.state IN ('preparing', 'running', 'waiting', 'idle')
         AND (
-          preparation_checkpoint = 'prepared'
-          OR handoff_checkpoint != 'not_started'
-          OR opencode_session_id IS NOT NULL
+          s.preparation_checkpoint = 'prepared'
+          OR s.handoff_checkpoint != 'not_started'
+          OR s.opencode_session_id IS NOT NULL
         )
-      ORDER BY submission_order ASC
+      ORDER BY s.submission_order ASC
     `).all() as SessionRow[];
     return rows.map(toSession);
   };
 
   const getSessionByOpenCodeSessionId = (opencodeSessionId: string) => {
     const row = database.query(
-      "SELECT * FROM sessions WHERE opencode_session_id = ?",
+      `${sessionSelect} WHERE s.opencode_session_id = ?`,
     ).get(opencodeSessionId) as SessionRow | null;
     return row ? toSession(row) : undefined;
   };
@@ -1888,35 +2438,35 @@ export const createPersistence = (options: PersistenceOptions) => {
     const activeStates = "('queued', 'preparing', 'running', 'waiting', 'idle')";
     if (filter === "active") {
       const rows = database.query(`
-        SELECT * FROM sessions
-        WHERE repository_id = ? AND state IN ${activeStates}
-        ORDER BY submission_order DESC
+        ${sessionSelect}
+        WHERE s.repository_id = ? AND s.state IN ${activeStates}
+        ORDER BY s.submission_order DESC
       `).all(repositoryId) as SessionRow[];
       return rows.map(toSession);
     }
 
     if (filter === "all") {
       const rows = database.query(`
-        SELECT * FROM sessions
-        WHERE repository_id = ?
-        ORDER BY submission_order DESC
+        ${sessionSelect}
+        WHERE s.repository_id = ?
+        ORDER BY s.submission_order DESC
       `).all(repositoryId) as SessionRow[];
       return rows.map(toSession);
     }
 
     const rows = database.query(`
-      SELECT * FROM sessions
-      WHERE repository_id = ? AND state = ?
-      ORDER BY submission_order DESC
+      ${sessionSelect}
+      WHERE s.repository_id = ? AND s.state = ?
+      ORDER BY s.submission_order DESC
     `).all(repositoryId, filter) as SessionRow[];
     return rows.map(toSession);
   };
 
   const listSessionsForSpec = (repositoryId: string, issueNumber: string) => {
     const rows = database.query(`
-      SELECT * FROM sessions
-      WHERE repository_id = ? AND spec_issue_number = ?
-      ORDER BY submission_order DESC
+      ${sessionSelect}
+      WHERE s.repository_id = ? AND s.spec_issue_number = ?
+      ORDER BY s.submission_order DESC
     `).all(repositoryId, issueNumber) as SessionRow[];
     return rows.map(toSession);
   };

@@ -1,4 +1,4 @@
-import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, statfsSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, statfsSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, join, resolve } from "node:path";
 import type { GitHubClient, GitHubRepository } from "./github.ts";
@@ -10,8 +10,12 @@ import {
 import type {
   Persistence,
   PreparationIntent,
+  PullRequest,
+  PrStack,
   Repository,
+  ResolvedTarget,
   Session,
+  SessionTarget,
 } from "./persistence.ts";
 
 const DEFAULT_SESSION_ROOT = "/var/lib/atlas/sessions";
@@ -30,10 +34,19 @@ type PreparationRefresh = {
   repository: Repository;
 };
 
+type VerifiedTarget = {
+  repository: Repository;
+  candidate: GitHubRepository;
+  target: SessionTarget;
+  resolved: ResolvedTarget;
+  sha: string;
+};
+
 type PreparationOptions = {
   persistence: Persistence;
   github: GitHubClient;
   refreshRepository: (repository: Repository) => Promise<PreparationRefresh>;
+  refreshPullRequests?: (repository: Repository) => Promise<PreparationRefresh>;
   sessionRoot?: string;
   globalCapacity?: number;
   pollMs?: number;
@@ -246,13 +259,97 @@ export const createPreparationService = (options: PreparationOptions) => {
     }
   };
 
-  const verifyTarget = async (session: Session) => {
+  const safeBranch = (branch: string | null | undefined) => Boolean(branch && BRANCH_PATTERN.test(branch));
+
+  const mergeRestriction = (pullRequest: PullRequest) => {
+    if (pullRequest.autoMergeEnabled === true) return "The selected target has auto-merge enabled.";
+    if (pullRequest.autoMergeEnabled === null) return "Waiting for GitHub verification of auto-merge state.";
+    if (pullRequest.mergeQueueState === null) return "Waiting for GitHub verification of merge-queue state.";
+    if (pullRequest.mergeQueueState !== "none") return "The selected target is in a GitHub merge queue.";
+    return undefined;
+  };
+
+  const verifyStack = async (
+    repository: Repository,
+    candidate: GitHubRepository,
+    stack: PrStack,
+    pullRequests: PullRequest[],
+  ): Promise<VerifiedTarget> => {
+    const members = [...stack.members].sort((left, right) => left.position - right.position);
+    if (members.length === 0) throw new PreparationError("Waiting for a verified native stack member order.");
+    if (members.length >= 100) throw new PreparationError("The selected native stack has no room for another layer.");
+    if (stack.open === null) throw new PreparationError("Waiting for native stack lifecycle verification.");
+    if (!stack.open) throw new PreparationError("The selected native stack is no longer open for another layer.");
+    if (!safeBranch(stack.trunkRef)) throw new PreparationError("Waiting for a verified native stack trunk.");
+
+    const pullRequestMap = new Map(pullRequests.map((pullRequest) => [pullRequest.githubId, pullRequest]));
+    const resolvedMembers = members.map((member) => pullRequestMap.get(member.pullRequestId));
+    if (resolvedMembers.some((pullRequest) => !pullRequest)) throw new PreparationError("Waiting for complete native stack member verification.");
+    const completeMembers = resolvedMembers as PullRequest[];
+    if (completeMembers.some((pullRequest) => pullRequest.headRepositoryId !== repository.githubId)) {
+      throw new PreparationError("The native stack contains a Pull request from another Repository.");
+    }
+    if (completeMembers.some((pullRequest) => pullRequest.state === "closed" && !pullRequest.mergedAt)) {
+      throw new PreparationError("The native stack has a closed-unmerged layer and cannot be extended.");
+    }
+    if (completeMembers.every((pullRequest) => pullRequest.mergedAt)) {
+      throw new PreparationError("The native stack is fully merged and cannot be extended.");
+    }
+    const top = completeMembers[completeMembers.length - 1]!;
+    if (top.state !== "open") throw new PreparationError("The actual native stack top is not open.");
+    const restriction = mergeRestriction(top);
+    if (restriction) throw new PreparationError(restriction);
+    if (completeMembers.some((pullRequest) => !safeBranch(pullRequest.headRef))) {
+      throw new PreparationError("Waiting for safe native stack layer branches.");
+    }
+    if (!options.github.getBranchRef) throw new PreparationError("Waiting for native stack branch verification.");
+    const memberBranches = [...new Set(completeMembers.map((pullRequest) => pullRequest.headRef))];
+    const [memberRefs, trunkRef] = await Promise.all([
+      Promise.all(memberBranches.map(async (branch) => [branch, await options.github.getBranchRef!(candidate, branch)] as const)),
+      options.github.getBranchRef(candidate, stack.trunkRef!),
+    ]);
+    const refs = new Map(memberRefs);
+    if (completeMembers.some((pullRequest) => {
+      const ref = refs.get(pullRequest.headRef);
+      return !ref || !SHA_PATTERN.test(ref.sha);
+    })) throw new PreparationError("Waiting for verified native stack layer refs.");
+    if (!trunkRef || !SHA_PATTERN.test(trunkRef.sha)) throw new PreparationError("Waiting for the verified native stack trunk ref.");
+
+    return {
+      repository,
+      candidate,
+      target: {
+        kind: "native_stack",
+        stackId: stack.githubId,
+        stackNumber: stack.number,
+      },
+      resolved: {
+        kind: "native_stack",
+        stackId: stack.githubId,
+        stackNumber: stack.number,
+        parentPullRequestId: top.githubId,
+        parentPullRequestNumber: top.number,
+        parentPullRequestUrl: top.htmlUrl,
+        parentBranch: top.headRef,
+        trunkBranch: stack.trunkRef!,
+        layers: completeMembers.map((pullRequest) => ({
+          pullRequestId: pullRequest.githubId,
+          pullRequestNumber: pullRequest.number,
+          branch: pullRequest.headRef,
+          sha: refs.get(pullRequest.headRef)!.sha,
+        })),
+      },
+      sha: refs.get(top.headRef)!.sha,
+    };
+  };
+
+  const verifyTarget = async (session: Session): Promise<VerifiedTarget> => {
     const existing = options.persistence.getRepository(session.repositoryId);
     if (!existing) throw new PreparationError("Waiting for Repository verification.");
     if (authorized && !authorized.has(existing.fullName.toLocaleLowerCase("en-US"))) {
       throw new PreparationError("Waiting: this Repository is outside the authorized preparation scope.");
     }
-    if (!options.github.getBranchRef) throw new PreparationError("Waiting for GitHub default-branch verification.");
+    if (!options.github.getBranchRef) throw new PreparationError("Waiting for GitHub branch verification.");
 
     const refreshed = await options.refreshRepository(existing);
     if (!refreshed.ok) throw new PreparationError("Waiting for current GitHub access and Spec verification.");
@@ -265,12 +362,7 @@ export const createPreparationService = (options: PreparationOptions) => {
     if (authorized && !authorized.has(fullName.toLocaleLowerCase("en-US"))) {
       throw new PreparationError("Waiting: this Repository is outside the authorized preparation scope.");
     }
-    if (!candidate.defaultBranch || candidate.defaultBranch !== session.targetBranch) {
-      throw new PreparationError("Waiting for explicit default-branch reconfirmation.");
-    }
-    if (!BRANCH_PATTERN.test(candidate.defaultBranch)) {
-      throw new PreparationError("Waiting for a safe default-branch name.");
-    }
+    if (!candidate.defaultBranch || !safeBranch(candidate.defaultBranch)) throw new PreparationError("Waiting for a safe default-branch name.");
     if (candidate.archived || candidate.disabled || !candidate.hasIssues) {
       throw new PreparationError("Waiting: this Repository is not eligible for preparation.");
     }
@@ -278,16 +370,94 @@ export const createPreparationService = (options: PreparationOptions) => {
     if (!spec || !spec.isCurrent || spec.state !== "open" || !spec.hasSpecLabel || spec.isPullRequest) {
       throw new PreparationError("Waiting for the Spec to be open and labelled exactly `spec`.");
     }
+    if (session.targetKind === "default" && session.targetBranch !== candidate.defaultBranch) {
+      throw new PreparationError("Waiting for explicit default-branch reconfirmation.");
+    }
+
+    if (session.targetKind !== "default") {
+      if (!options.refreshPullRequests) throw new PreparationError("Waiting for current Pull request and native stack verification.");
+      const pullRequestRefresh = await options.refreshPullRequests(existing);
+      if (!pullRequestRefresh.ok) throw new PreparationError("Waiting for current Pull request and native stack verification.");
+      const pullRequests = options.persistence.listPullRequests(session.repositoryId);
+      const stacks = options.persistence.listPrStacks(session.repositoryId);
+
+      if (session.targetKind === "native_stack") {
+        const stack = stacks.find((candidateStack) => candidateStack.githubId === session.targetStackId);
+        if (!stack) throw new PreparationError("Waiting for explicit target reconfirmation; the selected native stack no longer exists.");
+        return verifyStack(pullRequestRefresh.repository, candidate, stack, pullRequests);
+      }
+
+      const parent = pullRequests.find((pullRequest) => pullRequest.githubId === session.targetParentPullRequestId);
+      if (!parent) throw new PreparationError("Waiting for explicit target reconfirmation; the selected parent Pull request no longer exists.");
+      if (parent.stack) {
+        const stack = stacks.find((candidateStack) => candidateStack.githubId === parent.stack?.stackId);
+        if (!stack) throw new PreparationError("Waiting for native stack verification after the selected parent changed structure.");
+        return verifyStack(pullRequestRefresh.repository, candidate, stack, pullRequests);
+      }
+      if (parent.state !== "open") throw new PreparationError("The selected standalone parent is no longer open.");
+      if (parent.headRepositoryId !== existing.githubId) throw new PreparationError("The selected parent Pull request belongs to another Repository.");
+      if (parent.baseRef !== candidate.defaultBranch) throw new PreparationError("The selected standalone parent no longer targets the default branch.");
+      const restriction = mergeRestriction(parent);
+      if (restriction) throw new PreparationError(restriction);
+      if (!safeBranch(parent.headRef)) throw new PreparationError("Waiting for a safe standalone parent branch.");
+      const ref = await options.github.getBranchRef(candidate, parent.headRef);
+      if (!ref || !SHA_PATTERN.test(ref.sha)) throw new PreparationError("Waiting for the verified standalone parent ref.");
+      return {
+        repository: pullRequestRefresh.repository,
+        candidate,
+        target: {
+          kind: "standalone_parent",
+          parentPullRequestId: parent.githubId,
+          parentPullRequestNumber: parent.number,
+        },
+        resolved: {
+          kind: "standalone_parent",
+          stackId: null,
+          stackNumber: null,
+          parentPullRequestId: parent.githubId,
+          parentPullRequestNumber: parent.number,
+          parentPullRequestUrl: parent.htmlUrl,
+          parentBranch: parent.headRef,
+          trunkBranch: candidate.defaultBranch,
+          layers: [{
+            pullRequestId: parent.githubId,
+            pullRequestNumber: parent.number,
+            branch: parent.headRef,
+            sha: ref.sha,
+          }],
+        },
+        sha: ref.sha,
+      };
+    }
+
     const ref = await options.github.getBranchRef(candidate, candidate.defaultBranch);
     if (!ref || !SHA_PATTERN.test(ref.sha)) throw new PreparationError("Waiting for a verified default-branch commit.");
-    return { repository: refreshed.repository, candidate, sha: ref.sha };
+    return {
+      repository: refreshed.repository,
+      candidate,
+      target: { kind: "default" },
+      resolved: {
+        kind: "default",
+        stackId: null,
+        stackNumber: null,
+        parentPullRequestId: null,
+        parentPullRequestNumber: null,
+        parentPullRequestUrl: null,
+        parentBranch: candidate.defaultBranch,
+        trunkBranch: candidate.defaultBranch,
+        layers: [],
+      },
+      sha: ref.sha,
+    };
   };
 
-  const intentFor = (session: Session, sha: string): PreparationIntent => ({
+  const intentFor = (session: Session, verified: VerifiedTarget): PreparationIntent => ({
     directory: join(sessionRoot, session.atlasId),
-    baseBranch: session.targetBranch,
-    baseSha: sha,
+    baseBranch: verified.resolved.parentBranch,
+    baseSha: verified.sha,
     workingBranch: `atlas/${session.atlasId}`,
+    target: verified.target,
+    resolvedTarget: verified.resolved,
   });
 
   const checkpoint = (atlasId: string, value: Parameters<Persistence["setPreparationCheckpoint"]>[1], reason: string, stateReason = reason) => {
@@ -344,7 +514,9 @@ export const createPreparationService = (options: PreparationOptions) => {
       if (!helperConfig.includes("atlas-git-credential")) throw new PreparationError("Clone-local credential routing is not Atlas-managed");
       const shallow = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", "--is-shallow-repository"], { env }, "Prepared clone completeness could not be verified.");
       if (shallow !== "false") throw new PreparationError("The Session clone is shallow; Atlas requires a full clone.");
-      await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `refs/remotes/origin/${session.baseBranch}^{commit}`], { env }, "Default-branch ref could not be verified in the clone.");
+      await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `refs/remotes/origin/${session.baseBranch}^{commit}`], { env }, "The selected parent ref could not be verified in the clone.");
+      const trunkBranch = session.resolvedTrunkBranch ?? session.baseBranch;
+      await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `refs/remotes/origin/${trunkBranch}^{commit}`], { env }, "The intended stack trunk ref could not be verified in the clone.");
       const resolvedSha = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `${session.baseSha}^{commit}`], { env }, "The verified preparation SHA is missing from the clone.");
       if (resolvedSha.toLocaleLowerCase("en-US") !== session.baseSha.toLocaleLowerCase("en-US")) throw new PreparationError("The verified preparation SHA could not be resolved in the clone.");
 
@@ -358,6 +530,18 @@ export const createPreparationService = (options: PreparationOptions) => {
       const upstream = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], { env }, "The local working branch tracking could not be verified.");
       if (currentBranch !== session.workingBranch || currentSha.toLocaleLowerCase("en-US") !== session.baseSha.toLocaleLowerCase("en-US") || upstream !== `origin/${session.baseBranch}`) {
         throw new PreparationError("The local working branch identity could not be verified.");
+      }
+      if (session.targetKind !== "default") {
+        writeFileSync(
+          join(session.directory, ".git", "atlas-stack.json"),
+          JSON.stringify({
+            version: 1,
+            trunk: trunkBranch,
+            layers: session.resolvedLayers,
+            child: { branch: session.workingBranch, base: session.baseSha },
+          }, null, 2) + "\n",
+          { mode: 0o600 },
+        );
       }
       checkpoint(session.atlasId, "prepared", "Full clone and unique local working branch are ready; OpenCode handoff has not started.");
     } catch (error) {
@@ -419,10 +603,12 @@ export const createPreparationService = (options: PreparationOptions) => {
       await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "config", "--local", "credential.useHttpPath", "true"], { env }, "Clone-local credential path scoping could not be enabled.");
       const shallow = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", "--is-shallow-repository"], { env }, "Clone completeness could not be verified.");
       if (shallow !== "false") throw new PreparationError("Git returned a shallow clone; Atlas requires a full clone.");
-      await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `refs/remotes/origin/${session.targetBranch}^{commit}`], { env }, "The default-branch ref is missing from the clone.");
+      await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `refs/remotes/origin/${session.baseBranch}^{commit}`], { env }, "The selected parent ref is missing from the clone.");
+      const trunkBranch = session.resolvedTrunkBranch ?? session.baseBranch;
+      await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `refs/remotes/origin/${trunkBranch}^{commit}`], { env }, "The intended stack trunk ref is missing from the clone.");
       const resolvedSha = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", `${session.baseSha}^{commit}`], { env }, "The verified default tip is missing from the clone.");
-      if (resolvedSha.toLocaleLowerCase("en-US") !== session.baseSha.toLocaleLowerCase("en-US")) throw new PreparationError("The cloned default tip differs from the verified preparation SHA.");
-      if (!checkpoint(session.atlasId, "clone_complete", "Full clone completed and matches the verified default-branch SHA.", "Full clone ready; local branch creation is next.")) return;
+      if (resolvedSha.toLocaleLowerCase("en-US") !== session.baseSha.toLocaleLowerCase("en-US")) throw new PreparationError("The cloned parent tip differs from the verified preparation SHA.");
+      if (!checkpoint(session.atlasId, "clone_complete", "Full clone completed and matches the verified preparation SHA.", "Full clone ready; local branch creation is next.")) return;
       await finishBranch(session = options.persistence.getSession(session.atlasId)!, repository);
     } catch (error) {
       const reason = error instanceof StorageError ? error.message : storageIssue();
@@ -468,7 +654,7 @@ export const createPreparationService = (options: PreparationOptions) => {
         if (!setReason(session, error instanceof PreparationError ? error.message : "Waiting for safe GitHub verification.", true)) return;
         continue;
       }
-      const intent = intentFor(session, target.sha);
+      const intent = intentFor(session, target);
       let claimed: Session | undefined;
       try {
         claimed = options.persistence.claimPreparation(session.atlasId, intent, capacity, true);

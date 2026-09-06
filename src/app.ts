@@ -16,6 +16,7 @@ import {
   type Repository,
   type Session,
   type SessionFilter,
+  type SessionTarget,
 } from "./persistence.ts";
 import { createPreparationService } from "./preparation.ts";
 import type { CredentialBoundary } from "./credentials.ts";
@@ -36,10 +37,12 @@ import {
   renderSessionDetailPage,
   renderSessionsPage,
   renderStartSessionForm,
+  renderStartTargetOptions,
   renderStartSessionPage,
   renderSpecDetailPage,
   renderSpecUnavailablePage,
   renderSpecsPage,
+  startTargetOptions,
   type PendingStartSession,
 } from "./views.ts";
 
@@ -50,6 +53,7 @@ const repositoryIdPattern = /^[1-9]\d{0,19}$/;
 const issueNumberPattern = /^[1-9]\d{0,9}$/;
 const submissionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const sessionIdPattern = /^ses_[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const targetSelectionPattern = /^(?:default|stack:\d+|parent:\d+)$/;
 const startSessionPathPattern = /^\/repositories\/([1-9]\d{0,19})\/specs\/([1-9]\d{0,9})\/sessions$/;
 const sessionFilters = new Set<SessionFilter>([
   "active",
@@ -185,10 +189,22 @@ const pendingStartSession = (form: Record<string, unknown>): PendingStartSession
   const action = stringField(form.pending_action);
   const submissionId = stringField(form.pending_submission_id);
   const prompt = stringField(form.pending_prompt);
-  if (!action || !startSessionPathPattern.test(action) || !submissionId || !submissionIdPattern.test(submissionId) || prompt === undefined) {
+  const target = stringField(form.pending_target) ?? "default";
+  if (!action || !startSessionPathPattern.test(action) || !submissionId || !submissionIdPattern.test(submissionId) || prompt === undefined || !targetSelectionPattern.test(target)) {
     return undefined;
   }
-  return { action, submissionId, prompt };
+  return { action, submissionId, prompt, target };
+};
+
+const parseTargetSelection = (value: string | undefined): SessionTarget | undefined => {
+  const selected = value ?? "default";
+  if (!targetSelectionPattern.test(selected)) return undefined;
+  if (selected === "default") return { kind: "default" };
+  const separator = selected.indexOf(":");
+  const id = selected.slice(separator + 1);
+  return selected.startsWith("stack:")
+    ? { kind: "native_stack", stackId: id }
+    : { kind: "standalone_parent", parentPullRequestId: id };
 };
 
 const redirectToSession = (c: Context, session: Pick<Session, "atlasId">) => {
@@ -275,6 +291,7 @@ export const createApp = (options: AppOptions) => {
     persistence,
     github,
     refreshRepository,
+    refreshPullRequests,
     sessionRoot: options.sessionRoot,
     globalCapacity: options.globalCapacity,
     credentialsPath: options.credentialsPath,
@@ -396,6 +413,7 @@ export const createApp = (options: AppOptions) => {
           notice: "Signed in. Review the preserved form, then choose Start Session to retry it.",
           accessRefresh: persistence.getRefreshState(repository.githubId, "access"),
           specsRefresh: persistence.getRefreshState(repository.githubId, "specs"),
+          target: pending.target,
         }), 200);
       }
       return c.html(renderPendingStartSessionPage(retryOptions), 200);
@@ -431,6 +449,7 @@ export const createApp = (options: AppOptions) => {
         ? submittedSubmissionId
         : crypto.randomUUID(),
       prompt: stringField(form.prompt) ?? "",
+      target: stringField(form.target) && targetSelectionPattern.test(stringField(form.target)!) ? stringField(form.target) : "default",
     };
     const csrfToken = auth.issueCsrf();
     setPrivateHtmlHeaders(c);
@@ -639,6 +658,9 @@ export const createApp = (options: AppOptions) => {
     const spec = persistence.getSpec(repositoryId, issueNumber);
     const accessRefresh = persistence.getRefreshState(repositoryId, "access");
     const specsRefresh = persistence.getRefreshState(repositoryId, "specs");
+    let pullRequests: ReturnType<Persistence["listPullRequests"]> = [];
+    let stacks: ReturnType<Persistence["listPrStacks"]> = [];
+    let pullRequestsRefresh = persistence.getRefreshState(repositoryId, "pullRequests");
     const identity = c.get("auth");
     const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
     setPrivateHtmlHeaders(c);
@@ -664,6 +686,18 @@ export const createApp = (options: AppOptions) => {
       }), 409);
     }
 
+    try {
+      const pullResult = await refreshPullRequests(existing);
+      pullRequests = persistence.listPullRequests(repositoryId);
+      stacks = persistence.listPrStacks(repositoryId);
+      pullRequestsRefresh = persistence.getRefreshState(repositoryId, "pullRequests");
+      if (!pullResult.ok) {
+        // Default-branch work remains visible; stack choices stay disabled until the projection is complete.
+      }
+    } catch {
+      pullRequestsRefresh = persistence.getRefreshState(repositoryId, "pullRequests");
+    }
+
     return c.html(renderStartSessionPage({
       csrfToken,
       repository,
@@ -672,6 +706,9 @@ export const createApp = (options: AppOptions) => {
       prompt: "",
       accessRefresh,
       specsRefresh,
+      pullRequests,
+      stacks,
+      pullRequestsRefresh,
     }));
   });
 
@@ -695,12 +732,15 @@ export const createApp = (options: AppOptions) => {
     }
 
     const prompt = stringField(form.prompt) ?? "";
+    const submittedTarget = stringField(form.target);
+    const targetValue = submittedTarget ?? "default";
     const submittedSubmissionId = stringField(form.submission_id);
     const submissionId = submittedSubmissionId && submissionIdPattern.test(submittedSubmissionId)
       ? submittedSubmissionId
       : crypto.randomUUID();
     const identity = c.get("auth");
     const action = `/repositories/${encodeURIComponent(repositoryId)}/specs/${encodeURIComponent(issueNumber)}/sessions`;
+    const selectedTarget = parseTargetSelection(submittedTarget);
 
     const renderError = (
       status: 403 | 409 | 422 | 503,
@@ -715,24 +755,42 @@ export const createApp = (options: AppOptions) => {
         csrfToken,
         submissionId,
         prompt,
+        target: targetValue,
         error,
         existingSession,
       };
+      const targetPullRequests = persistence.listPullRequests(repositoryId);
+      const targetStacks = persistence.listPrStacks(repositoryId);
+      const targetAccessRefresh = persistence.getRefreshState(repositoryId, "access");
+      const targetPullRequestsRefresh = persistence.getRefreshState(repositoryId, "pullRequests");
       setPrivateHtmlHeaders(c);
-      if (isHtmx(c)) return c.html(renderStartSessionForm(options), status);
+      if (isHtmx(c)) {
+        return c.html(renderStartSessionForm({
+          ...options,
+          targetOptions: renderStartTargetOptions(repository, targetPullRequests, targetStacks, targetAccessRefresh, targetPullRequestsRefresh, targetValue),
+        }), status);
+      }
       return c.html(renderStartSessionPage({
         ...options,
         repository,
         spec,
         accessRefresh: persistence.getRefreshState(repositoryId, "access"),
         specsRefresh: persistence.getRefreshState(repositoryId, "specs"),
+        pullRequests: targetPullRequests,
+        stacks: targetStacks,
+        pullRequestsRefresh: targetPullRequestsRefresh,
       }), status);
     };
 
     setPrivateHtmlHeaders(c);
+    if (form.target !== undefined && typeof form.target !== "string") {
+      return renderError(422, "Choose one starting target before starting the Session.");
+    }
     if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) {
       return renderError(403, "This form expired or was rejected. Reload the form and try again.");
     }
+
+    if (!selectedTarget) return renderError(422, "Choose a valid starting target before starting the Session.");
 
     const priorSubmission = submittedSubmissionId && submissionIdPattern.test(submittedSubmissionId)
       ? persistence.getSessionBySubmissionId(submittedSubmissionId)
@@ -741,7 +799,10 @@ export const createApp = (options: AppOptions) => {
       const sameSubmission = priorSubmission.repositoryId === repositoryId &&
         priorSubmission.specGithubId === knownSpec.githubId &&
         priorSubmission.specIssueNumber === issueNumber &&
-        priorSubmission.prompt === prompt;
+        priorSubmission.prompt === prompt &&
+        priorSubmission.originalTargetKind === selectedTarget.kind &&
+        priorSubmission.originalTargetStackId === (selectedTarget.stackId ?? null) &&
+        priorSubmission.originalTargetParentPullRequestId === (selectedTarget.parentPullRequestId ?? null);
       if (sameSubmission) return redirectToSession(c, priorSubmission);
       return renderError(409, "This submission identity was already used with different Session content.", existing, knownSpec);
     }
@@ -775,6 +836,70 @@ export const createApp = (options: AppOptions) => {
       return renderError(409, "This Spec is no longer open, labelled exactly `spec`, and eligible in this Repository.", repository, spec ?? knownSpec);
     }
 
+    let selectedQueueTarget = selectedTarget;
+    let selectedTargetBranch = repository.defaultBranch!;
+    if (selectedTarget.kind !== "default") {
+      let pullRefresh: SyncResult;
+      try {
+        pullRefresh = await refreshPullRequests(existing);
+      } catch {
+        return renderError(503, "Pull request and native stack eligibility could not be verified. No Session was queued.", repository, spec);
+      }
+      const currentPullRequests = persistence.listPullRequests(repositoryId);
+      const currentStacks = persistence.listPrStacks(repositoryId);
+      const currentRefresh = persistence.getRefreshState(repositoryId, "pullRequests");
+      if (!pullRefresh.ok || !currentRefresh || currentRefresh.availability !== "available" || currentRefresh.requestedGeneration > currentRefresh.completedGeneration) {
+        return renderError(503, "Pull request and native stack eligibility could not be verified. No Session was queued.", repository, spec);
+      }
+      const option = startTargetOptions(
+        repository,
+        currentPullRequests,
+        currentStacks,
+        persistence.getRefreshState(repositoryId, "access"),
+        currentRefresh,
+      ).find((candidate) => candidate.value === targetValue);
+      const selectedParent = selectedTarget.kind === "standalone_parent"
+        ? currentPullRequests.find((pullRequest) => pullRequest.githubId === selectedTarget.parentPullRequestId)
+        : undefined;
+      const selectedParentStack = selectedParent?.stack
+        ? currentStacks.find((stack) => stack.githubId === selectedParent.stack?.stackId)
+        : undefined;
+      const associatedParentOption = selectedParentStack
+        ? startTargetOptions(
+          repository,
+          currentPullRequests,
+          currentStacks,
+          persistence.getRefreshState(repositoryId, "access"),
+          currentRefresh,
+        ).find((candidate) => candidate.value === `stack:${selectedParentStack.githubId}`)
+        : undefined;
+      if (!option || option.status.kind !== "eligible") {
+        if (selectedTarget.kind === "standalone_parent" && associatedParentOption?.status.kind === "eligible") {
+          selectedQueueTarget = {
+            ...selectedTarget,
+            parentPullRequestNumber: selectedParent?.number ?? null,
+          };
+          selectedTargetBranch = selectedParent?.headRef ?? repository.defaultBranch!;
+        } else {
+          return renderError(409, option?.status.reason ?? "The selected starting target is no longer available. Choose a current eligible target.", repository, spec);
+        }
+      }
+      if (selectedTarget.kind === "native_stack") {
+        const stack = currentStacks.find((candidate) => candidate.githubId === selectedTarget.stackId);
+        if (!stack) return renderError(409, "The selected native stack is no longer available. Choose a current target.", repository, spec);
+        selectedQueueTarget = { ...selectedTarget, stackNumber: stack.number };
+        const members = [...stack.members].sort((left, right) => left.position - right.position);
+        const top = members.length > 0 ? currentPullRequests.find((pullRequest) => pullRequest.githubId === members[members.length - 1]!.pullRequestId) : undefined;
+        if (!top) return renderError(409, "The selected native stack top could not be verified. Choose a current target.", repository, spec);
+        selectedTargetBranch = top.headRef;
+      } else {
+        const parent = currentPullRequests.find((pullRequest) => pullRequest.githubId === selectedTarget.parentPullRequestId);
+        if (!parent) return renderError(409, "The selected standalone parent is no longer available. Choose a current target.", repository, spec);
+        selectedQueueTarget = { ...selectedTarget, parentPullRequestNumber: parent.number };
+        selectedTargetBranch = parent.headRef;
+      }
+    }
+
     let result: ReturnType<Persistence["queueSession"]>;
     try {
       result = persistence.queueSession({
@@ -784,8 +909,9 @@ export const createApp = (options: AppOptions) => {
         submissionId: submittedSubmissionId,
         submissionOrderTime: new Date(now()).toISOString(),
         prompt,
-        targetKind: "default",
-        targetBranch: repository.defaultBranch!,
+        targetKind: selectedQueueTarget.kind,
+        targetBranch: selectedTargetBranch,
+        target: selectedQueueTarget,
       });
     } catch {
       return renderError(503, "Atlas could not save this Session. No Session was queued; keep this form and try again.", repository, spec);

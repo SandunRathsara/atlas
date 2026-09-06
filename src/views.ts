@@ -1,5 +1,5 @@
 import type { GitHubRepository } from "./github.ts";
-import type { PrStack, PullRequest, RefreshState, Repository, Session, SessionFilter, SessionState, Spec } from "./persistence.ts";
+import type { PrStack, PullRequest, RefreshState, Repository, Session, SessionFilter, SessionState, Spec, TargetKind } from "./persistence.ts";
 
 const escapeHtml = (value: string) =>
   value.replace(
@@ -56,6 +56,7 @@ export type PendingStartSession = {
   action: string;
   submissionId: string;
   prompt: string;
+  target?: string;
 };
 
 export const renderLoginForm = ({
@@ -76,6 +77,7 @@ export const renderLoginForm = ({
   const pendingMarkup = pending
     ? `<input type="hidden" name="pending_action" value="${escapeHtml(pending.action)}">
     <input type="hidden" name="pending_submission_id" value="${escapeHtml(pending.submissionId)}">
+    <input type="hidden" name="pending_target" value="${escapeHtml(pending.target ?? "default")}">
     <textarea hidden name="pending_prompt">${escapeHtml(pending.prompt)}</textarea>
     <div class="alert alert-info mt-6 leading-normal" role="status">Sign in to review and retry the preserved Start Session form. Atlas will not resubmit it automatically.</div>`
     : "";
@@ -562,6 +564,9 @@ const repositoryTargetStatus = (repository: Repository): TargetStatus | undefine
   if (repository.disabled) {
     return { kind: "disabled", label: "Not eligible", reason: "Disabled Repositories are browsable but cannot start Sessions." };
   }
+  if (!repository.hasIssues) {
+    return { kind: "disabled", label: "Not eligible", reason: "GitHub Issues are disabled for this Repository." };
+  }
   if (repository.removedAt) {
     return { kind: "disabled", label: "Not eligible", reason: "This Repository was removed from Atlas; new starts are disabled." };
   }
@@ -624,6 +629,9 @@ const mergeRestriction = (pullRequest: PullRequest): string | undefined => {
 
 const standaloneStatus = (repository: Repository, pullRequest: PullRequest, targetGate?: TargetStatus): TargetStatus => {
   if (targetGate) return targetGate;
+  if (pullRequest.state !== "open") {
+    return { kind: "disabled", label: "Not eligible", reason: "The standalone parent is not open." };
+  }
   if (pullRequest.headRepositoryId === null || pullRequest.headRepositoryId === undefined) {
     return { kind: "warning", label: "Waiting for verification", reason: "The Pull request head Repository could not be verified." };
   }
@@ -659,6 +667,12 @@ const stackStatus = (
   if (targetGate) return targetGate;
   if (stack.members.length === 0) {
     return { kind: "warning", label: "Waiting for verification", reason: "The native stack has no verified ordered members." };
+  }
+  if (stack.open === null) {
+    return { kind: "warning", label: "Waiting for verification", reason: "The native stack lifecycle could not be verified." };
+  }
+  if (!stack.open) {
+    return { kind: "disabled", label: "Not eligible", reason: "The native stack is not open for another layer." };
   }
   if (stack.members.length >= 100) {
     return { kind: "disabled", label: "Not eligible", reason: "This native stack already has 100 members and cannot be extended." };
@@ -705,6 +719,89 @@ const stackStatus = (
     return { kind: restriction.includes("could not") ? "warning" : "disabled", label: restriction.includes("could not") ? "Waiting for verification" : "Not eligible", reason: restriction };
   }
   return { kind: "eligible", label: "Eligible native stack target", reason: "The explicit native order and actual top are verified; the next layer would follow this top." };
+};
+
+type StartTargetOption = {
+  value: string;
+  kind: TargetKind;
+  label: string;
+  reason: string;
+  status: TargetStatus;
+};
+
+export const startTargetOptions = (
+  repository: Repository,
+  pullRequests: PullRequest[] = [],
+  stacks: PrStack[] = [],
+  accessRefresh?: RefreshState,
+  pullRequestsRefresh?: RefreshState,
+): StartTargetOption[] => {
+  const options: StartTargetOption[] = [];
+  const defaultStatus = repositoryTargetStatus(repository) ?? {
+    kind: "eligible" as const,
+    label: "Eligible default branch",
+    reason: "The latest verified default-branch commit will be used when preparation is admitted.",
+  };
+  options.push({
+    value: "default",
+    kind: "default",
+    label: `Default branch · ${repository.defaultBranch ?? "unknown"}`,
+    reason: defaultStatus.reason,
+    status: defaultStatus,
+  });
+
+  const pullRequestMap = new Map(pullRequests.map((pullRequest) => [pullRequest.githubId, pullRequest]));
+  const targetGate = targetVerificationStatus(repository, accessRefresh, pullRequestsRefresh);
+  for (const stack of stacks) {
+    const status = stackStatus(repository, stack, pullRequestMap, targetGate);
+    const members = [...stack.members].sort((left, right) => left.position - right.position);
+    const top = members[members.length - 1];
+    const topPullRequest = top ? pullRequestMap.get(top.pullRequestId) : undefined;
+    options.push({
+      value: `stack:${stack.githubId}`,
+      kind: "native_stack",
+      label: `Native stack #${stack.number}${topPullRequest ? ` · top #${topPullRequest.number}` : ""}`,
+      reason: status.reason,
+      status,
+    });
+  }
+
+  for (const pullRequest of pullRequests.filter((candidate) => candidate.isCurrent && candidate.state === "open" && !candidate.stack)) {
+    const status = standaloneStatus(repository, pullRequest, targetGate);
+    options.push({
+      value: `parent:${pullRequest.githubId}`,
+      kind: "standalone_parent",
+      label: `Standalone parent #${pullRequest.number} · ${pullRequest.title}`,
+      reason: status.reason,
+      status,
+    });
+  }
+  return options;
+};
+
+export const renderStartTargetOptions = (
+  repository: Repository,
+  pullRequests: PullRequest[] | undefined,
+  stacks: PrStack[] | undefined,
+  accessRefresh: RefreshState | undefined,
+  pullRequestsRefresh: RefreshState | undefined,
+  selected: string,
+) => {
+  const options = startTargetOptions(repository, pullRequests, stacks, accessRefresh, pullRequestsRefresh);
+  const targetHelp = options.length === 1
+    ? `<p class="mt-2 text-sm leading-normal text-muted">Native stack and standalone parent choices appear after a complete Pull request/stack read.</p>`
+    : "";
+  return `<fieldset class="mt-8 max-w-3xl" aria-describedby="target-help">
+    <legend class="label mb-2 block p-0">Starting target</legend>
+    <div class="grid gap-3">
+      ${options.map((option) => `<label class="flex min-h-14 items-start gap-3 rounded-field border border-control-border bg-base-100 p-3 ${option.status.kind === "eligible" ? "cursor-pointer" : "opacity-90"}">
+        <input class="radio radio-primary mt-1" type="radio" name="target" value="${escapeHtml(option.value)}"${option.value === selected ? " checked" : ""}${option.status.kind === "eligible" ? "" : " disabled"}>
+        <span class="min-w-0"><span class="block break-words font-medium">${escapeHtml(option.label)}</span><span class="mt-1 block text-sm leading-normal ${option.status.kind === "eligible" ? "text-muted" : option.status.kind === "warning" ? "text-warning" : "text-error"}">${escapeHtml(option.status.label)} · ${escapeHtml(option.reason)}</span></span>
+      </label>`).join("")}
+    </div>
+    <p id="target-help" class="mt-2 text-sm leading-normal text-muted">Atlas prepares a local child only. It never pushes, creates a Pull request, or registers native membership.</p>
+    ${targetHelp}
+  </fieldset>`;
 };
 
 const pullRequestLink = (pullRequest: PullRequest) => {
@@ -900,6 +997,8 @@ export const renderStartSessionForm = ({
   prompt,
   error,
   existingSession,
+  targetOptions,
+  target = "default",
 }: {
   action: string;
   csrfToken: string;
@@ -907,6 +1006,8 @@ export const renderStartSessionForm = ({
   prompt: string;
   error?: string;
   existingSession?: Session;
+  targetOptions?: string;
+  target?: string;
 }) => {
   const errorMarkup = error
     ? `<div id="prompt-error" class="alert alert-error mt-6 leading-normal" role="alert" tabindex="-1" data-focus-on-swap>
@@ -918,6 +1019,7 @@ export const renderStartSessionForm = ({
   return `<form id="start-session-form" class="mt-8 max-w-2xl" action="${escapeHtml(action)}" method="post" hx-post="${escapeHtml(action)}" hx-target="#start-session-form" hx-swap="outerHTML" hx-indicator="#start-session-progress" hx-disabled-elt="button[type='submit']">
     <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
     <input type="hidden" name="submission_id" value="${escapeHtml(submissionId)}">
+    ${targetOptions ?? `<input type="hidden" name="target" value="${escapeHtml(target)}">`}
     <div>
       <label class="label mb-2 block p-0" for="initial-prompt">Initial prompt</label>
       <textarea id="initial-prompt" class="textarea textarea-bordered min-h-48 w-full border-control-border bg-base-100 text-base-content" name="prompt" rows="9" maxlength="20000" required${errorAttributes}>${escapeHtml(prompt)}</textarea>
@@ -945,6 +1047,10 @@ export const renderStartSessionPage = ({
   existingSession,
   accessRefresh,
   specsRefresh,
+  pullRequests,
+  stacks,
+  pullRequestsRefresh,
+  target,
 }: {
   action?: string;
   csrfToken: string;
@@ -957,6 +1063,10 @@ export const renderStartSessionPage = ({
   existingSession?: Session;
   accessRefresh?: RefreshState;
   specsRefresh?: RefreshState;
+  pullRequests?: PullRequest[];
+  stacks?: PrStack[];
+  pullRequestsRefresh?: RefreshState;
+  target?: string;
 }) => {
   const formAction = action ?? `/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(spec.issueNumber)}/sessions`;
   const githubUrl = safeExternalUrl(spec.htmlUrl);
@@ -975,14 +1085,14 @@ export const renderStartSessionPage = ({
         <p class="mt-4 max-w-prose leading-relaxed text-muted">Queue one Atlas implementation attempt for <strong class="text-base-content">${escapeHtml(spec.title)}</strong>. Opening or cancelling this form creates nothing.</p>
       </div>
       ${retained ? `<div class="alert alert-warning mt-6 leading-normal" role="alert">This is a retained Spec snapshot and is not currently eligible for a new Session.</div>` : ""}
-      <dl class="mt-8 grid gap-4 border-y border-base-300 py-5 text-sm sm:grid-cols-2">
-        <div><dt class="font-medium text-muted">Repository</dt><dd class="mt-1 break-words font-mono">${escapeHtml(repository.fullName)}</dd></div>
-        <div><dt class="font-medium text-muted">Starting base</dt><dd class="mt-1 break-words font-mono">${escapeHtml(repository.defaultBranch ?? "not available")}</dd></div>
-        <div><dt class="font-medium text-muted">Spec</dt><dd class="mt-1">${githubUrl ? `<a class="text-brand-readable underline underline-offset-4" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open issue on GitHub</a>` : "Snapshot retained"}</dd></div>
-        <div><dt class="font-medium text-muted">Queueing</dt><dd class="mt-1">Default branch only; preparation is deferred.</dd></div>
-      </dl>
-      ${notice ? `<div class="alert alert-info mt-8 leading-normal" role="status" tabindex="-1" data-focus-on-swap>${escapeHtml(notice)}</div>` : ""}
-      ${renderStartSessionForm({ action: formAction, csrfToken, submissionId, prompt, error, existingSession })}
+       <dl class="mt-8 grid gap-4 border-y border-base-300 py-5 text-sm sm:grid-cols-2">
+         <div><dt class="font-medium text-muted">Repository</dt><dd class="mt-1 break-words font-mono">${escapeHtml(repository.fullName)}</dd></div>
+         <div><dt class="font-medium text-muted">Starting base</dt><dd class="mt-1 break-words font-mono">${escapeHtml(repository.defaultBranch ?? "not available")}</dd></div>
+         <div><dt class="font-medium text-muted">Spec</dt><dd class="mt-1">${githubUrl ? `<a class="text-brand-readable underline underline-offset-4" href="${escapeHtml(githubUrl)}" target="_blank" rel="noopener noreferrer">Open issue on GitHub</a>` : "Snapshot retained"}</dd></div>
+         <div><dt class="font-medium text-muted">Queueing</dt><dd class="mt-1">The selected target is queued; preparation is deferred.</dd></div>
+       </dl>
+       ${notice ? `<div class="alert alert-info mt-8 leading-normal" role="status" tabindex="-1" data-focus-on-swap>${escapeHtml(notice)}</div>` : ""}
+       ${renderStartSessionForm({ action: formAction, csrfToken, submissionId, prompt, error, existingSession, targetOptions: renderStartTargetOptions(repository, pullRequests, stacks, accessRefresh, pullRequestsRefresh, target ?? "default"), target: target ?? "default" })}
       <details class="mt-8 max-w-prose rounded-box bg-base-100 p-5 sm:p-6">
         <summary class="min-h-11 cursor-pointer text-lg font-semibold">View Spec context</summary>
         <div class="mt-5 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(spec.body) || "No description provided."}</div>
@@ -997,9 +1107,10 @@ export const renderPendingStartSessionFragment = ({
   csrfToken,
   submissionId,
   prompt,
+  target,
 }: PendingStartSession & { csrfToken: string }) => `<div id="login-form">
   <div class="alert alert-info mt-8 leading-normal" role="status" tabindex="-1" data-focus-on-swap>Signed in. Review the preserved form, then choose Start Session to retry it.</div>
-  ${renderStartSessionForm({ action, csrfToken, submissionId, prompt })}
+  ${renderStartSessionForm({ action, csrfToken, submissionId, prompt, target })}
 </div>`;
 
 export const renderPendingStartSessionPage = ({
@@ -1007,6 +1118,7 @@ export const renderPendingStartSessionPage = ({
   csrfToken,
   submissionId,
   prompt,
+  target,
 }: PendingStartSession & { csrfToken: string }) => document(
   "Retry Start Session",
   `${skipLink}
@@ -1020,7 +1132,7 @@ export const renderPendingStartSessionPage = ({
       <p class="text-sm font-medium uppercase tracking-[0.18em] text-brand-readable">Sign-in complete</p>
       <h1 class="mt-4 text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Review and retry Start Session</h1>
       <p class="mt-4 max-w-prose leading-relaxed text-muted">Your original prompt and submission identity are preserved below. Choose Start Session when you are ready; Atlas will not resubmit automatically.</p>
-      ${renderStartSessionForm({ action, csrfToken, submissionId, prompt })}
+       ${renderStartSessionForm({ action, csrfToken, submissionId, prompt, target })}
     </section>
   </main>`,
 );
@@ -1029,6 +1141,12 @@ const sessionFilterLabel = (filter: SessionFilter) => {
   if (filter === "active") return "Active";
   if (filter === "all") return "All";
   return sessionStateLabel(filter);
+};
+
+const sessionTargetLabel = (session: Session) => {
+  if (session.targetKind === "native_stack") return `Native stack #${session.targetStackNumber ?? "unknown"}`;
+  if (session.targetKind === "standalone_parent") return `Standalone parent #${session.targetParentPullRequestNumber ?? "unknown"}`;
+  return `Default branch · ${session.targetBranch}`;
 };
 
 const sessionListRow = (session: Session) => `<li class="rounded-box bg-base-100 p-4 sm:p-6">
@@ -1042,7 +1160,7 @@ const sessionListRow = (session: Session) => `<li class="rounded-box bg-base-100
   <dl class="mt-5 grid gap-3 text-sm text-muted sm:grid-cols-2">
     <div><dt class="font-medium text-base-content">Submitted</dt><dd class="mt-1">${escapeHtml(formatTime(session.submittedAt))}</dd></div>
     <div><dt class="font-medium text-base-content">Queue order</dt><dd class="mt-1 tabular-nums">${session.submissionOrder}</dd></div>
-    <div><dt class="font-medium text-base-content">Target</dt><dd class="mt-1">Default branch · <code class="font-mono text-base-content">${escapeHtml(session.targetBranch)}</code></dd></div>
+    <div><dt class="font-medium text-base-content">Target</dt><dd class="mt-1">${escapeHtml(sessionTargetLabel(session))}</dd></div>
     <div><dt class="font-medium text-base-content">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : "Not held"}</dd></div>
   </dl>
   <p class="mt-5 max-w-prose truncate text-sm text-muted">Prompt: ${escapeHtml(session.prompt)}</p>
@@ -1151,12 +1269,17 @@ export const renderSessionDetailPage = ({
         <div><dt class="font-medium text-muted">State</dt><dd class="mt-1">${escapeHtml(sessionStateLabel(session.state))}</dd></div>
         <div><dt class="font-medium text-muted">Submitted</dt><dd class="mt-1">${escapeHtml(formatTime(session.submittedAt))}</dd></div>
         <div><dt class="font-medium text-muted">Queue order</dt><dd class="mt-1 tabular-nums">${session.submissionOrder}</dd></div>
-        <div><dt class="font-medium text-muted">Submission identity</dt><dd class="mt-1 break-all font-mono">${escapeHtml(session.submissionId)}</dd></div>
+         <div><dt class="font-medium text-muted">Submission identity</dt><dd class="mt-1 break-all font-mono">${escapeHtml(session.submissionId)}</dd></div>
+         <div><dt class="font-medium text-muted">Original target</dt><dd class="mt-1">${escapeHtml(session.originalTargetKind === "native_stack" ? `Native stack #${session.originalTargetStackNumber ?? "unknown"}` : session.originalTargetKind === "standalone_parent" ? `Standalone parent #${session.originalTargetParentPullRequestNumber ?? "unknown"}` : `Default branch · ${session.originalTargetBranch}`)}</dd></div>
+         <div><dt class="font-medium text-muted">Current target</dt><dd class="mt-1">${escapeHtml(sessionTargetLabel(session))}</dd></div>
         <div><dt class="font-medium text-muted">Preparation checkpoint</dt><dd class="mt-1">${escapeHtml(preparationLabel)}</dd></div>
         <div><dt class="font-medium text-muted">OpenCode handoff</dt><dd class="mt-1">${escapeHtml(handoffLabel)}</dd></div>
-        <div><dt class="font-medium text-muted">Starting base</dt><dd class="mt-1 break-words font-mono">Default branch · ${escapeHtml(session.baseBranch ?? session.targetBranch)}${session.baseSha ? ` · ${escapeHtml(session.baseSha)}` : " · waiting for verified SHA"}</dd></div>
+         <div><dt class="font-medium text-muted">Resolved parent</dt><dd class="mt-1 break-words font-mono">${escapeHtml(session.resolvedParentBranch ?? session.baseBranch ?? session.targetBranch)}${session.baseSha ? ` · ${escapeHtml(session.baseSha)}` : " · waiting for verified SHA"}</dd></div>
+         <div><dt class="font-medium text-muted">Resolved trunk</dt><dd class="mt-1 break-words font-mono">${escapeHtml(session.resolvedTrunkBranch ?? session.baseBranch ?? session.targetBranch)}</dd></div>
+         <div><dt class="font-medium text-muted">Resolved stack layers</dt><dd class="mt-1">${session.resolvedLayers.length > 0 ? escapeHtml(session.resolvedLayers.map((layer) => `#${layer.pullRequestNumber} ${layer.branch}`).join(" → ")) : "Default branch"}</dd></div>
          <div><dt class="font-medium text-muted">Working branch</dt><dd class="mt-1 break-words font-mono">${session.workingBranch ? escapeHtml(session.workingBranch) : "Not assigned before admission"}</dd></div>
          <div><dt class="font-medium text-muted">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : session.state === "queued" ? "Not held while Queued" : "Not held"}</dd></div>
+         <div><dt class="font-medium text-muted">Stack reservation</dt><dd class="mt-1">${session.reservationState === "held" ? `Held${session.reservationId ? ` · ${escapeHtml(session.reservationId)}` : ""}` : session.reservationState === "released" ? "Released" : "None for default-branch work"}</dd></div>
          <div><dt class="font-medium text-muted">Session directory</dt><dd class="mt-1 break-words font-mono">${session.directory ? escapeHtml(session.directory) : "Not assigned before admission"}</dd></div>
         <div><dt class="font-medium text-muted">OpenCode intended Session</dt><dd class="mt-1 break-all font-mono">${session.opencodeIntendedSessionId ? escapeHtml(session.opencodeIntendedSessionId) : "Not assigned before local preparation"}</dd></div>
         <div><dt class="font-medium text-muted">OpenCode Session</dt><dd class="mt-1 break-all font-mono">${session.openCodeSessionId ? escapeHtml(session.openCodeSessionId) : "Not associated"}</dd></div>

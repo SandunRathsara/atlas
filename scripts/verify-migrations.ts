@@ -57,6 +57,10 @@ const prepareParent = (path: string, parent: "v4" | "26-v5" | "31-v5" | "27-v7")
   const persistence = seed(path);
   if (parent === "v4") {
     persistence.database.exec(`
+      DROP TABLE IF EXISTS reservation_conflict_holds;
+      DROP TABLE IF EXISTS reservation_prs;
+      DROP TABLE IF EXISTS stack_reservations;
+      DROP TABLE IF EXISTS session_history;
       DROP INDEX IF EXISTS sessions_unfinished_spec_idx;
       DROP INDEX IF EXISTS sessions_repository_order_idx;
       DROP INDEX IF EXISTS sessions_spec_order_idx;
@@ -74,6 +78,10 @@ const prepareParent = (path: string, parent: "v4" | "26-v5" | "31-v5" | "27-v7")
     `);
   } else if (parent === "31-v5") {
     persistence.database.exec(`
+      DROP TABLE IF EXISTS reservation_conflict_holds;
+      DROP TABLE IF EXISTS reservation_prs;
+      DROP TABLE IF EXISTS stack_reservations;
+      DROP TABLE IF EXISTS session_history;
       DROP INDEX IF EXISTS sessions_unfinished_spec_idx;
       DROP INDEX IF EXISTS sessions_repository_order_idx;
       DROP INDEX IF EXISTS sessions_spec_order_idx;
@@ -98,7 +106,7 @@ const verify = (path: string, expectedSession: boolean, expectedDelivery: boolea
   const versions = (persistence.database.query(
     "SELECT version FROM schema_migrations ORDER BY version",
   ).all() as Array<{ version: number }>).map(({ version }) => version);
-  assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.equal(Boolean(persistence.getRepository(repository.githubId)), expectedData);
   assert.equal(Boolean(persistence.getSpec(repository.githubId, spec.issueNumber)), expectedData);
   assert.equal(Boolean(persistence.getSession(sessionId)), expectedSession);
