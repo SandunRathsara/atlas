@@ -1047,6 +1047,28 @@ export const renderSessionDetailPage = ({
 }) => {
   const specPath = `/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(session.specIssueNumber)}`;
   const githubUrl = safeExternalUrl(session.specHtmlUrl);
+  const preparationLabel = session.preparationCheckpoint === "intent_saved"
+    ? "Intent saved"
+    : session.preparationCheckpoint === "clone_started"
+      ? "Clone starting"
+      : session.preparationCheckpoint === "clone_complete"
+        ? "Clone complete"
+        : session.preparationCheckpoint === "branch_started"
+          ? "Branch starting"
+          : session.preparationCheckpoint === "prepared"
+            ? "Locally prepared"
+            : session.preparationCheckpoint === "start_unconfirmed"
+              ? "Start unconfirmed"
+              : session.preparationCheckpoint === "failed_setup"
+                ? "Setup failed"
+                : "Queued";
+  const preparationNotice = session.state === "failed_setup"
+    ? `<div class="alert alert-error mt-6 leading-normal" role="alert"><div><strong>Preparation failed before OpenCode execution.</strong> ${escapeHtml(session.stateReason ?? "The local setup did not complete.")} Partial resources are retained; Atlas will not delete or replay them.</div></div>`
+    : session.preparationCheckpoint === "prepared"
+      ? `<div class="alert alert-success mt-6 leading-normal" role="status"><div><strong>Local preparation complete.</strong> The full clone and working branch are ready. OpenCode creation and prompting intentionally stop at this boundary.</div></div>`
+      : session.preparationCheckpoint === "start_unconfirmed"
+        ? `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Start unconfirmed.</strong> Atlas will not replay an uncertain local operation. The recorded directory and checkpoint require manual recovery.</div></div>`
+        : `<div class="alert alert-info mt-6 leading-normal" role="status"><div><strong>${session.state === "queued" ? "Queued request accepted." : "Preparation in progress."}</strong> ${escapeHtml(session.stateReason ?? "Atlas is waiting for the next safe preparation step.")}</div></div>`;
 
   return renderShell({
     title: `Session ${session.atlasId}`,
@@ -1063,7 +1085,7 @@ export const renderSessionDetailPage = ({
         </div>
         <span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>
       </div>
-      <div class="alert alert-info mt-6 leading-normal" role="status"><div><strong>Queued request accepted.</strong> Execution preparation is not enabled in this slice. No clone or OpenCode Session has been created.</div></div>
+       ${preparationNotice}
       <div class="mt-8 flex flex-wrap gap-4">
         <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${specPath}">Back to Spec</a>
         <a class="btn btn-ghost min-h-11 border border-control-border/60" href="${sessionsLink(repository)}">Repository Sessions</a>
@@ -1073,12 +1095,14 @@ export const renderSessionDetailPage = ({
         <div><dt class="font-medium text-muted">Submitted</dt><dd class="mt-1">${escapeHtml(formatTime(session.submittedAt))}</dd></div>
         <div><dt class="font-medium text-muted">Queue order</dt><dd class="mt-1 tabular-nums">${session.submissionOrder}</dd></div>
         <div><dt class="font-medium text-muted">Submission identity</dt><dd class="mt-1 break-all font-mono">${escapeHtml(session.submissionId)}</dd></div>
-        <div><dt class="font-medium text-muted">Starting base</dt><dd class="mt-1 break-words font-mono">Default branch · ${escapeHtml(session.targetBranch)}</dd></div>
-        <div><dt class="font-medium text-muted">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : "Not held while Queued"}</dd></div>
-        <div><dt class="font-medium text-muted">Session directory</dt><dd class="mt-1">${session.directory ? escapeHtml(session.directory) : "Not created at the Queued checkpoint"}</dd></div>
-        <div><dt class="font-medium text-muted">OpenCode Session</dt><dd class="mt-1">${session.openCodeSessionId ? escapeHtml(session.openCodeSessionId) : "Not created at the Queued checkpoint"}</dd></div>
-      </dl>
-      ${session.stateReason ? `<p class="mt-6 text-sm leading-normal text-muted">Queue note: ${escapeHtml(session.stateReason)}</p>` : ""}
+         <div><dt class="font-medium text-muted">Preparation checkpoint</dt><dd class="mt-1">${escapeHtml(preparationLabel)}</dd></div>
+         <div><dt class="font-medium text-muted">Starting base</dt><dd class="mt-1 break-words font-mono">Default branch · ${escapeHtml(session.baseBranch ?? session.targetBranch)}${session.baseSha ? ` · ${escapeHtml(session.baseSha)}` : " · waiting for verified SHA"}</dd></div>
+         <div><dt class="font-medium text-muted">Working branch</dt><dd class="mt-1 break-words font-mono">${session.workingBranch ? escapeHtml(session.workingBranch) : "Not assigned before admission"}</dd></div>
+         <div><dt class="font-medium text-muted">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : "Not held while Queued"}</dd></div>
+         <div><dt class="font-medium text-muted">Session directory</dt><dd class="mt-1 break-words font-mono">${session.directory ? escapeHtml(session.directory) : "Not assigned before admission"}</dd></div>
+         <div><dt class="font-medium text-muted">OpenCode Session</dt><dd class="mt-1">${session.openCodeSessionId ? escapeHtml(session.openCodeSessionId) : "Not created at this boundary"}</dd></div>
+       </dl>
+       ${session.preparationReason ? `<p class="mt-6 text-sm leading-normal text-muted">Checkpoint note: ${escapeHtml(session.preparationReason)}</p>` : ""}
       <section class="mt-10" aria-labelledby="immutable-context-title">
         <h2 id="immutable-context-title" class="text-lg font-semibold">Immutable handoff context</h2>
         <p class="mt-2 max-w-prose leading-relaxed text-muted">Atlas retains the Spec snapshot and prompt that were accepted. Later GitHub edits do not rewrite this attempt.</p>
