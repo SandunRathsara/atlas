@@ -463,8 +463,9 @@ const handoffCheckpointLabel = (checkpoint: Session["handoffCheckpoint"]) => {
 
 const sessionFreshnessMarkup = (session: Session) => {
   const stale = session.opencodeFreshness === "stale";
-  const uncertain = Boolean(session.handoffUncertainReason) || session.preparationCheckpoint === "start_unconfirmed";
-  return `${stale ? `<span class="badge badge-warning">Stale</span>` : ""}${uncertain ? `<span class="badge badge-warning">Start unconfirmed</span>` : ""}`;
+  const preparationUncertain = session.preparationCheckpoint === "start_unconfirmed";
+  const handoffUncertain = Boolean(session.handoffUncertainReason);
+  return `${stale ? `<span class="badge badge-warning">Stale</span>` : ""}${preparationUncertain ? `<span class="badge badge-warning">Preparation unconfirmed</span>` : handoffUncertain ? `<span class="badge badge-warning">Start unconfirmed</span>` : ""}`;
 };
 
 const sessionHistoryRow = (session: Session) => `<li class="rounded-box bg-base-100 p-4 sm:p-5">
@@ -1112,16 +1113,19 @@ export const renderSessionDetailPage = ({
                 ? "Setup failed"
                 : "Queued";
   const handoffLabel = handoffCheckpointLabel(session.handoffCheckpoint);
-  const startUnconfirmed = Boolean(session.handoffUncertainReason) || session.preparationCheckpoint === "start_unconfirmed";
+  const preparationUnconfirmed = session.preparationCheckpoint === "start_unconfirmed";
+  const handoffUnconfirmed = Boolean(session.handoffUncertainReason);
   const preparationNotice = session.state === "failed_setup"
     ? `<div class="alert alert-error mt-6 leading-normal" role="alert"><div><strong>Preparation failed before OpenCode execution.</strong> ${escapeHtml(session.stateReason ?? "The local setup did not complete.")} Partial resources are retained; Atlas will not delete or replay them.</div></div>`
-    : startUnconfirmed
-      ? `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Start unconfirmed.</strong> Atlas will not replay an uncertain create or prompt. ${escapeHtml(session.handoffUncertainReason ?? session.preparationReason ?? "The preserved checkpoint requires reconciliation.")}</div></div>`
-      : session.handoffCheckpoint === "prompt_accepted"
-        ? `<div class="alert alert-success mt-6 leading-normal" role="status"><div><strong>OpenCode handoff accepted.</strong> The initial prompt was accepted once; execution state and outcome remain canonical OpenCode evidence.</div></div>`
-        : session.preparationCheckpoint === "prepared"
-          ? `<div class="alert alert-success mt-6 leading-normal" role="status"><div><strong>Local preparation complete.</strong> The full clone and working branch are ready. ${session.opencodeFreshness === "stale" ? "Atlas is waiting for a compatible OpenCode service or reconciliation." : "OpenCode handoff is proceeding through durable checkpoints."}</div></div>`
-          : `<div class="alert alert-info mt-6 leading-normal" role="status"><div><strong>${session.state === "queued" ? "Queued request accepted." : "Preparation in progress."}</strong> ${escapeHtml(session.stateReason ?? "Atlas is waiting for the next safe preparation step.")}</div></div>`;
+    : preparationUnconfirmed
+      ? `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Preparation unconfirmed.</strong> Atlas will not replay an uncertain local operation. ${escapeHtml(session.preparationReason ?? "The recorded directory and preparation checkpoint require manual recovery.")}</div></div>`
+      : handoffUnconfirmed
+        ? `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Start unconfirmed.</strong> Atlas will not replay an uncertain OpenCode create or prompt. ${escapeHtml(session.handoffUncertainReason ?? "The preserved handoff checkpoint requires reconciliation.")}</div></div>`
+        : session.handoffCheckpoint === "prompt_accepted"
+          ? `<div class="alert alert-success mt-6 leading-normal" role="status"><div><strong>OpenCode handoff accepted.</strong> The initial prompt was accepted once; execution state and outcome remain canonical OpenCode evidence.</div></div>`
+          : session.preparationCheckpoint === "prepared"
+            ? `<div class="alert alert-success mt-6 leading-normal" role="status"><div><strong>Local preparation complete.</strong> The full clone and working branch are ready. ${session.opencodeFreshness === "stale" ? "Atlas is waiting for a compatible OpenCode service or reconciliation." : "OpenCode handoff is proceeding through durable checkpoints."}</div></div>`
+            : `<div class="alert alert-info mt-6 leading-normal" role="status"><div><strong>${session.state === "queued" ? "Queued request accepted." : "Preparation in progress."}</strong> ${escapeHtml(session.stateReason ?? "Atlas is waiting for the next safe preparation step.")}</div></div>`;
 
   return renderShell({
     title: `Session ${session.atlasId}`,

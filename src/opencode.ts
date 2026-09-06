@@ -212,7 +212,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
             const current = evidence.get(remoteId) ?? { executionStarted: false, updatedAt: Date.now() };
             const terminal = terminalStateForEvent(type);
             if (type === "session.execution.started") current.executionStarted = true;
-            if (terminal) {
+            if (terminal || type === "session.idle") {
               current.executionStarted = false;
               current.status = "idle";
             }
