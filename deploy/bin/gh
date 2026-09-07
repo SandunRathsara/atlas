@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+release_root=${ATLAS_RELEASE_ROOT:-/opt/atlas/current}
+bun_binary=${ATLAS_BUN_BINARY:-/opt/atlas/tools/bun/1.3.14/bin/bun}
+real_gh=${ATLAS_REAL_GH:-/opt/atlas/tools/gh/2.100.0/bin/gh}
+
+case "$release_root:$bun_binary:$real_gh" in
+  /*:/*:/*) ;;
+  *) echo "Atlas gh launcher requires absolute paths" >&2; exit 1 ;;
+esac
+test -x "$bun_binary" || { echo "Atlas Bun runtime is unavailable" >&2; exit 1; }
+test -x "$real_gh" || { echo "Pinned gh binary is unavailable" >&2; exit 1; }
+test -f "$release_root/scripts/atlas-gh.ts" || { echo "Atlas gh helper is unavailable" >&2; exit 1; }
+
+export ATLAS_RELEASE_ROOT="$release_root"
+export ATLAS_BUN_BINARY="$bun_binary"
+export ATLAS_REAL_GH="$real_gh"
+exec "$bun_binary" "$release_root/scripts/atlas-gh.ts" "$@"

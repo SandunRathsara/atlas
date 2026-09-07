@@ -154,12 +154,46 @@ const gitEnvironment = (base: Record<string, string>, helperEnvironment: Record<
     "GITHUB_TOKEN",
     "GH_ENTERPRISE_TOKEN",
     "GITHUB_ENTERPRISE_TOKEN",
-  ].includes(name))),
+    "GIT_ASKPASS",
+    "SSH_ASKPASS",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "GIT_SSH_VARIANT",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_QUARANTINE_PATH",
+    "GIT_SSL_NO_VERIFY",
+    "GIT_CURL_VERBOSE",
+    "GIT_TRACE",
+    "GIT_TRACE_PACKET",
+    "GIT_TRACE_CURL",
+    "GIT_TRACE2",
+    "GIT_TRACE2_EVENT",
+    "GIT_TRACE2_PERF",
+    "GIT_TERMINAL_PROMPT",
+  ].includes(name) && !/^GIT_CONFIG_(?:KEY|VALUE)_\d+$/u.test(name))),
   ...helperEnvironment,
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_TERMINAL_PROMPT: "0",
   GIT_SSH_COMMAND: "/bin/false",
+});
+
+export const cloneGitEnvironment = (
+  base: Record<string, string>,
+  helperEnvironment: Record<string, string>,
+  sessionDirectory: string,
+) => ({
+  ...gitEnvironment(base, helperEnvironment),
+  ATLAS_SESSION_DIRECTORY: sessionDirectory,
 });
 
 const assertCommand = async (
@@ -695,7 +729,14 @@ export const createPreparationService = (options: PreparationOptions) => {
       const remote = `https://github.com/${ownerName}.git`;
       const helper = `!${shellQuote(bunBinary)} ${shellQuote(helperPath)}`;
       const durableHelper = credentialHelperCommand(bunBinary, helperPath, credentials.helperEnvironment());
-      const env = gitEnvironment(process.env as Record<string, string>, credentials.helperEnvironment());
+      // Git runs a clone-time credential helper from the caller's cwd, not
+      // the future target directory. Keep the durable scope exact before
+      // that directory exists.
+      const env = cloneGitEnvironment(
+        process.env as Record<string, string>,
+        credentials.helperEnvironment(),
+        session.directory,
+      );
       const clone = await run(options.gitBinary ?? gitBinary, [
         "-c", "credential.helper=",
         "-c", `credential.helper=${helper}`,

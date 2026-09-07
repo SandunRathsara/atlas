@@ -1,0 +1,14 @@
+# Human-installed, per-service bound for OpenCode's XDG file logs.
+# This never restarts OpenCode and does not touch unrelated host logs.
+/var/lib/atlas/opencode-data/opencode/log/*.log {
+  daily
+  maxsize 100M
+  rotate 10
+  maxage 14
+  missingok
+  notifempty
+  compress
+  delaycompress
+  copytruncate
+  su omega omega
+}
