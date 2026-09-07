@@ -18,7 +18,7 @@ case "$real_git" in
 esac
 test -x "$real_git" || { echo "Pinned Git binary is unavailable" >&2; exit 1; }
 
-actual=$($real_git --version)
+actual=$("$real_git" --version)
 expected="git version $ATLAS_GIT_VERSION"
 test "$actual" = "$expected" || {
   echo "Pinned Git binary does not match $ATLAS_GIT_VERSION" >&2

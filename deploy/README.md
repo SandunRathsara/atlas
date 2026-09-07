@@ -42,7 +42,7 @@ The webhook app has no health, login, Session, event, or OpenCode routes.
 | --- | --- |
 | `/opt/atlas/releases/<release>` | Read-only versioned Atlas release |
 | `/opt/atlas/current` | Operator-selected release symlink |
-| `/opt/atlas/tools/<tool>/<version>` | Pinned Bun, GitHub CLI, and OpenCode binaries |
+| `/opt/atlas/tools/<tool>/<version>` | Pinned Bun, Git, GitHub CLI, and OpenCode binaries |
 | `/var/lib/atlas` | One ordinary-directory Btrfs subvolume |
 | `/var/lib/atlas/atlas.sqlite` | Atlas SQLite database and matching WAL/journal |
 | `/var/lib/atlas/sessions/<atlas-id>` | Full private clone per Session |
