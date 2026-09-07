@@ -16,15 +16,21 @@ Environment=PATH=/opt/atlas/current/deploy/bin:/opt/atlas/tools/bun/1.3.14/bin:/
 Environment=ATLAS_RELEASE_ROOT=/opt/atlas/current
 Environment=ATLAS_BUN_BINARY=/opt/atlas/tools/bun/1.3.14/bin/bun
 Environment=ATLAS_REAL_GH=/opt/atlas/tools/gh/2.100.0/bin/gh
+Environment=ATLAS_GIT_BINARY=/opt/atlas/current/deploy/bin/git
 EnvironmentFile=/etc/atlas/atlas.env
 ExecStartPre=/usr/bin/test -d /opt/atlas/current
 ExecStartPre=/usr/bin/test -x /opt/atlas/tools/bun/1.3.14/bin/bun
+ExecStartPre=/usr/bin/test -x /opt/atlas/tools/git/2.55.0/bin/git
+ExecStartPre=/opt/atlas/current/deploy/bin/git --version
 ExecStartPre=/usr/bin/test -f /etc/atlas/atlas.env
 ExecStartPre=/usr/bin/test -d /var/lib/atlas
 ExecStart=/opt/atlas/tools/bun/1.3.14/bin/bun /opt/atlas/current/src/server.ts
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30s
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=1000
+SyslogIdentifier=atlas
 UMask=0077
 RuntimeDirectory=atlas
 RuntimeDirectoryMode=0700

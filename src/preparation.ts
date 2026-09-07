@@ -187,6 +187,15 @@ const gitEnvironment = (base: Record<string, string>, helperEnvironment: Record<
   GIT_SSH_COMMAND: "/bin/false",
 });
 
+export const cloneGitEnvironment = (
+  base: Record<string, string>,
+  helperEnvironment: Record<string, string>,
+  sessionDirectory: string,
+) => ({
+  ...gitEnvironment(base, helperEnvironment),
+  ATLAS_SESSION_DIRECTORY: sessionDirectory,
+});
+
 const assertCommand = async (
   gitBinary: string,
   args: string[],
@@ -720,7 +729,14 @@ export const createPreparationService = (options: PreparationOptions) => {
       const remote = `https://github.com/${ownerName}.git`;
       const helper = `!${shellQuote(bunBinary)} ${shellQuote(helperPath)}`;
       const durableHelper = credentialHelperCommand(bunBinary, helperPath, credentials.helperEnvironment());
-      const env = gitEnvironment(process.env as Record<string, string>, credentials.helperEnvironment());
+      // Git runs a clone-time credential helper from the caller's cwd, not
+      // the future target directory. Keep the durable scope exact before
+      // that directory exists.
+      const env = cloneGitEnvironment(
+        process.env as Record<string, string>,
+        credentials.helperEnvironment(),
+        session.directory,
+      );
       const clone = await run(options.gitBinary ?? gitBinary, [
         "-c", "credential.helper=",
         "-c", `credential.helper=${helper}`,
