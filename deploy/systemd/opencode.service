@@ -30,11 +30,11 @@ Environment=GIT_ASKPASS=/bin/false
 Environment=SSH_ASKPASS=/bin/false
 Environment=GIT_SSH_COMMAND=/bin/false
 Environment=GH_PROMPT_DISABLED=1
-ExecStartPre=/usr/bin/test -x /opt/atlas/tools/opencode/0.0.0-beta-19135/bin/opencode2
+ExecStartPre=/opt/atlas/current/deploy/check-opencode.sh
 ExecStartPre=/usr/bin/test -x /opt/atlas/tools/git/2.55.0/bin/git
 ExecStartPre=/opt/atlas/current/deploy/bin/git --version
 ExecStartPre=/usr/bin/test -d /var/lib/atlas/opencode-runtime
-ExecStart=/opt/atlas/tools/opencode/0.0.0-beta-19135/bin/opencode2 serve --service --hostname 127.0.0.1
+ExecStart=/opt/atlas/tools/opencode/0.0.0-beta-19135/bin/opencode2 --log-level WARN serve --service --hostname 127.0.0.1
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30s

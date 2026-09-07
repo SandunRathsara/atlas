@@ -16,7 +16,6 @@
     "verify:issue27-fixes": "bun scripts/verify-issue27-fixes.ts",
     "verify:issue32": "bun scripts/verify-issue32-backoff.ts",
     "verify:issue29": "bun scripts/verify-issue29.ts",
-    "verify:issue37": "bun scripts/verify-issue37-deployment.ts",
     "dev": "bun run build:css && bun --watch src/server.ts",
     "start": "bun run build:css && bun src/server.ts"
   },

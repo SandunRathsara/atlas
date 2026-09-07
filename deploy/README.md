@@ -9,15 +9,24 @@ Tailscale/firewall state.
 `pins.env` pins Bun `1.3.14`, the validated Atlas client/OpenCode pairing
 `0.0.0-beta-19135`, Git `2.55.0`, and gh `2.100.0`. Bun, Git, and gh paths are
 absolute and versioned; the Git wrapper loads this manifest and rejects a
-version drift on every managed Git invocation and service start. The operator
-must obtain the binaries, verify release checksums, and record those checksums
-privately before cutover. The live host's currently running OpenCode beta is
-not evidence for this pin.
+version drift on every managed Git invocation and service start. It also pins
+the official Linux x64 OpenCode binary and client/schema/protocol package
+integrities. The operator must verify release checksums privately before
+cutover. The live host's currently running OpenCode beta is not evidence for
+this pin.
 
 `stage-release.sh` archives a clean committed checkout into a new release,
 installs the frozen lockfile, builds CSS, records `RELEASE_COMMIT`, makes the
 tree read-only, and atomically renames the staging directory. It never
 overwrites `/opt/atlas/current` or an existing release.
+
+`stage-opencode.sh <directory>` downloads only the pinned official Linux x64
+OpenCode beta and its matching client/schema/protocol packages, verifies npm
+integrity and versions, imports the client with pinned Bun, runs only
+`opencode2 --version`, records SHA-256 values, and leaves one immutable isolated
+tree. It does not start a server or write an OpenCode service registration. Use
+a disposable directory during safe setup; production `/opt/atlas/tools` remains
+a human-only install target.
 
 ## Units and listeners
 
@@ -26,8 +35,8 @@ overwrites `/opt/atlas/current` or an existing release.
   `/etc/atlas/atlas.env`.
 - `systemd/opencode.service` independently runs the pinned V2 server as
   `omega`, bound to `127.0.0.1` with a dynamic port and `--service` discovery.
-  It validates the same Git pin, bounds journal rate, and deliberately does
-  **not** load Atlas's secret environment file.
+  It validates the binary/client pins, uses `--log-level WARN`, bounds journal
+  rate, and deliberately does **not** load Atlas's secret environment file.
 - Atlas's private app listener and loopback webhook listener remain separate;
   their ports come from `atlas.env`. Funnel must target only the webhook port.
 - `check-health.sh` checks the private, authenticated `/health` route. A
@@ -47,6 +56,7 @@ The webhook app has no health, login, Session, event, or OpenCode routes.
 | `/var/lib/atlas/atlas.sqlite` | Atlas SQLite database and matching WAL/journal |
 | `/var/lib/atlas/sessions/<atlas-id>` | Full private clone per Session |
 | `/var/lib/atlas/opencode-data/opencode` | OpenCode data, database, logs, shells, snapshots, tool output |
+| `/var/lib/atlas/opencode-data/opencode/log` | OpenCode file logs; human-installed size/retention bound |
 | `/var/lib/atlas/opencode-state/opencode` | OpenCode state and service registration |
 | `/var/lib/atlas/opencode-config/opencode` | Copied OpenCode configuration/plugins |
 | `/var/lib/atlas/opencode-runtime` | Stable service working directory, never a Session clone |
@@ -80,8 +90,10 @@ retry is a fallback.
 
 Run the nested-shell, symlink, subagent, login-shell, supplier-restart,
 OpenCode-restart, expiry/renewal, authorized-operation, and wrong-Repository
-denial checks against a disposable authorized Repository before opening
-admission. These checks are not performed by `verify-assets.sh`.
+denial checks manually against a disposable authorized Repository before
+opening admission. The one automated exception is the focused real-Git
+regression: `bun scripts/verify-clone-scope.ts` with explicit Bun 1.3.14.
+These checks are not performed by `verify-assets.sh`.
 
 ## Recovery and operational guardrails
 
@@ -97,13 +109,16 @@ as `previous`; `capture-recovery-config.sh rollback` swaps back without
 deleting the failed copy. Do not put secret values in command arguments.
 
 `check-space.sh` reports the shared filesystem's 20 GiB warning threshold and
-10 GiB new-preparation pause threshold. Exit `0` means healthy, `1` means
-warning, and `2` means unsafe/missing or below the pause threshold. Atlas
-already pauses new preparation below `ATLAS_MIN_FREE_BYTES`; the check makes
-the warning visible before activation. The two units rate-limit their journal
-event stream without changing global journal retention. Configure and verify
-OpenCode's supported file-log bounds separately; never delete unrelated host
-logs.
+10 GiB new-preparation pause threshold, plus allocated Btrfs metadata pressure.
+The default metadata warning/pause levels are 80%/90%. Exit `0` means all
+checks are healthy, `1` means warning, and `2` means unsafe/missing or below a
+pause threshold. Atlas already pauses new preparation below
+`ATLAS_MIN_FREE_BYTES`; the check makes the warning visible before activation.
+The two units rate-limit their journal event stream without changing global
+journal retention. `logrotate/atlas-opencode` bounds the OpenCode XDG file-log
+set to 100 MiB checks, 10 rotations, and 14 days; it uses `copytruncate` and
+never restarts OpenCode or deletes unrelated host logs. Verify the installed
+logrotate timer/config manually.
 
 Snapshot timers, retention, backup-health, and scheduled restore policy are
 intentionally not included here; those belong to the #38 snapshot slice. This
@@ -118,7 +133,10 @@ The following is a handoff, not an instruction for an agent to execute:
    `/etc/atlas`, `/var/backups/atlas`, and `/run/atlas` do not conflict. Leave
    the exFAT disk untouched. Record current OpenCode/agent PIDs and do not
    start the new unit while the live beta server remains active.
-2. Obtain and checksum the pinned binaries; create the privileged directories
+2. Obtain and checksum the pinned binaries. Use `stage-opencode.sh` first in a
+   disposable isolated directory and verify its immutable tree, exact
+   beta-19135 version, client import, and absence of service registration; do
+   not start it. Create the privileged directories
    and the ordinary-directory Btrfs subvolume. Install restricted config from
    `atlas.env.example` and `github.env.example`, plus the App key, without
    putting values in shell history, releases, clones, logs, or issue comments.
