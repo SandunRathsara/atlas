@@ -197,7 +197,7 @@ const renderShell = ({
     <div class="mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:px-8">
       <aside class="atlas-glass hidden self-start rounded-box p-3 lg:block" aria-label="Primary navigation">
         <p class="px-4 py-3 text-sm font-medium uppercase tracking-[0.16em] text-muted">Atlas</p>
-        <nav>
+        <nav aria-label="Primary navigation">
           <a class="block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${active === "repositories" || active === "new-repository" ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="/repositories"${active === "repositories" || active === "new-repository" ? ' aria-current="page"' : ""}>Repositories</a>
           ${repository ? renderRepositoryNav(repository, active) : ""}
         </nav>
@@ -515,7 +515,7 @@ const sessionRecoveryNotice = (
   const openCodeExpected = session.handoffCheckpoint !== "not_started" || Boolean(session.openCodeSessionId);
   const directoryUnavailable = directoryExpected && sessionDirectoryAvailable === false;
   const historyUnavailable = openCodeExpected && viewer?.available !== true;
-  const associationUnavailable = terminal && !session.openCodeSessionId;
+  const associationUnavailable = openCodeExpected && !session.openCodeSessionId;
   if (!directoryUnavailable && !historyUnavailable && !associationUnavailable) return "";
 
   const details = [
