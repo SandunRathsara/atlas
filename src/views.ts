@@ -510,8 +510,8 @@ const sessionRecoveryNotice = (
   viewer: SessionViewerProjection | undefined,
   sessionDirectoryAvailable: boolean | undefined,
 ) => {
-  const terminal = ["succeeded", "failed", "interrupted"].includes(session.state);
-  const directoryExpected = session.preparationCheckpoint === "prepared" || Boolean(session.directory);
+  const terminal = ["succeeded", "failed", "interrupted", "failed_setup"].includes(session.state);
+  const directoryExpected = Boolean(session.directory) && !["queued", "intent_saved"].includes(session.preparationCheckpoint);
   const openCodeExpected = session.handoffCheckpoint !== "not_started" || Boolean(session.openCodeSessionId);
   const directoryUnavailable = directoryExpected && sessionDirectoryAvailable === false;
   const historyUnavailable = openCodeExpected && viewer?.available !== true;
@@ -523,7 +523,14 @@ const sessionRecoveryNotice = (
     historyUnavailable ? "The preserved OpenCode Session history could not be verified." : "",
     associationUnavailable ? "The OpenCode Session identity is unavailable." : "",
   ].filter(Boolean).join(" ");
-  return `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Expected Session resource unavailable.</strong> ${escapeHtml(details)} Atlas retains its last known state and history; it will not recreate resources or infer a terminal outcome. ${terminal ? "The recorded terminal outcome and released execution slot remain unchanged." : "The unfinished Session's execution slot and ownership remain held."}</div></div>`;
+  const ownership = terminal
+    ? session.executionSlotHeld
+      ? "The recorded terminal outcome remains unchanged; the execution slot is still marked held."
+      : "The recorded terminal outcome and released execution slot remain unchanged."
+    : session.executionSlotHeld
+      ? "The unfinished Session's execution slot and ownership remain held."
+      : "The recorded Session state and released execution slot remain unchanged.";
+  return `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Expected Session resource unavailable.</strong> ${escapeHtml(details)} Atlas retains its last known state and history; it will not recreate resources or infer a terminal outcome. ${ownership}</div></div>`;
 };
 
 const openCodeReadinessNotice = (readiness: { ready: boolean; reason?: string } | undefined) =>
