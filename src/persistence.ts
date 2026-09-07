@@ -1199,6 +1199,127 @@ export const createPersistence = (options: PersistenceOptions) => {
     apply();
   }
 
+  let startupRestored = false;
+  let persistenceHealthy = true;
+  let persistenceFailureReason: string | null = null;
+
+  const markUnhealthy = (reason: string) => {
+    persistenceHealthy = false;
+    persistenceFailureReason = reason;
+  };
+
+  const restoreStartup = () => {
+    if (startupRestored) return true;
+
+    try {
+      const restore = database.transaction(() => {
+        const timestamp = isoNow(now);
+        const unfinished = database.query(`
+          SELECT atlas_id, preparation_checkpoint, handoff_checkpoint, opencode_session_id
+          FROM sessions
+          WHERE state IN ('preparing', 'running', 'waiting', 'idle')
+          ORDER BY submission_order
+        `).all() as Array<{
+          atlas_id: string;
+          preparation_checkpoint: PreparationCheckpoint;
+          handoff_checkpoint: HandoffCheckpoint;
+          opencode_session_id: string | null;
+        }>;
+
+        database.query(`
+          UPDATE sessions
+          SET execution_slot_held = CASE
+            WHEN state IN ('preparing', 'running', 'waiting', 'idle') THEN 1
+            ELSE 0
+          END
+          WHERE state IN ('queued', 'preparing', 'running', 'waiting', 'idle', 'succeeded', 'failed', 'interrupted', 'failed_setup')
+        `).run();
+
+        database.query(`
+          UPDATE sessions
+          SET opencode_freshness = 'stale',
+              opencode_last_failure_at = ?,
+              updated_at = ?
+          WHERE state IN ('preparing', 'running', 'waiting', 'idle')
+            AND (
+              preparation_checkpoint = 'prepared'
+              OR handoff_checkpoint != 'not_started'
+              OR opencode_session_id IS NOT NULL
+            )
+        `).run(timestamp, timestamp);
+
+        const addHistory = database.query(`
+          INSERT INTO session_history (session_id, event_kind, occurred_at, reason, details_json)
+          VALUES (?, 'startup_restored', ?, ?, ?)
+        `);
+        for (const session of unfinished) {
+          const reconciliationPending = session.preparation_checkpoint === "prepared" ||
+            session.handoff_checkpoint !== "not_started" ||
+            session.opencode_session_id !== null;
+          addHistory.run(
+            session.atlas_id,
+            timestamp,
+            reconciliationPending
+              ? "Atlas restored unfinished ownership; OpenCode reconciliation is pending."
+              : "Atlas restored unfinished preparation ownership before local admission resumes.",
+            JSON.stringify({
+              executionSlotHeld: true,
+              openCodeReconciliation: reconciliationPending ? "pending" : "not_started",
+            }),
+          );
+        }
+      });
+      restore.immediate();
+      startupRestored = true;
+      return true;
+    } catch {
+      markUnhealthy("Atlas persistence could not restore unfinished Session ownership.");
+      return false;
+    }
+  };
+
+  const checkHealth = () => {
+    try {
+      const result = database.query("PRAGMA quick_check").get() as Record<string, unknown> | null;
+      const value = String(Object.values(result ?? {})[0] ?? "").toLowerCase();
+      if (value !== "ok") {
+        markUnhealthy("Atlas persistence integrity is not healthy.");
+        return false;
+      }
+      let writeProbeStarted = false;
+      const probe = database.transaction(() => {
+        const migration = database.query(
+          "SELECT version FROM schema_migrations ORDER BY version LIMIT 1",
+        ).get() as { version: number } | null;
+        if (!migration) throw new Error("Atlas persistence has no migration record");
+        database.query("UPDATE schema_migrations SET applied_at = applied_at WHERE version = ?").run(migration.version);
+        writeProbeStarted = true;
+        throw new Error("Atlas persistence write probe rollback");
+      });
+      try {
+        probe.immediate();
+      } catch (error) {
+        if (!writeProbeStarted) throw error;
+      }
+    } catch {
+      markUnhealthy("Atlas persistence is unavailable for safe writes.");
+      return false;
+    }
+
+    if (!restoreStartup()) return false;
+    persistenceHealthy = true;
+    persistenceFailureReason = null;
+    return true;
+  };
+
+  const getHealth = () => ({
+    healthy: persistenceHealthy && startupRestored,
+    reason: persistenceFailureReason,
+  });
+
+  restoreStartup();
+  if (persistenceHealthy) checkHealth();
+
   const ensureRefreshState = (repositoryId: string, view: RefreshView) => {
     database.query(`
       INSERT INTO refresh_state (repository_id, view)
@@ -1490,10 +1611,19 @@ export const createPersistence = (options: PersistenceOptions) => {
   };
 
   const getRefreshState = (repositoryId: string, view: RefreshView) => {
-    ensureRefreshState(repositoryId, view);
-    const row = database.query(`
+    let row = database.query(`
       SELECT * FROM refresh_state WHERE repository_id = ? AND view = ?
     `).get(repositoryId, view) as RefreshRow | null;
+    if (!row) {
+      try {
+        ensureRefreshState(repositoryId, view);
+      } catch {
+        return undefined;
+      }
+      row = database.query(`
+        SELECT * FROM refresh_state WHERE repository_id = ? AND view = ?
+      `).get(repositoryId, view) as RefreshRow | null;
+    }
     return row ? toRefreshState(row) : undefined;
   };
 
@@ -3468,6 +3598,11 @@ export const createPersistence = (options: PersistenceOptions) => {
   return {
     database,
     close: () => database.close(),
+    restoreStartup,
+    checkHealth,
+    getHealth,
+    isHealthy: () => persistenceHealthy && startupRestored,
+    markUnhealthy,
     getRepository,
     listRepositories,
     upsertRepository,

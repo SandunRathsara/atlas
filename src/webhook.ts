@@ -213,6 +213,7 @@ export const createWebhookApp = (options: WebhookAppOptions) => {
     try {
       knownRepositories = new Set(options.persistence.listRepositories(true).map((repository) => repository.githubId));
     } catch {
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; webhook refresh work was not recorded.");
       return c.text("Webhook refresh could not be durably recorded", 503);
     }
     const requestedRepositories = event === "installation" || event === "installation_repositories"
@@ -229,6 +230,7 @@ export const createWebhookApp = (options: WebhookAppOptions) => {
         receivedAt: new Date(now()).toISOString(),
       });
     } catch {
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; webhook refresh work was not recorded.");
       return c.text("Webhook refresh could not be durably recorded", 503);
     }
 

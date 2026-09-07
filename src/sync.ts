@@ -83,33 +83,42 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
   const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let interval: ReturnType<typeof setInterval> | undefined;
 
+  const persist = <T>(operation: () => T) => {
+    try {
+      return operation();
+    } catch {
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; GitHub refresh state was not saved.");
+      throw new Error("Atlas persistence is unavailable");
+    }
+  };
+
   const saveSpecs = async (repository: Repository, githubRepository: GitHubRepository, generation: number) => {
     if (!githubRepository.hasIssues) {
-      options.persistence.replaceSpecs(
+      persist(() => options.persistence.replaceSpecs(
         repository.githubId,
         [],
         undefined,
         "GitHub Issues are disabled for this Repository; no Specs can be listed.",
         generation,
-      );
+      ));
       return;
     }
 
     const issues = await options.github.listIssues(githubRepository);
     const hasLabel = await options.github.hasLabel(githubRepository, "spec");
     if (!hasLabel) {
-      options.persistence.replaceSpecs(
+      persist(() => options.persistence.replaceSpecs(
         repository.githubId,
         [],
         undefined,
         "No exact `spec` label exists in this Repository. Atlas does not create labels.",
         generation,
-      );
+      ));
       return;
     }
 
     const observedAt = new Date(now()).toISOString();
-    options.persistence.replaceSpecs(
+    persist(() => options.persistence.replaceSpecs(
       repository.githubId,
       issues.map((issue) => ({
         githubId: issue.id,
@@ -127,7 +136,7 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
       observedAt,
       null,
       generation,
-    );
+    ));
   };
 
   const savePullRequests = async (repository: Repository, githubRepository: GitHubRepository, generation: number) => {
@@ -191,17 +200,17 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
       }),
     }));
 
-    options.persistence.replacePullRequests(repository.githubId, pullRequestInputs, stackInputs, observedAt, null, generation);
+    persist(() => options.persistence.replacePullRequests(repository.githubId, pullRequestInputs, stackInputs, observedAt, null, generation));
   };
 
   const markMissingRepository = (repository: Repository, generations: Map<RefreshView, number>, reason: string) => {
     const accessGeneration = generations.get("access");
     if (accessGeneration !== undefined) {
-      options.persistence.markAccessObservation(repository.githubId, "revoked", reason, accessGeneration);
+      persist(() => options.persistence.markAccessObservation(repository.githubId, "revoked", reason, accessGeneration));
     }
     for (const view of ["specs", "pullRequests"] as const) {
       const generation = generations.get(view);
-      if (generation !== undefined) options.persistence.markRefreshFailure(repository.githubId, view, reason, "unavailable", generation);
+      if (generation !== undefined) persist(() => options.persistence.markRefreshFailure(repository.githubId, view, reason, "unavailable", generation));
     }
   };
 
@@ -224,10 +233,10 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
       const accessGeneration = generations.get("access");
       if (accessGeneration !== undefined) {
         const status = error instanceof GitHubError && error.kind === "suspended" ? "suspended" : "unknown";
-        options.persistence.markAccessFailure(repositoryId, status, reason, accessGeneration);
+        persist(() => options.persistence.markAccessFailure(repositoryId, status, reason, accessGeneration));
       }
       for (const [view, generation] of generations) {
-        options.persistence.markRefreshFailure(repositoryId, view, reason, "unavailable", generation);
+        persist(() => options.persistence.markRefreshFailure(repositoryId, view, reason, "unavailable", generation));
       }
       return {
         failed: true,
@@ -239,12 +248,12 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
     if (!candidate) {
       markMissingRepository(existing, generations, "Repository was not present in the last complete GitHub App inventory.");
       if (generations.has("access")) {
-        options.persistence.markRefreshSuccess(
+        persist(() => options.persistence.markRefreshSuccess(
           repositoryId,
           "access",
           "Repository was not present in the last complete GitHub App inventory.",
           generations.get("access"),
-        );
+        ));
       }
       return { failed: generations.has("specs") || generations.has("pullRequests") };
     }
@@ -253,25 +262,25 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
       const reason = "Repository is now outside the configured organization.";
       const accessGeneration = generations.get("access");
       if (accessGeneration !== undefined) {
-        options.persistence.saveRepositoryObservation(
+        persist(() => options.persistence.saveRepositoryObservation(
           repositoryInput(candidate, options.organization, options.installationId, "transferred", reason),
           accessGeneration,
           reason,
-        );
+        ));
       }
       for (const view of ["specs", "pullRequests"] as const) {
         const generation = generations.get(view);
-        if (generation !== undefined) options.persistence.markRefreshFailure(repositoryId, view, reason, "unavailable", generation);
+        if (generation !== undefined) persist(() => options.persistence.markRefreshFailure(repositoryId, view, reason, "unavailable", generation));
       }
       return { failed: generations.has("specs") || generations.has("pullRequests") };
     }
 
     const accessGeneration = generations.get("access");
     if (accessGeneration !== undefined) {
-      options.persistence.saveRepositoryObservation(
+      persist(() => options.persistence.saveRepositoryObservation(
         repositoryInput(candidate, options.organization, options.installationId),
         accessGeneration,
-      );
+      ));
     }
 
     const repository = options.persistence.getRepository(repositoryId)!;
@@ -284,7 +293,7 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
       } catch (error) {
         failed = true;
         retryAfterMs = Math.max(retryAfterMs, error instanceof GitHubError ? error.retryAfterMs ?? 0 : 0);
-        options.persistence.markRefreshFailure(repositoryId, "specs", githubFailureMessage(error), "unavailable", specsGeneration);
+        persist(() => options.persistence.markRefreshFailure(repositoryId, "specs", githubFailureMessage(error), "unavailable", specsGeneration));
       }
     }
 
@@ -295,7 +304,7 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
       } catch (error) {
         failed = true;
         retryAfterMs = Math.max(retryAfterMs, error instanceof GitHubError ? error.retryAfterMs ?? 0 : 0);
-        options.persistence.markRefreshFailure(repositoryId, "pullRequests", githubFailureMessage(error), "unavailable", pullRequestsGeneration);
+        persist(() => options.persistence.markRefreshFailure(repositoryId, "pullRequests", githubFailureMessage(error), "unavailable", pullRequestsGeneration));
       }
     }
 
@@ -340,7 +349,10 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
     if (retryTimers.has(repositoryId)) return Promise.resolve();
 
     const run = process(repositoryId)
-      .catch(() => scheduleRetry(repositoryId))
+      .catch(() => {
+        options.persistence.markUnhealthy("Atlas persistence is unavailable; GitHub refresh is paused.");
+        scheduleRetry(repositoryId);
+      })
       .finally(() => {
         locks.delete(repositoryId);
         if (wakeAfter.delete(repositoryId)) schedule(repositoryId);
@@ -350,12 +362,12 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
   };
 
   const request = (repositoryId: string, views: RefreshView[] = refreshViews) => {
-    options.persistence.requestRefresh(repositoryId, views);
+    persist(() => options.persistence.requestRefresh(repositoryId, views));
     void schedule(repositoryId);
   };
 
   const refresh = async (repositoryId: string, views: RefreshView[]) => {
-    options.persistence.requestRefresh(repositoryId, views);
+    persist(() => options.persistence.requestRefresh(repositoryId, views));
     await schedule(repositoryId);
   };
 
@@ -366,7 +378,11 @@ export const createRefreshCoordinator = (options: RefreshCoordinatorOptions): Re
   const start = () => {
     if (interval) return;
     const reconcile = () => {
-      for (const repository of options.persistence.listRepositories(true)) request(repository.githubId);
+      try {
+        for (const repository of options.persistence.listRepositories(true)) request(repository.githubId);
+      } catch {
+        options.persistence.markUnhealthy("Atlas persistence is unavailable; GitHub refresh is paused.");
+      }
     };
     reconcile();
     interval = setInterval(reconcile, FIVE_MINUTES);

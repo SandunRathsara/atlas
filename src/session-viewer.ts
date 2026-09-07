@@ -888,7 +888,7 @@ export const createSessionViewerService = (connection: ViewerConnection) => {
         available: false,
         atlasSessionId: atlasSession.atlasId,
         freshness: "partial",
-        partialReasons: ["OpenCode execution history is not available before the Session is associated and prepared."],
+        partialReasons: ["OpenCode execution history is not available before the Session is both associated and prepared."],
       };
     }
 

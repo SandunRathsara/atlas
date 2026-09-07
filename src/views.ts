@@ -505,6 +505,37 @@ const sessionFreshnessMarkup = (session: Session) => {
   return `${stale ? `<span class="badge badge-warning">Stale</span>` : ""}${preparationUncertain ? `<span class="badge badge-warning">Preparation unconfirmed</span>` : handoffUncertain ? `<span class="badge badge-warning">Start unconfirmed</span>` : ""}`;
 };
 
+const sessionRecoveryNotice = (
+  session: Session,
+  viewer: SessionViewerProjection | undefined,
+  sessionDirectoryAvailable: boolean | undefined,
+) => {
+  const terminal = ["succeeded", "failed", "interrupted"].includes(session.state);
+  const directoryExpected = session.preparationCheckpoint === "prepared" || Boolean(session.directory);
+  const openCodeExpected = session.handoffCheckpoint !== "not_started" || Boolean(session.openCodeSessionId);
+  const directoryUnavailable = directoryExpected && sessionDirectoryAvailable === false;
+  const historyUnavailable = openCodeExpected && viewer?.available !== true;
+  const associationUnavailable = terminal && !session.openCodeSessionId;
+  if (!directoryUnavailable && !historyUnavailable && !associationUnavailable) return "";
+
+  const details = [
+    directoryUnavailable ? "The recorded Session directory is unavailable." : "",
+    historyUnavailable ? "The preserved OpenCode Session history could not be verified." : "",
+    associationUnavailable ? "The OpenCode Session identity is unavailable." : "",
+  ].filter(Boolean).join(" ");
+  return `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>Expected Session resource unavailable.</strong> ${escapeHtml(details)} Atlas retains its last known state and history; it will not recreate resources or infer a terminal outcome. ${terminal ? "The recorded terminal outcome and released execution slot remain unchanged." : "The unfinished Session's execution slot and ownership remain held."}</div></div>`;
+};
+
+const openCodeReadinessNotice = (readiness: { ready: boolean; reason?: string } | undefined) =>
+  readiness && !readiness.ready
+    ? `<div class="alert alert-warning mt-6 leading-normal" role="status"><div><strong>OpenCode launches are paused.</strong> ${escapeHtml(readiness.reason ?? "The approved OpenCode service is unavailable or incompatible.")} Atlas remains available with cached Session data and will reconcile before resuming.</div></div>`
+    : "";
+
+const persistenceHealthNotice = (health: { healthy: boolean; reason?: string | null } | undefined) =>
+  health && !health.healthy
+    ? `<div class="alert alert-error mt-6 leading-normal" role="alert"><div><strong>Atlas persistence is unhealthy.</strong> ${escapeHtml(health.reason ?? "New admission is paused while saved Session ownership is protected.")} Existing OpenCode work is preserved.</div></div>`
+    : "";
+
 const publicationStatusLabel = (status: Session["publicationStatus"]) => {
   if (status === "not_observed") return "Not observed";
   if (status === "unverified") return "Publication unverified";
@@ -1607,6 +1638,9 @@ export const renderSessionDetailPage = ({
   pullRequestsRefresh,
   viewerRequestUrl,
   viewerLimit,
+  openCodeReadiness,
+  persistenceHealth,
+  sessionDirectoryAvailable,
 }: {
   csrfToken: string;
   repository: Repository;
@@ -1615,6 +1649,9 @@ export const renderSessionDetailPage = ({
   pullRequestsRefresh?: RefreshState;
   viewerRequestUrl?: string;
   viewerLimit?: number;
+  openCodeReadiness?: { ready: boolean; reason?: string };
+  persistenceHealth?: { healthy: boolean; reason?: string | null };
+  sessionDirectoryAvailable?: boolean;
 }) => {
   const specPath = `/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(session.specIssueNumber)}`;
   const githubUrl = safeExternalUrl(session.specHtmlUrl);
@@ -1662,9 +1699,12 @@ export const renderSessionDetailPage = ({
           <p class="mt-4 max-w-prose break-words leading-relaxed text-muted">Spec #${escapeHtml(session.specIssueNumber)}: ${escapeHtml(session.specTitle)}</p>
         </div>
         <span class="flex flex-wrap items-center gap-2"><span class="badge ${sessionBadgeClass(session.state)}">${escapeHtml(sessionStateLabel(session.state))}</span>${sessionFreshnessMarkup(session)}</span>
-       </div>
-        ${accessNotice(repository)}
-        ${preparationNotice}
+         </div>
+         ${accessNotice(repository)}
+         ${persistenceHealthNotice(persistenceHealth)}
+         ${openCodeReadinessNotice(openCodeReadiness)}
+         ${sessionRecoveryNotice(session, viewer, sessionDirectoryAvailable)}
+         ${preparationNotice}
          ${publicationMarkup(session, pullRequestsRefresh)}
         <div class="mt-8 flex flex-wrap gap-4">
           <a class="btn btn-ghost min-h-11 border border-control-border" href="${specPath}">Back to Spec</a>

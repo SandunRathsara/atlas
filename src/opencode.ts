@@ -185,6 +185,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let connectionPromise: Promise<OpenCodeClient> | undefined;
   let transportState: "connected" | "stale" = "stale";
+  let readinessReason: string | undefined = "OpenCode connection is not established.";
   const eventListeners = new Set<(event: OpenCodeEvent) => void>();
   const transportListeners = new Set<(state: "connected" | "stale", reason?: string) => void>();
   const evidence = new Map<string, EventEvidence>();
@@ -210,14 +211,18 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   };
 
   const markStaleSessions = (reason: string) => {
-    for (const session of options.persistence.listOpenCodeSessions()) {
-      if (session.preparationCheckpoint === "prepared" || session.handoffCheckpoint !== "not_started") {
-        try {
-          options.persistence.markOpenCodeStale(session.atlasId, reason);
-        } catch {
-          // Keep the durable slot when the diagnostic write itself is unavailable.
+    try {
+      for (const session of options.persistence.listOpenCodeSessions()) {
+        if (session.preparationCheckpoint === "prepared" || session.handoffCheckpoint !== "not_started") {
+          try {
+            options.persistence.markOpenCodeStale(session.atlasId, reason);
+          } catch {
+            options.persistence.markUnhealthy("Atlas persistence is unavailable; OpenCode freshness could not be saved.");
+          }
         }
       }
+    } catch {
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; OpenCode reconciliation is paused.");
     }
   };
 
@@ -225,6 +230,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     streamReady = false;
     client = undefined;
     evidence.clear();
+    readinessReason = reason;
     retryAt = Date.now() + retryDelay;
     retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
     markStaleSessions(reason);
@@ -296,7 +302,14 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
       baseUrl: endpoint.url.endsWith("/") ? endpoint.url : `${endpoint.url}/`,
       headers: Service.headers(endpoint),
     });
-    const health = await nextClient.health.get(requestOptions(requestTimeoutMs));
+    let health;
+    try {
+      health = await nextClient.health.get(requestOptions(requestTimeoutMs));
+    } catch (error) {
+      retryAt = Date.now() + retryDelay;
+      retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
+      throw error;
+    }
     if (!health.healthy || health.version !== APPROVED_OPENCODE_VERSION) {
       retryAt = Date.now() + retryDelay;
       retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
@@ -330,6 +343,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     retryDelay = 1_000;
     if (transportState !== "connected") {
       transportState = "connected";
+      readinessReason = undefined;
       notifyTransport("connected");
     }
     void consumeEvents(iterator, first, controller).catch(() => undefined);
@@ -339,9 +353,14 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   const ensureClient = async () => {
     if (client && streamReady) return client;
     if (!connectionPromise) {
-      connectionPromise = connectClient().finally(() => {
-        connectionPromise = undefined;
-      });
+      connectionPromise = connectClient()
+        .catch((error) => {
+          readinessReason = error instanceof Error ? error.message : "OpenCode service connection failed.";
+          throw error;
+        })
+        .finally(() => {
+          connectionPromise = undefined;
+        });
     }
     return connectionPromise;
   };
@@ -357,13 +376,13 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
 
   const saveIntent = (session: Session) => {
     if (!session.directory || !session.baseSha || !session.workingBranch) return undefined;
-    const repository = options.persistence.getRepository(session.repositoryId);
-    if (!repository) return undefined;
-    const intendedSessionId = session.opencodeIntendedSessionId ?? sessionId();
-    const intendedMessageId = session.initialMessageId ?? messageId();
-    if (!SESSION_ID_PATTERN.test(intendedSessionId) || !MESSAGE_ID_PATTERN.test(intendedMessageId)) return undefined;
-    const exactMessage = session.exactMessage ?? initialMessage(session, repository);
     try {
+      const repository = options.persistence.getRepository(session.repositoryId);
+      if (!repository) return undefined;
+      const intendedSessionId = session.opencodeIntendedSessionId ?? sessionId();
+      const intendedMessageId = session.initialMessageId ?? messageId();
+      if (!SESSION_ID_PATTERN.test(intendedSessionId) || !MESSAGE_ID_PATTERN.test(intendedMessageId)) return undefined;
+      const exactMessage = session.exactMessage ?? initialMessage(session, repository);
       return options.persistence.setHandoffIntent(
         session.atlasId,
         intendedSessionId,
@@ -371,6 +390,34 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
         exactMessage,
       );
     } catch {
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; the OpenCode handoff intent was not confirmed.");
+      return undefined;
+    }
+  };
+
+  const setHandoffCreated = (atlasId: string, opencodeSessionId: string) => {
+    try {
+      return options.persistence.setHandoffCreated(atlasId, opencodeSessionId);
+    } catch {
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; the OpenCode Session association was not confirmed.");
+      return undefined;
+    }
+  };
+
+  const confirmHandoffAssociation = (atlasId: string) => {
+    try {
+      return options.persistence.confirmHandoffAssociation(atlasId);
+    } catch {
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; the OpenCode Session association was not confirmed.");
+      return undefined;
+    }
+  };
+
+  const recordPromptAccepted = (atlasId: string, inboxId: string) => {
+    try {
+      return options.persistence.recordPromptAccepted(atlasId, inboxId);
+    } catch {
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; the initial prompt acceptance was not confirmed.");
       return undefined;
     }
   };
@@ -394,7 +441,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     try {
       options.persistence.markHandoffUnconfirmed(atlasId, reason);
     } catch {
-      // Keep the held slot when the diagnostic write is unavailable.
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; the uncertain OpenCode handoff remains held.");
     }
   };
 
@@ -463,7 +510,13 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
               : busy
                 ? "OpenCode reports active execution."
                 : "OpenCode is idle without a terminal outcome.";
-      const reconciled = options.persistence.reconcileOpenCode(session.atlasId, nextState, reason);
+      let reconciled: Session | undefined;
+      try {
+        reconciled = options.persistence.reconcileOpenCode(session.atlasId, nextState, reason);
+      } catch {
+        options.persistence.markUnhealthy("Atlas persistence is unavailable; the OpenCode execution state was not confirmed.");
+        return undefined;
+      }
       if (isTerminalState(nextState)) {
         options.onSlotReleased?.();
         const terminalSession = reconciled ?? options.persistence.getSession(session.atlasId) ?? session;
@@ -471,10 +524,27 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
       }
       return reconciled;
     } catch {
-      options.persistence.markOpenCodeStale(
-        session.atlasId,
-        "OpenCode HTTP reconciliation is incomplete; the last semantic state and execution slot are retained.",
-      );
+      try {
+        options.persistence.markOpenCodeStale(
+          session.atlasId,
+          "OpenCode HTTP reconciliation is incomplete; the last semantic state and execution slot are retained.",
+        );
+      } catch {
+        options.persistence.markUnhealthy("Atlas persistence is unavailable; the OpenCode reconciliation result was not saved.");
+      }
+      return undefined;
+    }
+  };
+
+  const setHandoffCheckpoint = (
+    session: Session,
+    checkpoint: Parameters<Persistence["setHandoffCheckpoint"]>[1],
+    reason: string,
+  ) => {
+    try {
+      return options.persistence.setHandoffCheckpoint(session.atlasId, checkpoint, reason);
+    } catch {
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; the OpenCode handoff checkpoint was not confirmed.");
       return undefined;
     }
   };
@@ -489,16 +559,16 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     }
 
     if (session.handoffCheckpoint === "intent_saved") {
-      session = options.persistence.setHandoffCheckpoint(
-        session.atlasId,
+      session = setHandoffCheckpoint(
+        session,
         "events_consuming",
         "OpenCode event consumption is active; the directory-bound Session has not been created.",
       ) ?? session;
     }
 
     if (session.handoffCheckpoint === "events_consuming") {
-      session = options.persistence.setHandoffCheckpoint(
-        session.atlasId,
+      session = setHandoffCheckpoint(
+        session,
         "create_sent",
         "OpenCode Session creation was sent once; Atlas will reconcile the saved identity instead of retrying it.",
       ) ?? session;
@@ -511,7 +581,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
           metadata: { atlasSessionId: session.atlasId },
         }, requestOptions(requestTimeoutMs));
         if (created.id !== session.opencodeIntendedSessionId || created.location.directory !== session.directory) throw new Error("OpenCode Session binding did not match Atlas intent");
-        const confirmed = options.persistence.setHandoffCreated(session.atlasId, created.id);
+        const confirmed = setHandoffCreated(session.atlasId, created.id);
         if (!confirmed || confirmed.handoffCheckpoint !== "create_confirmed") throw new Error("OpenCode create checkpoint could not be saved");
         session = confirmed;
       } catch {
@@ -534,9 +604,25 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
       }
       try {
         if (session.handoffCheckpoint === "create_sent") {
-          session = options.persistence.setHandoffCreated(session.atlasId, info.id) ?? session;
+          const created = setHandoffCreated(session.atlasId, info.id);
+          if (!created) {
+            markUnconfirmed(
+              session.atlasId,
+              "OpenCode Session association was observed but could not be durably saved; Atlas will not prompt or create it again.",
+            );
+            return;
+          }
+          session = created;
         }
-        session = options.persistence.confirmHandoffAssociation(session.atlasId) ?? session;
+        const associated = confirmHandoffAssociation(session.atlasId);
+        if (!associated) {
+          markUnconfirmed(
+            session.atlasId,
+            "OpenCode Session association was observed but could not be durably saved; Atlas will not prompt or create it again.",
+          );
+          return;
+        }
+        session = associated;
       } catch {
         markUnconfirmed(
           session.atlasId,
@@ -547,8 +633,8 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     }
 
     if (session.handoffCheckpoint === "associated") {
-      session = options.persistence.setHandoffCheckpoint(
-        session.atlasId,
+      session = setHandoffCheckpoint(
+        session,
         "prompt_sent",
         "The initial prompt was sent once; Atlas will reconcile message/inbox evidence instead of resending it.",
       ) ?? session;
@@ -560,7 +646,15 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
           text: session.exactMessage,
         }, requestOptions(requestTimeoutMs));
         if (accepted.id !== session.initialMessageId) throw new Error("OpenCode returned a different inbox identity");
-        session = options.persistence.recordPromptAccepted(session.atlasId, accepted.id) ?? session;
+        const recorded = recordPromptAccepted(session.atlasId, accepted.id);
+        if (!recorded) {
+          markUnconfirmed(
+            session.atlasId,
+            "Initial prompt acceptance was observed but could not be durably saved; Atlas will not resend the prompt.",
+          );
+          return;
+        }
+        session = recorded;
       } catch {
         markUnconfirmed(
           session.atlasId,
@@ -580,7 +674,15 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
         return;
       }
       try {
-        session = options.persistence.recordPromptAccepted(session.atlasId, acceptedId) ?? session;
+        const recorded = recordPromptAccepted(session.atlasId, acceptedId);
+        if (!recorded) {
+          markUnconfirmed(
+            session.atlasId,
+            "Initial prompt evidence was found but its acceptance could not be durably saved; Atlas will not resend the prompt.",
+          );
+          return;
+        }
+        session = recorded;
       } catch {
         markUnconfirmed(
           session.atlasId,
@@ -596,8 +698,13 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   };
 
   const runCycle = async () => {
-    const sessions = options.persistence.listOpenCodeSessions();
-    if (sessions.length === 0) return;
+    let sessions: Session[];
+    try {
+      sessions = options.persistence.listOpenCodeSessions();
+    } catch {
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; OpenCode reconciliation is paused.");
+      return;
+    }
 
     let activeClient: OpenCodeClient;
     try {
@@ -610,9 +717,16 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
       return;
     }
 
+    if (sessions.length === 0) return;
+
     for (const session of sessions) {
       if (activeClient !== client || !streamReady) return;
-      await processSession(session, activeClient);
+      try {
+        await processSession(session, activeClient);
+      } catch {
+        options.persistence.markUnhealthy("Atlas persistence is unavailable; OpenCode reconciliation is paused.");
+        return;
+      }
     }
   };
 
@@ -684,10 +798,20 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     enqueue,
     process: runCycle,
     getClient: ensureClient,
+    isReady: () => Boolean(client && streamReady && transportState === "connected"),
+    readiness: () => ({
+      ready: Boolean(client && streamReady && transportState === "connected"),
+      state: transportState,
+      reason: readinessReason,
+    }),
     onEvent,
     onTransport,
     transportState: () => transportState,
   };
 };
 
-export type OpenCodeHandoffService = ReturnType<typeof createOpenCodeHandoffService>;
+type OpenCodeHandoffImplementation = ReturnType<typeof createOpenCodeHandoffService>;
+export type OpenCodeHandoffService = Omit<OpenCodeHandoffImplementation, "isReady" | "readiness"> & {
+  isReady?: OpenCodeHandoffImplementation["isReady"];
+  readiness?: OpenCodeHandoffImplementation["readiness"];
+};

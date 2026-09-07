@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
 import { streamSSE } from "hono/streaming";
+import { lstatSync } from "node:fs";
 import {
   createAuth,
   safeReturnTo,
@@ -211,6 +212,16 @@ const nextRefreshGeneration = (persistence: Persistence, repositoryId: string, v
 
 const sessionLocation = (session: Pick<Session, "atlasId">) => `/sessions/${encodeURIComponent(session.atlasId)}`;
 
+const sessionDirectoryAvailable = (session: Pick<Session, "directory">) => {
+  if (!session.directory) return undefined;
+  try {
+    const stat = lstatSync(session.directory);
+    return stat.isDirectory() && !stat.isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+
 const viewerLimit = (value: string | undefined) => {
   if (value === undefined || value === "") return 40;
   if (!/^\d{1,3}$/.test(value)) return undefined;
@@ -347,6 +358,7 @@ export const createApp = (options: AppOptions) => {
     path: options.databasePath ?? ":memory:",
     now: options.now,
   });
+  persistence.restoreStartup();
   const organization = options.githubOrganization ?? Bun.env.ATLAS_GITHUB_ORGANIZATION ?? "";
   const installationId = options.githubInstallationId ?? Bun.env.ATLAS_GITHUB_INSTALLATION_ID ?? "";
   const github = options.github ?? createGitHubClient({
@@ -393,26 +405,40 @@ export const createApp = (options: AppOptions) => {
   };
 
   const saveCandidate = async (candidate: GitHubRepository) => {
-    const repository = persistence.upsertRepository({
-      githubId: candidate.id,
-      installationId,
-      organization,
-      owner: candidate.owner,
-      name: candidate.name,
-      fullName: candidate.fullName,
-      htmlUrl: candidate.htmlUrl,
-      description: candidate.description,
-      visibility: candidate.visibility,
-      defaultBranch: candidate.defaultBranch,
-      archived: candidate.archived,
-      disabled: candidate.disabled,
-      hasIssues: candidate.hasIssues,
-    });
+    let repository: Repository;
+    try {
+      repository = persistence.upsertRepository({
+        githubId: candidate.id,
+        installationId,
+        organization,
+        owner: candidate.owner,
+        name: candidate.name,
+        fullName: candidate.fullName,
+        htmlUrl: candidate.htmlUrl,
+        description: candidate.description,
+        visibility: candidate.visibility,
+        defaultBranch: candidate.defaultBranch,
+        archived: candidate.archived,
+        disabled: candidate.disabled,
+        hasIssues: candidate.hasIssues,
+      });
+    } catch {
+      persistence.markUnhealthy("Atlas persistence is unavailable; the Repository change was not saved.");
+      throw new Error("Atlas persistence is unavailable");
+    }
     const result = await refreshRepository(repository);
-    if (result.ok && result.repository.removedAt) persistence.restoreRepository(result.repository.githubId);
+    if (result.ok && result.repository.removedAt) {
+      try {
+        persistence.restoreRepository(result.repository.githubId);
+      } catch {
+        persistence.markUnhealthy("Atlas persistence is unavailable; the Repository restoration was not confirmed.");
+        throw new Error("Atlas persistence is unavailable");
+      }
+    }
     return { ...result, repository: persistence.getRepository(repository.githubId)! };
   };
 
+  let openCode: OpenCodeHandoffService | undefined;
   const preparation = createPreparationService({
     persistence,
     github,
@@ -427,8 +453,14 @@ export const createApp = (options: AppOptions) => {
     authorizedRepositories: options.authorizedRepositories,
     gitBinary: options.gitBinary,
     credentials: options.credentials,
+    isOpenCodeReady: () => {
+      if (!persistence.isHealthy() || !openCode) return false;
+      return typeof openCode.isReady === "function"
+        ? openCode.isReady()
+        : openCode.transportState() === "connected";
+    },
   });
-  const openCode = options.openCode ?? createOpenCodeHandoffService({
+  const openCodeService = options.openCode ?? createOpenCodeHandoffService({
     persistence,
     onSlotReleased: preparation.enqueue,
     onTerminal: async (session) => {
@@ -443,9 +475,23 @@ export const createApp = (options: AppOptions) => {
       preparation.enqueue();
     },
   });
-  const sessionViewer = createSessionViewerService(openCode);
+  openCode = openCodeService;
+  const sessionViewer = createSessionViewerService(openCodeService);
+  openCodeService.onTransport((state) => {
+    if (state === "connected") preparation.enqueue();
+  });
+  openCodeService.start();
   preparation.start();
-  openCode.start();
+
+  const persistenceReady = () => persistence.checkHealth();
+  const currentOpenCodeReadiness = () => {
+    const readiness = openCodeService.readiness?.();
+    if (readiness) return { ready: readiness.ready, reason: readiness.reason };
+    return {
+      ready: openCodeService.transportState() === "connected",
+      reason: "The approved OpenCode service is unavailable or incompatible.",
+    };
+  };
 
   const scopedInventory = async () => {
     const inventory = await github.listInstallationRepositories();
@@ -762,6 +808,8 @@ export const createApp = (options: AppOptions) => {
       return c.text("Request rejected", 403);
     }
 
+    if (!persistenceReady()) return c.text("Atlas persistence is unavailable; new Repository changes are paused.", 503);
+
     const repositoryId = stringField(form.repository_id);
     if (!repositoryId || !repositoryIdPattern.test(repositoryId)) {
       return c.text("Invalid Repository ID", 400);
@@ -777,7 +825,12 @@ export const createApp = (options: AppOptions) => {
     const candidate = inventory.find((repository) => repository.id === repositoryId);
     if (!candidate) return c.text("Repository is not available to the configured GitHub App installation", 404);
 
-    const result = await saveCandidate(candidate);
+    let result: Awaited<ReturnType<typeof saveCandidate>>;
+    try {
+      result = await saveCandidate(candidate);
+    } catch (error) {
+      return c.text(persistence.isHealthy() ? githubFailureMessage(error) : "Atlas persistence is unavailable; the Repository change was not saved.", 503);
+    }
     const destination = `/repositories/${encodeURIComponent(result.repository.githubId)}/specs`;
     if (isHtmx(c)) {
       c.header("HX-Redirect", destination);
@@ -805,9 +858,12 @@ export const createApp = (options: AppOptions) => {
       return c.text("Request rejected", 403);
     }
 
+    if (!persistenceReady()) return c.text("Atlas persistence is unavailable; Repository removal is paused.", 503);
+
     try {
       persistence.removeRepository(repositoryId);
     } catch {
+      persistence.markUnhealthy("Atlas persistence is unavailable; the Repository removal was not confirmed.");
       return c.text("Atlas could not save the Repository removal.", 503);
     }
     preparation.enqueue();
@@ -1067,6 +1123,9 @@ export const createApp = (options: AppOptions) => {
     }
 
     if (!selectedTarget) return renderError(422, "Choose a valid starting target before starting the Session.");
+    if (!persistenceReady()) {
+      return renderError(503, "Atlas persistence is unavailable; no Session was queued.", existing, knownSpec);
+    }
 
     const priorSubmission = submittedSubmissionId && submissionIdPattern.test(submittedSubmissionId)
       ? persistence.getSessionBySubmissionId(submittedSubmissionId)
@@ -1173,6 +1232,7 @@ export const createApp = (options: AppOptions) => {
         target: selectedQueueTarget,
       });
     } catch {
+      persistence.markUnhealthy("Atlas persistence is unavailable; the Session queue write was not confirmed.");
       return renderError(503, "Atlas could not save this Session. No Session was queued; keep this form and try again.", repository, spec);
     }
 
@@ -1236,6 +1296,9 @@ export const createApp = (options: AppOptions) => {
       session,
       viewer,
       pullRequestsRefresh,
+      openCodeReadiness: currentOpenCodeReadiness(),
+      persistenceHealth: persistence.getHealth(),
+      sessionDirectoryAvailable: sessionDirectoryAvailable(session),
     }));
   });
 
@@ -1453,6 +1516,7 @@ export const createApp = (options: AppOptions) => {
       error,
     }), status);
 
+    if (!persistenceReady()) return renderError("Atlas persistence is unavailable; ownership remains held.", 503);
     if (session.reservationState !== "held") return redirectToSession(c, session);
     if (!["succeeded", "failed", "interrupted"].includes(session.state)) {
       return renderError("Atlas can release a reservation only after a confirmed terminal OpenCode outcome. Active or uncertain execution remains held.", 409);
@@ -1462,6 +1526,7 @@ export const createApp = (options: AppOptions) => {
     try {
       result = persistence.releaseReservation(sessionId);
     } catch {
+      persistence.markUnhealthy("Atlas persistence is unavailable; the reservation release was not confirmed.");
       return renderError("Atlas could not durably record the reservation release. Ownership remains held.", 503);
     }
     if (result.kind === "not_terminal") {
@@ -1517,6 +1582,9 @@ export const createApp = (options: AppOptions) => {
         pullRequestsRefresh: persistence.getRefreshState(session.repositoryId, "pullRequests"),
         viewerRequestUrl,
         viewerLimit: limit,
+        openCodeReadiness: currentOpenCodeReadiness(),
+        persistenceHealth: persistence.getHealth(),
+        sessionDirectoryAvailable: sessionDirectoryAvailable(session),
       }));
     }
     return c.html(renderSessionViewerFragment({

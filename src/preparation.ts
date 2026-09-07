@@ -58,6 +58,7 @@ type PreparationOptions = {
   credentialSocketPath?: string;
   credentialKeyPath?: string;
   authorizedRepositories?: readonly string[];
+  isOpenCodeReady?: () => boolean;
 };
 
 class PreparationError extends Error {}
@@ -254,7 +255,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       else options.persistence.setQueuedSessionReason(session.atlasId, reason);
       return true;
     } catch {
-      // Persistence failure is intentionally not converted into a successful retry.
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; new preparation admission is paused.");
       return false;
     }
   };
@@ -579,6 +580,7 @@ export const createPreparationService = (options: PreparationOptions) => {
     try {
       return options.persistence.setPreparationCheckpoint(atlasId, value, reason, stateReason);
     } catch {
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; the preparation checkpoint was not confirmed.");
       return undefined;
     }
   };
@@ -587,7 +589,7 @@ export const createPreparationService = (options: PreparationOptions) => {
     try {
       options.persistence.failPreparation(atlasId, reason);
     } catch {
-      // Keep the held Preparing row if the durable release itself is uncertain.
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; the preparation slot remains held.");
     }
   };
 
@@ -602,7 +604,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       const current = options.persistence.requeuePreparation(session.atlasId, reason);
       if (current?.state === "queued") return;
     } catch {
-      // Keep the held intent when the durable release is uncertain.
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; the preparation slot remains held.");
     }
     pauseHeld(session, reason);
   };
@@ -648,7 +650,14 @@ export const createPreparationService = (options: PreparationOptions) => {
     } catch (error) {
       const reason = error instanceof StorageError ? error.message : storageIssue();
       if (reason) pauseHeld(session, reason);
-      else if (error instanceof PreparationError) failSetup(session.atlasId, error.message);
+      else if (error instanceof PreparationError) {
+        checkpoint(
+          session.atlasId,
+          "start_unconfirmed",
+          `Prepared Session resources could not be verified; Atlas will not recreate them or release the execution slot. ${error.message}`,
+          `Start unconfirmed; inspect the preserved local resources. ${error.message}`,
+        );
+      }
       else checkpoint(session.atlasId, "start_unconfirmed", "Local preparation stopped after an uncertain filesystem operation.", "Start unconfirmed; inspect the preserved local resources.");
     }
   };
@@ -720,6 +729,24 @@ export const createPreparationService = (options: PreparationOptions) => {
       if (session.preparationCheckpoint === "prepared" || session.preparationCheckpoint === "start_unconfirmed") continue;
       const repository = options.persistence.getRepository(session.repositoryId);
       if (!repository) continue;
+      if (session.preparationCheckpoint === "intent_saved") {
+        let candidate: GitHubRepository | undefined;
+        try {
+          candidate = (await options.github.listInstallationRepositories()).find((entry) =>
+            entry.id === repository.githubId &&
+            entry.owner.toLocaleLowerCase("en-US") === repository.organization.toLocaleLowerCase("en-US"),
+          );
+        } catch {
+          pauseHeld(session, "Waiting for current GitHub access before resuming the saved preparation intent.");
+          return true;
+        }
+        if (!candidate) {
+          pauseHeld(session, "Waiting for GitHub access to the registered Repository before resuming preparation.");
+          return true;
+        }
+        await prepareClaimed(session, repository, candidate);
+        return true;
+      }
       if (session.preparationCheckpoint === "clone_complete") {
         await finishBranch(session, repository);
         return true;
@@ -730,6 +757,8 @@ export const createPreparationService = (options: PreparationOptions) => {
   };
 
   const prepareNext = async () => {
+    if (!options.persistence.isHealthy() && !options.persistence.checkHealth()) return;
+
     const preparing = options.persistence.listPreparingSessions();
     const queued = options.persistence.listQueuedSessions();
     if (preparing.length === 0 && queued.length === 0) return;
@@ -743,6 +772,10 @@ export const createPreparationService = (options: PreparationOptions) => {
     }
 
     if (await resumePreparing()) return;
+    if (options.isOpenCodeReady && !options.isOpenCodeReady()) {
+      if (queued[0]) setReason(queued[0], "Waiting for the approved OpenCode service (0.0.0-beta-19135) before admission.");
+      return;
+    }
     for (const session of queued) {
       let target: Awaited<ReturnType<typeof verifyTarget>>;
       try {
@@ -756,6 +789,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       try {
         claimed = options.persistence.claimPreparation(session.atlasId, intent, capacity, true);
       } catch {
+        options.persistence.markUnhealthy("Atlas persistence is unavailable; new preparation admission is paused.");
         return;
       }
       if (!claimed) continue;
@@ -767,7 +801,9 @@ export const createPreparationService = (options: PreparationOptions) => {
   const wake = () => {
     if (stopped || running) return;
     running = true;
-    void prepareNext().catch(() => undefined).finally(() => {
+    void prepareNext().catch(() => {
+      options.persistence.markUnhealthy("Atlas persistence is unavailable; new preparation admission is paused.");
+    }).finally(() => {
       running = false;
       if (!stopped) {
         if (pendingWake) {
