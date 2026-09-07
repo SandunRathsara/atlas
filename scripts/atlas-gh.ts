@@ -62,11 +62,45 @@ try {
     "GH_REPO",
     "GH_DEBUG",
     "GH_CONFIG_DIR",
+    "GIT_ASKPASS",
+    "SSH_ASKPASS",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "GIT_SSH_VARIANT",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_QUARANTINE_PATH",
+    "GIT_SSL_NO_VERIFY",
+    "GIT_CURL_VERBOSE",
+    "GIT_TRACE",
+    "GIT_TRACE_PACKET",
+    "GIT_TRACE_CURL",
+    "GIT_TRACE2",
+    "GIT_TRACE2_EVENT",
+    "GIT_TRACE2_PERF",
+    "GIT_TERMINAL_PROMPT",
   ]) delete environment[name];
+  for (const name of Object.keys(environment)) {
+    if (/^GIT_CONFIG_(?:KEY|VALUE)_\d+$/u.test(name)) delete environment[name];
+  }
   environment.GH_TOKEN = response.password;
   environment.GH_HOST = "github.com";
   environment.GH_CONFIG_DIR = configDirectory;
   environment.GH_PROMPT_DISABLED = "1";
+  environment.GIT_CONFIG_NOSYSTEM = "1";
+  environment.GIT_CONFIG_GLOBAL = "/dev/null";
+  environment.GIT_TERMINAL_PROMPT = "0";
+  environment.GIT_ASKPASS = "/bin/false";
+  environment.SSH_ASKPASS = "/bin/false";
+  environment.GIT_SSH_COMMAND = "/bin/false";
   environment.ATLAS_SESSION_DIRECTORY = sessionDirectory;
 
   const child = Bun.spawn([realBinary, ...args], {

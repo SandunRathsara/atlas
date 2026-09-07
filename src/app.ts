@@ -23,7 +23,7 @@ import {
 } from "./persistence.ts";
 import { createPreparationService } from "./preparation.ts";
 import type { CredentialBoundary } from "./credentials.ts";
-import { createOpenCodeHandoffService } from "./opencode.ts";
+import { APPROVED_OPENCODE_VERSION, createOpenCodeHandoffService } from "./opencode.ts";
 import type { OpenCodeHandoffService } from "./opencode.ts";
 import {
   createSessionViewerService,
@@ -502,6 +502,26 @@ export const createApp = (options: AppOptions) => {
   };
 
   app.use("*", securityHeaders);
+
+  // This is intentionally on the private app only. The webhook app has no
+  // health, login, Session, or OpenCode routes to expose through Funnel.
+  app.use("/health", auth.middleware);
+  app.get("/health", (c) => {
+    const databaseHealthy = persistence.checkHealth();
+    const persistenceHealth = persistence.getHealth();
+    const openCodeReadiness = currentOpenCodeReadiness();
+    const status: 200 | 503 = databaseHealthy && persistenceHealth.healthy ? 200 : 503;
+    setPrivateHtmlHeaders(c);
+    return c.json({
+      status: status === 200 ? "ok" : "degraded",
+      atlas: { process: true },
+      persistence: persistenceHealth,
+      openCode: {
+        ...openCodeReadiness,
+        expectedVersion: APPROVED_OPENCODE_VERSION,
+      },
+    }, status);
+  });
 
   app.get("/assets/app.css", () =>
     new Response(Bun.file(new URL("../public/app.css", import.meta.url)), {
