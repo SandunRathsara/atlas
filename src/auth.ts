@@ -178,6 +178,11 @@ export const createAuth = (options: AuthOptions) => {
     return true;
   };
 
+  const restoreCsrf = (nonce: string | undefined, sessionId?: string) => {
+    if (!nonce || !sessionId) return;
+    csrfNonces.set(nonce, { expiresAt: now() + CSRF_TTL_MS, sessionId });
+  };
+
   return {
     authenticate,
     clearSessionCookie: () => cookie("", 0),
@@ -207,6 +212,7 @@ export const createAuth = (options: AuthOptions) => {
     },
     middleware,
     issueCsrf,
+    restoreCsrf,
     validateBrowserMutation: (c: Context, identity: AuthIdentity, nonce?: string) =>
       identity.type === "bearer" ||
       (identity.type === "browser" &&

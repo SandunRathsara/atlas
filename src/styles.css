@@ -152,6 +152,15 @@
     height: auto;
   }
 
+  .badge {
+    max-width: 100%;
+    min-height: var(--size);
+    height: auto;
+    line-height: 1.25;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   .atlas-backdrop {
     background-image: radial-gradient(circle at top left, rgb(1 43 104 / 0.2), transparent 36rem);
   }

@@ -8,7 +8,7 @@
   };
 
   document.body.addEventListener("htmx:afterRequest", (event) => {
-    if (!event.detail.failed) return;
+    if (!event.detail.failed && event.detail.xhr?.status !== 0) return;
 
     const element = event.detail.elt;
     const form = element instanceof HTMLFormElement ? element : element.closest("form");

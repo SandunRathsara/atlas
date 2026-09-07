@@ -3247,6 +3247,9 @@ export const createPersistence = (options: PersistenceOptions) => {
   };
 
   const blockQueuedPreparation = (atlasId: string, reason: string) => {
+    const normalizedReason = reason.startsWith("Waiting for explicit default-branch reconfirmation")
+      ? "Waiting for explicit target reconfirmation; the Repository default branch changed."
+      : reason;
     database.query(`
       UPDATE sessions
       SET admission_blocked = 1,
@@ -3255,7 +3258,7 @@ export const createPersistence = (options: PersistenceOptions) => {
           updated_at = ?
       WHERE atlas_id = ? AND state = 'queued'
         AND NOT (admission_blocked = 1 AND COALESCE(state_reason, '') LIKE 'Waiting for explicit target reconfirmation%')
-    `).run(reason, reason, isoNow(now), atlasId);
+    `).run(normalizedReason, normalizedReason, isoNow(now), atlasId);
     return getSession(atlasId);
   };
 

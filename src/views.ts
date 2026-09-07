@@ -961,18 +961,20 @@ export const renderStartTargetOptions = (
   accessRefresh: RefreshState | undefined,
   pullRequestsRefresh: RefreshState | undefined,
   selected: string,
+  targetInvalid = false,
+  targetErrorId = "target-reconfirmation-error",
 ) => {
   const options = startTargetOptions(repository, pullRequests, stacks, accessRefresh, pullRequestsRefresh);
   const observations = Object.fromEntries(options.map((option) => [option.value, option.observation]));
   const targetHelp = options.length === 1
     ? `<p class="mt-2 text-sm leading-normal text-muted">Native stack and standalone parent choices appear after a complete Pull request/stack read.</p>`
     : "";
-  return `<fieldset class="mt-8 max-w-3xl" aria-describedby="target-help">
+  return `<fieldset class="mt-8 max-w-3xl" aria-describedby="${targetInvalid ? `target-help ${targetErrorId}` : "target-help"}">
     <legend class="label mb-2 block p-0">Starting target</legend>
     <input type="hidden" name="target_observations" value="${escapeHtml(JSON.stringify(observations))}">
     <div class="grid gap-3">
       ${options.map((option) => `<label class="flex min-h-14 items-start gap-3 rounded-field border border-control-border bg-base-100 p-3 ${option.status.kind === "eligible" ? "cursor-pointer" : "opacity-90"}">
-        <input class="radio radio-primary mt-1" type="radio" name="target" value="${escapeHtml(option.value)}"${option.value === selected ? " checked" : ""}${option.status.kind === "eligible" ? "" : " disabled"}>
+        <input class="radio radio-primary mt-1" type="radio" name="target" value="${escapeHtml(option.value)}"${option.value === selected ? " checked" : ""}${option.status.kind === "eligible" ? "" : " disabled"}${targetInvalid ? ' aria-invalid="true"' : ""}>
         <span class="min-w-0"><span class="block break-words font-medium">${escapeHtml(option.label)}</span><span class="mt-1 block text-sm leading-normal ${option.status.kind === "eligible" ? "text-muted" : option.status.kind === "warning" ? "text-warning" : "text-error"}">${escapeHtml(option.status.label)} · ${escapeHtml(option.reason)}</span></span>
       </label>`).join("")}
     </div>
@@ -1228,6 +1230,7 @@ export const renderStartSessionPage = ({
   stacks,
   pullRequestsRefresh,
   target,
+  targetInvalid = false,
 }: {
   action?: string;
   csrfToken: string;
@@ -1244,6 +1247,7 @@ export const renderStartSessionPage = ({
   stacks?: PrStack[];
   pullRequestsRefresh?: RefreshState;
   target?: string;
+  targetInvalid?: boolean;
 }) => {
   const formAction = action ?? `/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(spec.issueNumber)}/sessions`;
   const githubUrl = safeExternalUrl(spec.htmlUrl);
@@ -1270,7 +1274,7 @@ export const renderStartSessionPage = ({
          <div><dt class="font-medium text-muted">Queueing</dt><dd class="mt-1">The selected target is queued; preparation is deferred.</dd></div>
        </dl>
         ${notice ? `<div class="alert alert-info mt-8 leading-normal" role="status" tabindex="-1" data-focus-on-swap>${escapeHtml(notice)}</div>` : ""}
-        ${renderStartSessionForm({ action: formAction, csrfToken, submissionId, prompt, error, existingSession, targetOptions: renderStartTargetOptions(repository, pullRequests, stacks, accessRefresh, pullRequestsRefresh, target ?? "default"), target: target ?? "default" })}
+        ${renderStartSessionForm({ action: formAction, csrfToken, submissionId, prompt, error, existingSession, targetOptions: renderStartTargetOptions(repository, pullRequests, stacks, accessRefresh, pullRequestsRefresh, target ?? "default", targetInvalid, "prompt-error"), target: target ?? "default" })}
       <details class="mt-8 max-w-prose rounded-box bg-base-100 p-5 sm:p-6">
         <summary class="min-h-11 cursor-pointer text-lg font-semibold">View Spec context</summary>
         <div class="mt-5 whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(spec.body) || "No description provided."}</div>
@@ -1320,15 +1324,16 @@ export const renderTargetReconfirmationForm = ({
   csrfToken: string;
   targetOptions: string;
   error?: string;
-}) => `<form class="mt-8 max-w-3xl" action="${action}" method="post" hx-post="${action}" hx-target="this" hx-swap="outerHTML" hx-disabled-elt="button[type='submit']">
+}) => `<form id="target-reconfirmation-form" class="mt-8 max-w-3xl" action="${escapeHtml(action)}" method="post" hx-post="${escapeHtml(action)}" hx-target="this" hx-swap="outerHTML" hx-indicator="#target-reconfirmation-progress" hx-disabled-elt="button[type='submit']"${error ? ' aria-describedby="target-reconfirmation-error"' : ""}>
   <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
-  ${error ? `<div class="alert alert-error mb-6 leading-normal" role="alert" tabindex="-1" data-focus-on-swap>${escapeHtml(error)}</div>` : ""}
+  ${error ? `<div id="target-reconfirmation-error" class="alert alert-error mb-6 leading-normal" role="alert" tabindex="-1" data-focus-on-swap>${escapeHtml(error)}</div>` : ""}
   ${targetOptions}
   <div class="mt-8 flex flex-wrap items-center gap-4">
     <button class="btn btn-primary min-h-11 border border-control-border" type="submit">Confirm target</button>
-    <a class="btn btn-ghost min-h-11 border border-control-border" href="${action.replace(/\/target$/, "")}">Cancel</a>
-    <span class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Checking target…</span>
+    <a class="btn btn-ghost min-h-11 border border-control-border" href="${escapeHtml(action.replace(/\/target$/, ""))}">Cancel</a>
+    <span id="target-reconfirmation-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Checking target…</span>
   </div>
+  <p data-form-status class="sr-only" role="status" aria-live="polite"></p>
 </form>`;
 
 export const renderPendingStartSessionFragment = ({
@@ -1378,7 +1383,10 @@ const sessionTargetLabel = (session: Session) => {
   return `Default branch · ${session.targetBranch}`;
 };
 
-const targetReconfirmationNeeded = (session: Session) => session.state === "queued" && session.admissionBlocked && /reconfirmation|no longer exists|no longer available|disappeared/iu.test(session.stateReason ?? "");
+const targetReconfirmationNeeded = (session: Session) =>
+  session.state === "queued" &&
+  session.admissionBlocked === true &&
+  session.stateReason?.startsWith("Waiting for explicit target reconfirmation") === true;
 
 const sessionListRow = (session: Session, pullRequestsRefresh?: RefreshState) => `<li class="rounded-box bg-base-100 p-4 sm:p-6">
   <div class="flex flex-wrap items-start justify-between gap-4">
@@ -1783,15 +1791,6 @@ export const renderReservationReleasePage = ({
   pullRequestsRefresh?: RefreshState;
   error?: string;
 }) => {
-  const terminal = ["succeeded", "failed", "interrupted"].includes(session.state);
-  const held = session.reservationState === "held";
-  const errorMarkup = error ? `<div class="alert alert-error mt-6 leading-normal" role="alert">${escapeHtml(error)}</div>` : "";
-  const statusMarkup = !held
-    ? `<div class="alert alert-info mt-6 leading-normal" role="status">This reservation is already released or no longer exists. Releasing it again is harmless.</div>`
-    : !terminal
-      ? `<div class="alert alert-warning mt-6 leading-normal" role="alert">Only a confirmed terminal OpenCode outcome can release this reservation. Active or uncertain execution remains held.</div>`
-      : `<div class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>This may release unpublished or unverified work.</strong> Atlas will not delete resources, cancel execution, change branches, change Pull requests, or bypass the next target's current eligibility checks.</div></div>`;
-
   return renderShell({
     title: `Release reservation · ${session.atlasId}`,
     active: "sessions",
@@ -1802,16 +1801,48 @@ export const renderReservationReleasePage = ({
       <p class="mt-6 font-mono text-sm text-muted">${escapeHtml(repository.fullName)}</p>
       <h1 id="page-title" class="mt-3 break-words text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Release stack reservation</h1>
       <p class="mt-4 max-w-prose leading-relaxed text-muted">Session ${escapeHtml(session.atlasId)} · ${escapeHtml(sessionStateLabel(session.state))} · ${escapeHtml(sessionTargetLabel(session))}</p>
-      ${errorMarkup}${statusMarkup}
+      ${renderReservationReleaseForm({
+        action: `/sessions/${encodeURIComponent(session.atlasId)}/reservation/release`,
+        csrfToken,
+        session,
+        error,
+      })}
        ${publicationMarkup(session, pullRequestsRefresh)}
-       ${held && terminal ? `<form class="mt-8 flex flex-wrap items-center gap-4" action="/sessions/${encodeURIComponent(session.atlasId)}/reservation/release" method="post" hx-post="/sessions/${encodeURIComponent(session.atlasId)}/reservation/release" hx-disabled-elt="button[type='submit']">
-         <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
-         <p id="release-form-status" data-form-status class="sr-only" role="status" aria-live="polite"></p>
-         <button class="btn btn-error min-h-11 border border-control-border outline-brand-readable" type="submit" aria-describedby="release-form-status">Release reservation</button>
-        <span class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Releasing reservation…</span>
-      </form>` : ""}
     </section>`,
   });
+};
+
+export const renderReservationReleaseForm = ({
+  action,
+  csrfToken,
+  session,
+  error,
+}: {
+  action: string;
+  csrfToken: string;
+  session: Session;
+  error?: string;
+}) => {
+  const terminal = ["succeeded", "failed", "interrupted"].includes(session.state);
+  const held = session.reservationState === "held";
+  const errorMarkup = error
+    ? `<div id="reservation-release-error" class="alert alert-error mt-6 leading-normal" role="alert" tabindex="-1" data-focus-on-swap>${escapeHtml(error)}</div>`
+    : "";
+  const statusMarkup = !held
+    ? `<div class="alert alert-info mt-6 leading-normal" role="status">This reservation is already released or no longer exists. Releasing it again is harmless.</div>`
+    : !terminal
+      ? `<div id="reservation-release-warning" class="alert alert-warning mt-6 leading-normal" role="alert">Only a confirmed terminal OpenCode outcome can release this reservation. Active or uncertain execution remains held.</div>`
+      : `<div id="reservation-release-warning" class="alert alert-warning mt-6 leading-normal" role="alert"><div><strong>This may release unpublished or unverified work.</strong> Atlas will not delete resources, cancel execution, change branches, change Pull requests, or bypass the next target's current eligibility checks.</div></div>`;
+
+  return `<div id="reservation-release-action">
+    ${errorMarkup}${statusMarkup}
+    ${held && terminal ? `<form class="mt-8 flex flex-wrap items-center gap-4" action="${escapeHtml(action)}" method="post" hx-post="${escapeHtml(action)}" hx-target="#reservation-release-action" hx-swap="outerHTML" hx-indicator="#reservation-release-progress" hx-disabled-elt="button[type='submit']"${error ? ' aria-describedby="reservation-release-error reservation-release-warning"' : ' aria-describedby="reservation-release-warning"'}>
+      <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
+      <p id="release-form-status" data-form-status class="sr-only" role="status" aria-live="polite"></p>
+      <button class="btn btn-error min-h-11 border border-control-border outline-brand-readable" type="submit" aria-describedby="release-form-status">Release reservation</button>
+      <span id="reservation-release-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Releasing reservation…</span>
+    </form>` : ""}
+  </div>`;
 };
 
 export const renderSpecUnavailablePage = ({
