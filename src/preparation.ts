@@ -17,6 +17,7 @@ import type {
   Session,
   SessionTarget,
 } from "./persistence.ts";
+import { readRecoveryStatus } from "./recovery-status.ts";
 
 const DEFAULT_SESSION_ROOT = "/var/lib/atlas/sessions";
 const DEFAULT_CAPACITY = 1;
@@ -265,6 +266,15 @@ export const createPreparationService = (options: PreparationOptions) => {
       const availableBytes = Number(filesystem.bavail) * Number(filesystem.bsize);
       if (!hasRequiredFreeSpace(availableBytes, minFreeBytes)) {
         throw new StorageError("Waiting for Session storage free space to recover.");
+      }
+      if (process.env.ATLAS_RECOVERY_STATUS_PATH) {
+        const status = readRecoveryStatus(process.env.ATLAS_RECOVERY_STATUS_PATH);
+        if (status.space.state === "unknown") {
+          throw new StorageError("Waiting for a current storage safety check before preparation.");
+        }
+        if (status.space.state === "paused") {
+          throw new StorageError("Waiting for shared Btrfs pool or metadata pressure to recover.");
+        }
       }
     } catch (error) {
       if (error instanceof StorageError) throw error;
@@ -803,6 +813,14 @@ export const createPreparationService = (options: PreparationOptions) => {
     const preparing = options.persistence.listPreparingSessions();
     const queued = options.persistence.listQueuedSessions();
     if (preparing.length === 0 && queued.length === 0) return;
+
+    if (process.env.ATLAS_ADMISSION_PAUSED === "1") {
+      const reason = "Waiting for the operator to resume preparation after maintenance.";
+      const unresolved = preparing.find((session) => session.preparationCheckpoint !== "prepared" && session.preparationCheckpoint !== "start_unconfirmed");
+      if (unresolved) pauseHeld(unresolved, reason);
+      else if (queued[0]) setReason(queued[0], reason);
+      return;
+    }
 
     const storageReason = storageIssue();
     if (storageReason) {

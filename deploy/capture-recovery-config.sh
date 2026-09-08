@@ -49,6 +49,7 @@ fi
 
 config_root=${ATLAS_RECOVERY_CONFIG_SOURCE:-/etc/atlas}
 unit_root=${ATLAS_RECOVERY_UNIT_SOURCE:-/etc/systemd/system}
+journal_config=${ATLAS_RECOVERY_JOURNAL_CONFIG:-/etc/systemd/journald@atlas.conf}
 release_root=${ATLAS_RECOVERY_RELEASE_ROOT:-/opt/atlas/current}
 route_record=${ATLAS_RECOVERY_ROUTE_RECORD:-}
 firewall_record=${ATLAS_RECOVERY_FIREWALL_RECORD:-}
@@ -63,11 +64,12 @@ private_directory "$release_dir"
 }
 
 config_files=(atlas.env github.env github-app.pem supplier.key)
-unit_files=(atlas.service opencode.service)
+unit_files=(atlas.service opencode.service atlas-snapshot.service atlas-snapshot.timer atlas-space-check.service atlas-space-check.timer)
 for name in "${config_files[@]}"; do regular_file "$config_root/$name"; done
 for name in "${unit_files[@]}"; do regular_file "$unit_root/$name"; done
 regular_file "$route_record"
 regular_file "$firewall_record"
+regular_file "$journal_config"
 regular_file "$release_dir/RELEASE_COMMIT"
 regular_file "$release_dir/deploy/pins.env"
 
@@ -86,7 +88,7 @@ staging=$(mktemp -d "$recovery_root/.capture.XXXXXX")
 cleanup() { rm -rf -- "$staging"; }
 trap cleanup EXIT
 chmod 700 "$staging"
-mkdir -p "$staging/etc-atlas" "$staging/units" "$staging/release" "$staging/routing" "$staging/firewall" "$staging/checksums"
+mkdir -p "$staging/etc-atlas" "$staging/units" "$staging/journald" "$staging/release" "$staging/routing" "$staging/firewall" "$staging/checksums"
 
 copy_private() {
   install -m 0400 -- "$1" "$2"
@@ -94,6 +96,7 @@ copy_private() {
 
 for name in "${config_files[@]}"; do copy_private "$config_root/$name" "$staging/etc-atlas/$name"; done
 for name in "${unit_files[@]}"; do copy_private "$unit_root/$name" "$staging/units/$name"; done
+copy_private "$journal_config" "$staging/journald/atlas.conf"
 copy_private "$release_dir/RELEASE_COMMIT" "$staging/release/RELEASE_COMMIT"
 copy_private "$release_dir/deploy/pins.env" "$staging/release/pins.env"
 copy_private "$route_record" "$staging/routing/record"
@@ -106,7 +109,7 @@ printf 'captured_at=%s\nrelease=%s\ncommit=%s\n' \
   "$(cat "$release_dir/RELEASE_COMMIT")" > "$staging/checksums/metadata"
 (
   cd "$staging"
-  find etc-atlas units release routing firewall -type f -print0 | sort -z | xargs -0 sha256sum > checksums/files.sha256
+  find etc-atlas units journald release routing firewall -type f -print0 | sort -z | xargs -0 sha256sum > checksums/files.sha256
 )
 find "$staging" -type d -exec chmod 700 {} +
 find "$staging" -type f -exec chmod 400 {} +
