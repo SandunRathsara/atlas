@@ -96,7 +96,7 @@ export type GitHubClient = {
 export type GitHubClientOptions = {
   organization: string;
   installationId: string;
-  getToken: () => string | undefined;
+  getToken: () => string | undefined | Promise<string | undefined>;
   baseUrl?: string;
   apiVersion?: string;
   fetcher?: typeof fetch;
@@ -303,7 +303,7 @@ export const createGitHubClient = (options: GitHubClientOptions): GitHubClient =
   let rateLimitBlockedUntil = 0;
 
   const request = async (pathOrUrl: string, init: Pick<RequestInit, "method" | "body"> = {}) => {
-    const token = options.getToken();
+    const token = await options.getToken();
     if (!token) {
       throw new GitHubError("GitHub App credentials are not configured", { kind: "configuration" });
     }

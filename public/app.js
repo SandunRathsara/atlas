@@ -123,15 +123,14 @@
       badge.textContent = state === "fresh" ? "Fresh" : state === "auth" ? "Sign-in expired" : state === "stale" ? "Stale" : "Partial";
       badge.className = `badge ${state === "fresh" ? "badge-success" : "badge-warning"}`;
     }
-    if (state === "fresh") {
-      root.querySelector("[data-viewer-connection-message]")?.remove();
-      return;
-    }
     const status = root.querySelector("[data-viewer-connection-message]");
     if (status) {
-      status.textContent = reason || (state === "auth" ? "Your sign-in expired. Sign in again before refreshing this Session view." : "Live Session data is stale; visible content is retained while Atlas reconciles.");
-      status.className = "alert alert-warning mt-6 leading-normal";
-      status.setAttribute("role", "status");
+      const text = state === "fresh" ? "" : reason || (state === "auth" ? "Your sign-in expired. Sign in again before refreshing this Session view." : "Live Session data is stale; visible content is retained while Atlas reconciles.");
+      if (status.dataset.viewerState !== state || status.textContent !== text) {
+        status.dataset.viewerState = state;
+        status.textContent = text;
+      }
+      status.className = state === "fresh" ? "sr-only" : "alert alert-warning mt-6 leading-normal";
     } else {
       const notice = document.createElement("div");
       notice.dataset.viewerConnectionMessage = "true";
@@ -143,6 +142,9 @@
   };
 
   const replaceViewerMarkup = (root, replacement) => {
+    const status = root.querySelector("[data-viewer-connection-message]");
+    const replacementStatus = replacement.querySelector("[data-viewer-connection-message]");
+    if (status && replacementStatus) replacementStatus.replaceWith(status);
     [...root.attributes].forEach((attribute) => root.removeAttribute(attribute.name));
     [...replacement.attributes].forEach((attribute) => root.setAttribute(attribute.name, attribute.value));
     root.replaceChildren(...[...replacement.childNodes]);

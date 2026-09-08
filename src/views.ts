@@ -91,7 +91,7 @@ export const renderLoginForm = ({
     ${pendingMarkup}
     <div>
       <label class="label mb-2 block p-0" for="shared-token">Shared access credential</label>
-      <input id="shared-token" class="input input-bordered min-h-11 w-full border-control-border bg-base-100 text-base-content" name="token" type="password" autocomplete="current-password" required${errorAttribute}>
+      <input id="shared-token" class="input input-bordered min-h-11 w-full border-control-border bg-base-100 text-base text-base-content" name="token" type="password" autocomplete="current-password" required${errorAttribute}>
       <p class="mt-2 text-sm leading-normal text-muted">Use the credential provided by your Atlas operator.</p>
     </div>
     ${errorMarkup}
@@ -1233,7 +1233,7 @@ export const renderStartSessionForm = ({
     ${targetOptions ?? `<input type="hidden" name="target" value="${escapeHtml(target)}">`}
     <div>
       <label class="label mb-2 block p-0" for="initial-prompt">Initial prompt</label>
-      <textarea id="initial-prompt" class="textarea textarea-bordered min-h-48 w-full border-control-border bg-base-100 text-base-content" name="prompt" rows="9" maxlength="20000" required${errorAttributes}>${escapeHtml(prompt)}</textarea>
+      <textarea id="initial-prompt" class="textarea textarea-bordered min-h-48 w-full border-control-border bg-base-100 text-base text-base-content" name="prompt" rows="9" maxlength="20000" required${errorAttributes}>${escapeHtml(prompt)}</textarea>
       <p class="mt-2 text-sm leading-normal text-muted">Tell the Agent what to implement. Atlas preserves this text unchanged. Maximum 20,000 characters.</p>
     </div>
     ${errorMarkup}
@@ -1622,7 +1622,7 @@ const renderViewerShells = (node: ViewerSessionNode, rootId: string, endpoint: s
 
 const renderViewerNode = (node: ViewerSessionNode, selectedId: string, rootId: string, endpoint: string, limit: number, requestUrl?: string) => {
   const childLinks = node.children.length > 0
-    ? `<section class="mt-8" aria-labelledby="descendants-${escapeHtml(node.info.id)}"><h3 id="descendants-${escapeHtml(node.info.id)}" class="text-lg font-semibold">Descendant Sessions</h3><p class="mt-2 text-sm leading-normal text-muted">Relationships are verified through OpenCode Session records. A child is called an active subagent only when active execution and its agent mode both support that label.</p><ul class="mt-4 grid gap-3">${node.children.map((child) => `<li class="rounded-box bg-base-100 p-4"><div class="flex flex-wrap items-start justify-between gap-3"><div class="min-w-0"><p class="font-mono break-all text-sm text-muted">${escapeHtml(child.info.id)}</p><p class="mt-2 break-words font-medium">${escapeHtml(child.info.title ?? "Untitled child Session")}</p></div><span class="flex flex-wrap gap-2"><span class="badge ${child.activeSubagent ? "badge-info" : child.active ? "badge-warning" : "badge-neutral"}">${child.activeSubagent ? "Active subagent" : child.active ? "Active child Session" : "Child Session"}</span>${child.agentMode ? `<span class="badge badge-neutral">agent: ${escapeHtml(child.agentMode)}</span>` : ""}</span></div><a class="btn btn-ghost mt-4 min-h-11 border border-control-border" href="${escapeHtml(`${endpoint}?child=${encodeURIComponent(child.info.id)}&limit=${limit}`)}"${child.info.id === selectedId ? ' aria-current="page"' : ""}>Open child conversation</a></li>`).join("")}</ul></section>`
+    ? `<section class="mt-8" aria-labelledby="descendants-${escapeHtml(node.info.id)}"><h3 id="descendants-${escapeHtml(node.info.id)}" class="text-lg font-semibold">Descendant Sessions</h3><p class="mt-2 text-sm leading-normal text-muted">Relationships are verified through OpenCode Session records. A child is called an active subagent only when active execution and its agent mode both support that label.</p><ul class="mt-4 grid gap-3">${node.children.map((child) => `<li class="rounded-box bg-base-100 p-4"><div class="flex flex-wrap items-start justify-between gap-3"><div class="min-w-0"><p class="font-mono break-all text-sm text-muted">${escapeHtml(child.info.id)}</p><p class="mt-2 break-words font-medium">${escapeHtml(child.info.title ?? "Untitled child Session")}</p></div><span class="flex flex-wrap gap-2"><span class="badge ${child.activeSubagent ? "badge-info" : child.active ? "badge-warning" : "badge-neutral"}">${child.activeSubagent ? "Active subagent" : child.active ? "Active child Session" : "Child Session"}</span>${child.agentMode ? `<span class="badge badge-neutral">agent: ${escapeHtml(child.agentMode)}</span>` : ""}</span></div><a class="btn btn-ghost mt-4 min-h-11 border border-control-border" href="${escapeHtml(`${endpoint}?child=${encodeURIComponent(child.info.id)}&limit=${limit}`)}"${child.info.id === selectedId ? ' aria-current="page"' : ""}>Open child Session</a></li>`).join("")}</ul></section>`
     : "";
   const messagePage = node.messagesLoaded
     ? node.messages.length > 0
@@ -1632,7 +1632,7 @@ const renderViewerNode = (node: ViewerSessionNode, selectedId: string, rootId: s
   const next = node.nextMessageCursor
     ? `<a class="btn btn-ghost mt-5 min-h-11 border border-control-border" href="${escapeHtml(`${endpoint}?${new URLSearchParams({ ...(node.info.id !== rootId ? { child: node.info.id } : {}), cursor: node.nextMessageCursor, limit: String(limit) }).toString()}`)}">Load older messages</a>`
     : "";
-  return `${childLinks}${renderViewerPending(node)}${renderViewerShells(node, rootId, endpoint, limit, requestUrl)}<section class="mt-10" aria-labelledby="timeline-${escapeHtml(node.info.id)}"><div class="flex flex-wrap items-start justify-between gap-4"><div><h3 id="timeline-${escapeHtml(node.info.id)}" class="text-lg font-semibold">${node.info.id === selectedId ? "Conversation timeline" : "Conversation"}</h3><p class="mt-2 text-sm text-muted">${node.messagesLoaded ? `${node.messages.length} projected message${node.messages.length === 1 ? "" : "s"}` : "Message projection unavailable"} · last OpenCode update ${escapeHtml(viewerTimestamp(node.info.time.updated))}</p></div><span class="badge ${viewerStatusClass(node.semanticState)}">${viewerStatusLabel(node.semanticState)}</span></div>${messagePage}${next}</section>`;
+  return `${childLinks}${renderViewerPending(node)}${renderViewerShells(node, rootId, endpoint, limit, requestUrl)}<section class="mt-10" aria-labelledby="timeline-${escapeHtml(node.info.id)}"><div class="flex flex-wrap items-start justify-between gap-4"><div><h3 id="timeline-${escapeHtml(node.info.id)}" class="text-lg font-semibold">${node.info.id === selectedId ? "Message timeline" : "Session messages"}</h3><p class="mt-2 text-sm text-muted">${node.messagesLoaded ? `${node.messages.length} projected message${node.messages.length === 1 ? "" : "s"}` : "Message projection unavailable"} · last OpenCode update ${escapeHtml(viewerTimestamp(node.info.time.updated))}</p></div><span class="badge ${viewerStatusClass(node.semanticState)}">${viewerStatusLabel(node.semanticState)}</span></div>${messagePage}${next}</section>`;
 };
 
 export const renderSessionViewerFragment = ({
@@ -1653,16 +1653,16 @@ export const renderSessionViewerFragment = ({
   const limit = requestedLimit ?? DEFAULT_VIEWER_MESSAGE_LIMIT;
   const freshness = viewer?.freshness ?? "partial";
   const status = freshness === "stale"
-    ? `<div class="alert alert-warning mt-6 leading-normal" role="status" data-viewer-status data-viewer-stale><strong>Stale.</strong> ${escapeHtml(viewer?.staleReason ?? "OpenCode transport or reconciliation is unavailable. Visible content is retained.")}</div>`
+    ? `<div class="alert alert-warning mt-6 leading-normal" role="status" aria-live="polite" aria-atomic="true" data-viewer-connection-message data-viewer-state="stale" data-viewer-status data-viewer-stale><strong>Stale.</strong> ${escapeHtml(viewer?.staleReason ?? "OpenCode transport or reconciliation is unavailable. Visible content is retained.")}</div>`
     : freshness === "partial"
-      ? `<div class="alert alert-warning mt-6 leading-normal" role="status" data-viewer-status><strong>Partial Session view.</strong> Missing or unavailable projections are shown as partial data, not as an empty conversation.</div>`
-      : `<div class="alert alert-success mt-6 leading-normal" role="status" data-viewer-status>Canonical OpenCode Session projections are fresh. Live updates remain view-only.</div>`;
+      ? `<div class="alert alert-warning mt-6 leading-normal" role="status" aria-live="polite" aria-atomic="true" data-viewer-connection-message data-viewer-state="partial" data-viewer-status><strong>Partial Session view.</strong> Missing or unavailable projections are shown as partial data, not as empty Session history.</div>`
+      : `<div class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-viewer-connection-message data-viewer-state="fresh" data-viewer-status></div>`;
   const partial = viewer?.partialReasons && viewer.partialReasons.length > 0
     ? `<details class="mt-4 rounded-box bg-base-100 p-4" data-viewer-notes><summary class="cursor-pointer font-medium">Projection notes</summary><ul class="mt-3 grid gap-2 text-sm leading-normal text-muted">${viewer.partialReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></details>`
     : "";
   const content = viewer?.available && viewer.selected && viewer.root
     ? renderViewerNode(viewer.selected, viewer.selected.info.id, viewer.root.info.id, endpoint, limit, requestUrl)
-    : `<div class="mt-8 rounded-box bg-base-100 p-5"><p class="font-medium">OpenCode execution history unavailable</p><p class="mt-2 leading-normal text-muted">Atlas retains the Session and does not infer an empty or completed conversation from a missing upstream resource.</p></div>`;
+    : `<div class="mt-8 rounded-box bg-base-100 p-5"><p class="font-medium">OpenCode execution history unavailable</p><p class="mt-2 leading-normal text-muted">Atlas retains the Session and does not infer empty or completed Session history from a missing upstream resource.</p></div>`;
   return `<section id="session-viewer" class="mt-10 border-t border-base-300 pt-8" data-session-viewer data-viewer-freshness="${freshness}" data-session-viewer-url="${escapeHtml(requestUrl ?? endpoint)}" data-session-events-url="${escapeHtml(eventsEndpoint)}" data-session-id="${escapeHtml(session.atlasId)}" aria-labelledby="session-viewer-title">
     <div class="flex flex-wrap items-start justify-between gap-4"><div><p class="text-sm font-medium uppercase tracking-[0.18em] text-brand-readable">Terminal desk</p><h2 id="session-viewer-title" class="mt-3 text-xl font-semibold">Live Session view</h2><p class="mt-2 max-w-prose leading-relaxed text-muted">Canonical messages, typed tool activity, pending records, and verified descendants. Atlas provides no execution controls here.</p></div><span class="badge ${freshness === "fresh" ? "badge-success" : "badge-warning"}" data-viewer-connection>${freshness === "fresh" ? "Fresh" : freshness === "stale" ? "Stale" : "Partial"}</span></div>
     ${status}${partial}

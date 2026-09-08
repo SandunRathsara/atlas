@@ -94,7 +94,7 @@ export type AppOptions = {
   githubApiUrl?: string;
   githubInstallationId?: string;
   githubOrganization?: string;
-  githubToken?: () => string | undefined;
+  githubToken?: () => string | undefined | Promise<string | undefined>;
   now?: () => number;
   sessionRoot?: string;
   globalCapacity?: number;

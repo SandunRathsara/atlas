@@ -34,18 +34,22 @@ const credentials = createCredentialBoundary({
   keyPath: Bun.env.ATLAS_SUPPLIER_KEY_PATH,
   apiUrl: Bun.env.ATLAS_GITHUB_API_URL,
 });
-let githubToken = Bun.env.ATLAS_GITHUB_INSTALLATION_TOKEN;
-try {
-  githubToken = await credentials.installationToken();
-} catch {
-  // Browsing can retain its existing configured token path; preparation never falls back to it.
-}
+await credentials.start();
+const fallbackGitHubToken = Bun.env.ATLAS_GITHUB_INSTALLATION_TOKEN;
+const githubToken = async () => {
+  try {
+    return await credentials.installationToken();
+  } catch {
+    // Browsing can retain its existing configured token path; preparation never falls back to it.
+    return fallbackGitHubToken;
+  }
+};
 
 const persistence = createPersistence({ path: Bun.env.ATLAS_DATABASE_PATH ?? "./data/atlas.sqlite" });
 const github = createGitHubClient({
   organization,
   installationId,
-  getToken: () => githubToken,
+  getToken: githubToken,
   baseUrl: Bun.env.ATLAS_GITHUB_API_URL,
 });
 const refreshCoordinator = createRefreshCoordinator({
@@ -62,7 +66,7 @@ const app = createApp({
   githubInstallationId: installationId,
   githubOrganization: organization,
   githubApiUrl: Bun.env.ATLAS_GITHUB_API_URL,
-  githubToken: () => githubToken,
+  githubToken,
   sessionRoot: Bun.env.ATLAS_SESSION_ROOT,
   globalCapacity: Bun.env.ATLAS_GLOBAL_CAPACITY ? Number(Bun.env.ATLAS_GLOBAL_CAPACITY) : undefined,
   credentialsPath: githubEnvPath,
