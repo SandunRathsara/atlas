@@ -552,6 +552,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   const processSession = async (initial: Session, activeClient: OpenCodeClient) => {
     let session = options.persistence.getSession(initial.atlasId) ?? initial;
     if (session.preparationCheckpoint !== "prepared" && session.handoffCheckpoint === "not_started") return;
+    if (process.env.ATLAS_ADMISSION_PAUSED === "1" && ["not_started", "intent_saved", "events_consuming"].includes(session.handoffCheckpoint)) return;
 
     if (session.handoffCheckpoint === "not_started") {
       session = saveIntent(session) ?? session;
@@ -633,6 +634,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     }
 
     if (session.handoffCheckpoint === "associated") {
+      if (process.env.ATLAS_ADMISSION_PAUSED === "1") return;
       session = setHandoffCheckpoint(
         session,
         "prompt_sent",

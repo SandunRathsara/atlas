@@ -2,6 +2,7 @@ import type { GitHubRepository } from "./github.ts";
 import type { PrStack, PullRequest, RefreshState, Repository, Session, SessionFilter, SessionState, Spec, TargetKind } from "./persistence.ts";
 import { DEFAULT_VIEWER_MESSAGE_LIMIT } from "./session-viewer.ts";
 import type { SessionViewerProjection, ViewerSessionNode } from "./session-viewer.ts";
+import { readRecoveryStatus, type RecoveryStatus } from "./recovery-status.ts";
 
 const escapeHtml = (value: string) =>
   value.replace(
@@ -136,6 +137,28 @@ const renderLogoutForm = (csrfToken: string) => `<form id="logout-form" class="f
   <span id="logout-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Signing out...</span>
 </form>`;
 
+const renderRecoveryNotices = (status: RecoveryStatus) => {
+  const backup = status.backup.state === "success"
+    ? `<div class="alert alert-success leading-normal" role="status"><div><strong>Local recovery snapshot succeeded.</strong> Last success: ${escapeHtml(formatTime(status.backup.lastSuccessAt ?? null))}. This is a same-disk recovery point, not an off-site backup.</div></div>`
+    : status.backup.state === "failure"
+      ? `<div class="alert alert-warning leading-normal" role="alert"><div><strong>The latest local backup failed.</strong> Last success: ${escapeHtml(formatTime(status.backup.lastSuccessAt ?? null))}. Backup failure warns but does not by itself pause Session preparation.</div></div>`
+      : `<div class="alert alert-warning leading-normal" role="status"><div><strong>Backup status is unknown.</strong> No current, valid local recovery status is available.</div></div>`;
+  const free = status.space.availableBytes === undefined
+    ? ""
+    : ` ${escapeHtml((status.space.availableBytes / (1024 ** 3)).toFixed(1))} GiB is available.`;
+  const metadata = status.space.metadataPercent === undefined
+    ? ""
+    : ` Btrfs metadata is ${escapeHtml(String(status.space.metadataPercent))}% used.`;
+  const space = status.space.state === "warning"
+    ? `<div class="alert alert-warning leading-normal" role="alert"><div><strong>Storage is under pressure.</strong>${free}${metadata} New preparation remains available, but running Agents and changed snapshot blocks can still exhaust storage.</div></div>`
+    : status.space.state === "paused"
+      ? `<div class="alert alert-error leading-normal" role="alert"><div><strong>New Session preparation is paused by storage pressure.</strong>${free}${metadata} Running Agents are not interrupted or deleted.</div></div>`
+      : status.space.state === "unknown"
+        ? `<div class="alert alert-warning leading-normal" role="status"><div><strong>Storage safety status is unknown.</strong> New preparation remains paused on deployments using the required status gate until a current check succeeds.</div></div>`
+        : "";
+  return `<section class="mb-6 grid gap-3" aria-label="Recovery and storage status">${backup}${space}</section>`;
+};
+
 type ActivePage = "repositories" | "new-repository" | "specs" | "spec" | "pull-requests" | "sessions";
 
 const repositoryLink = (repository: Pick<Repository, "githubId">) => `/repositories/${encodeURIComponent(repository.githubId)}/specs`;
@@ -169,6 +192,7 @@ const renderShell = ({
   const specsActive = active === "specs" || active === "spec";
   const pullRequestsActive = active === "pull-requests";
   const sessionsActive = active === "sessions";
+  const recoveryNotices = renderRecoveryNotices(readRecoveryStatus());
   const mobileLinks = `<a class="block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${repositoriesActive ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="/repositories"${repositoriesActive ? ' aria-current="page"' : ""}>Repositories</a>
     ${repository ? `<a class="mt-1 block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${specsActive ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${repositoryLink(repository)}"${specsActive ? ' aria-current="page"' : ""}>Specs</a>
     <a class="mt-1 block min-h-11 rounded-field border-l-2 px-4 py-3 font-medium ${pullRequestsActive ? "border-brand-readable bg-primary/20 text-base-content" : "border-transparent text-muted"}" href="${pullRequestsLink(repository)}"${pullRequestsActive ? ' aria-current="page"' : ""}>Pull requests</a>
@@ -203,8 +227,9 @@ const renderShell = ({
         </nav>
       </aside>
        <main id="main-content" class="min-w-0" aria-labelledby="page-title"${historyDisabled ? ' hx-history="false"' : ""}>
-        <div id="global-status" class="sr-only" role="status" aria-atomic="true">Signed in to Atlas.</div>
-        ${content}
+         <div id="global-status" class="sr-only" role="status" aria-atomic="true">Signed in to Atlas.</div>
+         ${recoveryNotices}
+         ${content}
       </main>
     </div>`,
   );

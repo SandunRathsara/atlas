@@ -42,6 +42,7 @@ TimeoutStopSec=30s
 LogRateLimitIntervalSec=30s
 LogRateLimitBurst=1000
 SyslogIdentifier=opencode
+LogNamespace=atlas
 UMask=0077
 LimitNOFILE=65536
 

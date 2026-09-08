@@ -31,6 +31,7 @@ TimeoutStopSec=30s
 LogRateLimitIntervalSec=30s
 LogRateLimitBurst=1000
 SyslogIdentifier=atlas
+LogNamespace=atlas
 UMask=0077
 RuntimeDirectory=atlas
 RuntimeDirectoryMode=0700

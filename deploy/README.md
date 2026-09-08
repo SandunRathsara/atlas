@@ -59,10 +59,13 @@ The webhook app has no health, login, Session, event, or OpenCode routes.
 | `/var/lib/atlas/opencode-data/opencode/log` | OpenCode file logs; human-installed size/retention bound |
 | `/var/lib/atlas/opencode-state/opencode` | OpenCode state and service registration |
 | `/var/lib/atlas/opencode-config/opencode` | Copied OpenCode configuration/plugins |
+| `/var/lib/atlas/opencode-cache` | OpenCode cache kept inside the coherent snapshot scope |
 | `/var/lib/atlas/opencode-runtime` | Stable service working directory, never a Session clone |
 | `/var/lib/atlas/recovery-config/current` | Protected required configuration and rollback records |
+| `/var/lib/atlas/recovery-status` | Bounded atomic backup/space status read by Atlas |
 | `/etc/atlas` | `atlas.env`, `github.env`, App key, supplier key; restricted |
-| `/var/backups/atlas` | Same-disk recovery snapshots; not created by this slice |
+| `/var/backups/atlas` | Restricted same-disk read-only Atlas recovery snapshots |
+| `/var/lib/atlas-restore-rehearsals` | Isolated writable rehearsal targets; never a service path |
 | `/run/atlas` | systemd-created runtime socket directory |
 
 Do not create nested subvolumes or rely on symlinks to include external data.
@@ -99,8 +102,9 @@ These checks are not performed by `verify-assets.sh`.
 
 `capture-recovery-config.sh` is the least protected recovery-copy procedure.
 Run it as the operator after the required files and records exist. It copies
-only `atlas.env`, `github.env`, `github-app.pem`, `supplier.key`, both installed
-units, the selected release marker/pin manifest, an operator-recorded Tailscale
+only `atlas.env`, `github.env`, `github-app.pem`, `supplier.key`, all installed
+Atlas/OpenCode/recovery units, the selected release marker/pin manifest, the
+Atlas journal-namespace bound, an operator-recorded Tailscale
 route file, and an operator-recorded firewall file into
 `/var/lib/atlas/recovery-config/current`. It also records SHA-256 checksums for
 those files and the pinned binaries. It rejects missing, symlinked, or partial
@@ -112,18 +116,27 @@ deleting the failed copy. Do not put secret values in command arguments.
 10 GiB new-preparation pause threshold, plus allocated Btrfs metadata pressure.
 The default metadata warning/pause levels are 80%/90%. Exit `0` means all
 checks are healthy, `1` means warning, and `2` means unsafe/missing or below a
-pause threshold. Atlas already pauses new preparation below
-`ATLAS_MIN_FREE_BYTES`; the check makes the warning visible before activation.
-The two units rate-limit their journal event stream without changing global
-journal retention. `logrotate/atlas-opencode` bounds the OpenCode XDG file-log
-set to 100 MiB checks, 10 rotations, and 14 days; it uses `copytruncate` and
-never restarts OpenCode or deletes unrelated host logs. Verify the installed
-logrotate timer/config manually.
+pause threshold. Atlas pauses new preparation below `ATLAS_MIN_FREE_BYTES` and
+when the configured machine-readable space status is missing, stale, malformed,
+or reports metadata pause pressure. The check atomically updates that bounded
+status file; the shared UI reports backup and disk state without an admin
+control.
+All four units use the separate `atlas` journal namespace.
+`journald/atlas.conf` caps that persistent namespace at 256 MiB and 14 days
+without deleting unrelated host logs. `logrotate/atlas-opencode` separately
+bounds the OpenCode XDG file-log set to 100 MiB checks, 10 rotations, and 14
+days; it uses `copytruncate` and never restarts OpenCode or deletes unrelated
+host logs. Logs contain health/category summaries only: never prompts, file
+contents, auth headers, tokens, or keys. Verify both installed bounds manually.
 
-Snapshot timers, retention, backup-health, and scheduled restore policy are
-intentionally not included here; those belong to the #38 snapshot slice. This
-slice only preserves the configuration needed to reproduce/roll back the
-deployment and the #37 disk/log safety gates.
+`atlas-snapshot.timer` runs a daily catch-up read-only Btrfs snapshot of the
+complete shared subvolume. `atlas-snapshot.sh` keeps seven daily and four weekly
+points as a union and prunes only exact-name, exact-marker, read-only Atlas
+subvolumes. `atlas-space-check.timer` refreshes status every five minutes.
+`verify-sqlite-wal.sh` records the actual fixed embedded SQLite builds, and
+`restore-rehearsal.sh` validates a writable restore before scrubbing known
+runtime endpoints without starting a service. The exact conditional recovery,
+release, rollback, and rehearsal procedure is in [RECOVERY.md](RECOVERY.md).
 
 ## Human-only cutover order
 
@@ -163,6 +176,6 @@ The following is a handoff, not an instruction for an agent to execute:
    matrix before admitting work. Reopen a preserved Session without replaying
    a prompt. Re-check after a planned reboot only after the operator accepts
    the interruption window.
-8. Keep daily snapshots/restore rehearsal and retention closed until the #38
-   slice supplies and verifies them. A snapshot cannot undo GitHub effects;
-   schema rollback requires matching data and binaries.
+8. Follow `RECOVERY.md` to verify and enable daily snapshots, exercise isolated
+   restore, and record the complete release check. A snapshot cannot undo
+   GitHub effects; schema rollback requires matching data and binaries.
