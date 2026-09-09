@@ -793,6 +793,7 @@ export const createApp = (options: AppOptions) => {
   app.get("/repositories/new", async (c) => {
     const identity = c.get("auth");
     const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
+    const query = (c.req.query("q") ?? "").trim().slice(0, 200);
     let available: GitHubRepository[] = [];
     let error: string | undefined;
 
@@ -811,7 +812,7 @@ export const createApp = (options: AppOptions) => {
     }));
 
     setPrivateHtmlHeaders(c);
-    return c.html(renderAddRepositoryPage({ csrfToken, available: repositoryForms, error }));
+    return c.html(renderAddRepositoryPage({ csrfToken, available: repositoryForms, error, query }));
   });
 
   app.post("/repositories", async (c) => {

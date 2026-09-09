@@ -385,25 +385,61 @@ type AvailableRepository = {
   csrfToken: string;
 };
 
+export const repositoryMatchesQuery = (
+  repository: Pick<GitHubRepository, "name" | "fullName" | "description">,
+  query: string,
+) => {
+  const needle = query.trim().toLocaleLowerCase();
+  if (!needle) return true;
+  return [repository.name, repository.fullName, repository.description ?? ""].some((value) =>
+    value.toLocaleLowerCase().includes(needle),
+  );
+};
+
 export const renderAddRepositoryPage = ({
   csrfToken,
   available,
   error,
+  query = "",
 }: {
   csrfToken: string;
   available: AvailableRepository[];
   error?: string;
+  query?: string;
 }) => {
+  const filterQuery = query.trim();
+  const visible = filterQuery
+    ? available.filter(({ repository }) => repositoryMatchesQuery(repository, filterQuery))
+    : available;
   const errorMarkup = error
     ? `<div class="alert alert-warning mt-6 leading-normal" role="alert">${escapeHtml(error)}</div>`
     : "";
-  const list = available.length === 0 && !error
+  const filterForm = available.length > 0 || filterQuery
+    ? `<form class="mt-8 max-w-2xl" method="get" action="/repositories/new" role="search">
+        <label class="label mb-2 block p-0" for="repository-filter">Filter Repositories</label>
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <input id="repository-filter" class="input input-bordered min-h-11 w-full border-control-border bg-base-100 text-base text-base-content" name="q" type="search" value="${escapeHtml(filterQuery)}" maxlength="200" autocomplete="off">
+          <div class="flex flex-wrap gap-3">
+            <button class="btn min-h-11 border border-control-border" type="submit">Filter</button>
+            ${filterQuery ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="/repositories/new">Clear filter</a>` : ""}
+          </div>
+        </div>
+      </form>
+      ${filterQuery ? `<p class="mt-4 text-sm text-muted">Showing ${visible.length} of ${available.length} Repositories.</p>` : ""}`
+    : "";
+  const list = visible.length === 0 && !error && !filterQuery
     ? `<div class="mt-8 rounded-box bg-base-100 p-6">
         <p class="text-lg font-semibold">No Repositories available</p>
         <p class="mt-2 max-w-prose leading-relaxed text-muted">The configured GitHub App installation has no Repositories in the allowed organization, or none could be verified.</p>
       </div>`
-    : available.length > 0
-      ? `<ul class="mt-8 grid gap-4" aria-label="Repositories available to Atlas">${available.map(({ repository, enrolled, removedAt, csrfToken: repositoryCsrf }) => `
+    : visible.length === 0 && filterQuery
+      ? `<div class="mt-8 rounded-box bg-base-100 p-6">
+        <p class="text-lg font-semibold">No matching Repositories</p>
+        <p class="mt-2 max-w-prose leading-relaxed text-muted">No Repositories match this filter. Clear it to see all available Repositories.</p>
+        <a class="btn btn-ghost mt-6 min-h-11 border border-control-border" href="/repositories/new">Clear filter</a>
+      </div>`
+    : visible.length > 0
+      ? `<ul class="mt-8 grid gap-4" aria-label="Repositories available to Atlas">${visible.map(({ repository, enrolled, removedAt, csrfToken: repositoryCsrf }) => `
           <li class="rounded-box bg-base-100 p-3 sm:p-6">
             <div class="flex flex-wrap items-start justify-between gap-4">
               <div class="min-w-0">
@@ -435,6 +471,7 @@ export const renderAddRepositoryPage = ({
       <h1 id="page-title" class="mt-4 text-2xl font-semibold leading-tight" tabindex="-1" data-page-heading>Add a Repository</h1>
       <p class="mt-4 max-w-prose leading-relaxed text-muted">Select a Repository that is available to the configured App installation. Atlas will save it before attempting its first Specs synchronization.</p>
       ${errorMarkup}
+      ${filterForm}
       ${list}
       <a class="btn btn-ghost mt-8 min-h-11 border border-control-border" href="/repositories">Back to Repositories</a>
     </section>`,
