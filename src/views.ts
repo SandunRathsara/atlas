@@ -417,15 +417,19 @@ export const renderAddRepositoryPage = ({
   const filterForm = available.length > 0 || filterQuery
     ? `<form class="mt-8 max-w-2xl" method="get" action="/repositories/new" role="search">
         <label class="label mb-2 block p-0" for="repository-filter">Filter Repositories</label>
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <input id="repository-filter" class="input input-bordered min-h-11 w-full border-control-border bg-base-100 text-base text-base-content" name="q" type="search" value="${escapeHtml(filterQuery)}" maxlength="200" autocomplete="off">
-          <div class="flex flex-wrap gap-3">
-            <button class="btn min-h-11 border border-control-border" type="submit">Filter</button>
-            ${filterQuery ? `<a class="btn btn-ghost min-h-11 border border-control-border" href="/repositories/new">Clear filter</a>` : ""}
+        <div class="join w-full">
+          <div class="min-w-0 flex-1">
+            <div class="input input-bordered join-item min-h-11 w-full border-control-border bg-base-100 text-base text-base-content">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5 shrink-0 text-muted" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+              </svg>
+              <input id="repository-filter" class="min-h-11 grow" name="q" type="search" value="${escapeHtml(filterQuery)}" maxlength="200" autocomplete="off">
+            </div>
           </div>
+          <button class="btn join-item min-h-11 border border-control-border" type="submit">Filter</button>
         </div>
       </form>
-      ${filterQuery ? `<p class="mt-4 text-sm text-muted">Showing ${visible.length} of ${available.length} Repositories.</p>` : ""}`
+      ${filterQuery ? `<p class="mt-3 text-sm text-muted">Showing <span class="tabular-nums">${visible.length}</span> of <span class="tabular-nums">${available.length}</span> Repositories. <a class="text-brand-readable underline decoration-brand-readable/50 underline-offset-4" href="/repositories/new">Clear filter</a></p>` : ""}`
     : "";
   const list = visible.length === 0 && !error && !filterQuery
     ? `<div class="mt-8 rounded-box bg-base-100 p-6">
