@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+release_root=${ATLAS_RELEASE_ROOT:-/opt/atlas/current}
+case "$release_root" in
+  /*) ;;
+  *) echo "Atlas Git wrapper requires an absolute release path" >&2; exit 1 ;;
+esac
+
+pins="$release_root/deploy/pins.env"
+test -f "$pins" || { echo "Atlas Git pin manifest is unavailable" >&2; exit 1; }
+# shellcheck disable=SC1090
+. "$pins"
+real_git=$ATLAS_GIT_BINARY
+case "$real_git" in
+  /*) ;;
+  *) echo "Atlas Git wrapper requires an absolute binary path" >&2; exit 1 ;;
+esac
+test -x "$real_git" || { echo "Pinned Git binary is unavailable" >&2; exit 1; }
+
+actual=$("$real_git" --version)
+expected="git version $ATLAS_GIT_VERSION"
+test "$actual" = "$expected" || {
+  echo "Pinned Git binary does not match $ATLAS_GIT_VERSION" >&2
+  exit 1
+}
+exec "$real_git" "$@"

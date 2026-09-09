@@ -1,0 +1,50 @@
+[Unit]
+Description=OpenCode V2 private service
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/opt/atlas/current /opt/atlas/tools /var/lib/atlas /etc/atlas /home/omega
+StartLimitIntervalSec=5min
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=omega
+Group=omega
+WorkingDirectory=/var/lib/atlas/opencode-runtime
+Environment=HOME=/home/omega
+Environment=PATH=/opt/atlas/current/deploy/bin:/opt/atlas/tools/bun/1.3.14/bin:/opt/atlas/tools/gh/2.100.0/bin:/usr/local/bin:/usr/bin:/bin
+Environment=ATLAS_RELEASE_ROOT=/opt/atlas/current
+Environment=ATLAS_BUN_BINARY=/opt/atlas/tools/bun/1.3.14/bin/bun
+Environment=ATLAS_REAL_GH=/opt/atlas/tools/gh/2.100.0/bin/gh
+Environment=ATLAS_GIT_BINARY=/opt/atlas/current/deploy/bin/git
+Environment=ATLAS_SUPPLIER_SOCKET=/run/atlas/supplier.sock
+Environment=ATLAS_SUPPLIER_KEY_PATH=/etc/atlas/supplier.key
+Environment=XDG_CONFIG_HOME=/var/lib/atlas/opencode-config
+Environment=XDG_DATA_HOME=/var/lib/atlas/opencode-data
+Environment=XDG_STATE_HOME=/var/lib/atlas/opencode-state
+Environment=XDG_CACHE_HOME=/var/lib/atlas/opencode-cache
+Environment=OPENCODE_SERVICE_FILE=/var/lib/atlas/opencode-state/opencode/service.json
+Environment=GIT_CONFIG_NOSYSTEM=1
+Environment=GIT_CONFIG_GLOBAL=/dev/null
+Environment=GIT_TERMINAL_PROMPT=0
+Environment=GIT_ASKPASS=/bin/false
+Environment=SSH_ASKPASS=/bin/false
+Environment=GIT_SSH_COMMAND=/bin/false
+Environment=GH_PROMPT_DISABLED=1
+ExecStartPre=/opt/atlas/current/deploy/check-opencode.sh
+ExecStartPre=/usr/bin/test -x /opt/atlas/tools/git/2.55.0/bin/git
+ExecStartPre=/opt/atlas/current/deploy/bin/git --version
+ExecStartPre=/usr/bin/test -d /var/lib/atlas/opencode-runtime
+ExecStart=/opt/atlas/tools/opencode/0.0.0-beta-19135/bin/opencode2 --log-level WARN serve --service --hostname 127.0.0.1
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=1000
+SyslogIdentifier=opencode
+LogNamespace=atlas
+UMask=0077
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

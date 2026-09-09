@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Atlas local recovery snapshot with catch-up
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+AccuracySec=1s
+Unit=atlas-snapshot.service
+
+[Install]
+WantedBy=timers.target
