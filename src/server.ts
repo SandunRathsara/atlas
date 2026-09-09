@@ -91,16 +91,46 @@ const webhookApp = createWebhookApp({
 
 refreshCoordinator.start();
 
-Bun.serve({
+const uiServer = Bun.serve({
   fetch: app.fetch,
   hostname: "127.0.0.1",
   port: configuredPort,
 });
 
-Bun.serve({
+const webhookServer = Bun.serve({
   fetch: webhookApp.fetch,
   hostname: "127.0.0.1",
   port: webhookPort,
 });
 
 console.log(`Atlas listening on http://127.0.0.1:${configuredPort}; webhook listener on http://127.0.0.1:${webhookPort}`);
+
+let stopping = false;
+const shutdown = async (signal: NodeJS.Signals) => {
+  if (stopping) {
+    process.exit(1);
+    return;
+  }
+  stopping = true;
+  console.log(`Atlas stopping (${signal})`);
+  refreshCoordinator.stop();
+  credentials.close();
+  try {
+    await Promise.all([uiServer.stop(true), webhookServer.stop(true)]);
+  } catch {
+    // Ports are released on process exit even if stop() rejects.
+  }
+  try {
+    persistence.close();
+  } catch {
+    // SQLite close is best-effort during shutdown.
+  }
+  process.exit(signal === "SIGINT" ? 130 : 143);
+};
+
+process.on("SIGINT", () => {
+  void shutdown("SIGINT");
+});
+process.on("SIGTERM", () => {
+  void shutdown("SIGTERM");
+});

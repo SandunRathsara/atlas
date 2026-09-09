@@ -450,9 +450,43 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
     return { scope, token: await mintToken(scope) };
   };
 
+  const socketInUse = () =>
+    new Promise<boolean>((resolve) => {
+      const socket = connect(socketPath);
+      const finish = (used: boolean) => {
+        socket.removeAllListeners();
+        socket.destroy();
+        resolve(used);
+      };
+      socket.setTimeout(250, () => finish(false));
+      socket.once("connect", () => finish(true));
+      socket.once("error", () => finish(false));
+    });
+
+  const unlinkSupplierSocket = () => {
+    try {
+      if (existsSync(socketPath) && lstatSync(socketPath).isSocket()) unlinkSync(socketPath);
+    } catch {
+      // The socket is runtime state; failure to remove it must not touch any other path.
+    }
+  };
+
   const start = async () => {
     if (startPromise) return startPromise;
-    startPromise = new Promise<void>((resolveStart, rejectStart) => {
+    startPromise = (async () => {
+      if (existsSync(socketPath)) {
+        let stat;
+        try {
+          stat = lstatSync(socketPath);
+        } catch {
+          stat = undefined;
+        }
+        if (!stat?.isSocket() || await socketInUse()) {
+          throw new CredentialError("Credential supplier socket path is already in use");
+        }
+        unlinkSupplierSocket();
+      }
+      await new Promise<void>((resolveStart, rejectStart) => {
       try {
         ensurePrivateDirectory(dirname(socketPath));
         if (existsSync(keyPath)) {
@@ -462,9 +496,6 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
           supplierKey = randomBytes(32).toString("hex");
           writeFileSync(keyPath, `${supplierKey}\n`, { encoding: "utf8", mode: 0o600 });
           chmodSync(keyPath, 0o600);
-        }
-        if (existsSync(socketPath)) {
-          throw new CredentialError("Credential supplier socket path is already in use");
         }
         server = createServer((socket) => {
           let buffer = "";
@@ -508,6 +539,7 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
         rejectStart(error);
       }
     });
+    })();
     return startPromise;
   };
 
@@ -525,15 +557,14 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
 
   const close = () => {
     const current = server;
-    current?.close(() => {
-      try {
-        if (existsSync(socketPath) && lstatSync(socketPath).isSocket()) unlinkSync(socketPath);
-      } catch {
-        // The socket is runtime state; failure to remove it must not touch any other path.
-      }
-    });
     server = undefined;
     startPromise = undefined;
+    try {
+      current?.close();
+    } catch {
+      // Closing is best-effort so shutdown can still unlink the socket.
+    }
+    unlinkSupplierSocket();
   };
 
   return {
