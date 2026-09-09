@@ -418,14 +418,7 @@ export const renderAddRepositoryPage = ({
     ? `<form class="mt-8 max-w-2xl" method="get" action="/repositories/new" role="search">
         <label class="label mb-2 block p-0" for="repository-filter">Filter Repositories</label>
         <div class="join w-full">
-          <div class="min-w-0 flex-1">
-            <div class="input input-bordered join-item min-h-11 w-full border-control-border bg-base-100 text-base text-base-content">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5 shrink-0 text-muted" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-              </svg>
-              <input id="repository-filter" class="min-h-11 grow" name="q" type="search" value="${escapeHtml(filterQuery)}" maxlength="200" autocomplete="off">
-            </div>
-          </div>
+          <input id="repository-filter" class="input input-bordered join-item min-h-11 min-w-0 grow border-control-border bg-base-100 text-base text-base-content" name="q" type="search" value="${escapeHtml(filterQuery)}" maxlength="200" autocomplete="off">
           <button class="btn join-item min-h-11 border border-control-border" type="submit">Filter</button>
         </div>
       </form>
