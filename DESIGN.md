@@ -2,130 +2,169 @@
 
 ## Purpose and authority
 
-Atlas is an internal tool for browsing Repositories and starting autonomous Sessions from team-authored Specs. Its UI should be calm, modern, readable, and consistent on phones and desktops. Dark mode is the only mode. Density is balanced: enough information to work, without a wall of controls.
+Atlas is an internal tool for browsing Repositories and starting autonomous Sessions from team-authored Specs. Its UI is a compact, dark-only developer tool: dense enough to work in, calm enough to read, and consistent on phones and desktops.
 
 This file governs visual and interaction decisions. `CONTEXT.md` governs terminology and domain meaning; the originating GitHub issue governs feature scope. Design guidelines do not introduce features or change business rules. If these sources conflict, report the conflict before implementing it.
 
-This is an application guide, not a copy of the Google DESIGN.md token schema. The palette below defines Atlas's approved overrides; daisyUI supplies component primitives. Implement the palette once in the shared stylesheet and keep it synchronized with this document, never copied into page templates.
+Implement the theme once in the shared stylesheet and keep it synchronized with this document. Never copy hex values into page templates.
+
+## Design decision record
+
+Decided 2026-09-10 by progressive abstraction: three structurally different prototypes of the Repositories page were built on `/prototype/design?variant=A|B|C`, the owner reacted to concrete renders, and the winning choices were abstracted into the rules below. Research behind the choices lives in `docs/research/design-*.md`.
+
+| Question | Decision | Rejected |
+| --- | --- | --- |
+| Mode | Dark only, like Claude desktop dark | Light, switchable |
+| Layout | Left sidebar + dense tables (Ant Design-like) | Top bar + cards (Claude-like), summary tiles |
+| Background | Graphite with a faint navy tint (GitHub-dark level chroma) | Warm charcoal, deep navy |
+| Brand `#012B68` | Sidebar brand band, logo mark, selected-row tint | Button fill (1.2–1.4:1 against every dark surface) |
+| Interactive primary | Lighter navy `#4373BA` fill with white text | Exact navy + light ring, exact navy with no edge |
+| Accent | Amber `#E19D63`, budgeted (see below) | Terracotta, navy only |
+| Corners | 6px controls, 8px containers, 4px badges | 12px/20px (read as "made for children") |
+| Density | 32px controls, 14px UI text, compact table rows | Current 44px controls and 16px everywhere |
+| Glass | Sticky header only | Glass sidebar and panels |
+| Titles | Sans everywhere | Serif page titles |
+
+The previous "blue-black glassmorphism" theme is superseded. Its failure mode was one hue at three chroma-heavy shades: brand, surfaces, and borders all collapsed into the same blue, and the exact brand fill vanished into it.
 
 ## Selected design system
 
-Use **Tailwind CSS 4 + daisyUI 5, with an Atlas palette override of `dim` and one shared Glassmorphism treatment**, and HTMX for server-rendered interactions. This is the planned frontend baseline, not a claim that dependencies are installed. Lock resolved versions when implementing the asset pipeline; recheck theme and component behavior on upgrades.
+Use **Tailwind CSS 4 + daisyUI 5 with a custom `atlas` theme** (built-in themes disabled), flat rendering (`--depth: 0`, `--noise: 0`), Heroicons, and HTMX for server-rendered interactions. Lock resolved versions in the asset pipeline; recheck theme and component behavior on upgrades.
 
-The visual direction is **clear, tinted dark Glassmorphism**: see-through blue-black panels, light background softening, crisp pale edges, softly rounded corners, and restrained reflective highlights. Aim for polished smoked glass, not milky or heavily frosted panes. **`#012B68` (deep navy) is the exact, sole primary brand color.** Lighter blue tones are functional shades of that same brand family, not independent accents. Keep daisyUI's maintained components and `dim` sizing; override the palette and corner radii centrally rather than rebuilding the component system.
-
-Compile the stylesheet using the project's eventual asset pipeline:
+The visual direction is **navy-tinted graphite, flat, compact**: near-black neutral surfaces that step lighter with elevation, one cream-white text ladder, one readable navy for links and selection, the exact brand navy in a few deliberate places, and amber as the single warm accent. No shadows except popovers, no gradients, no textures.
 
 ```css
 @import "tailwindcss";
+
 @plugin "daisyui" {
-  themes: dim --default;
+  themes: false;
 }
+
 @plugin "daisyui/theme" {
-  name: "dim";
+  name: "atlas";
   default: true;
   color-scheme: dark;
-  --color-base-100: #132238;
-  --color-base-200: #0B1628;
-  --color-base-300: #08101E;
-  --color-base-content: #F4F7FC;
-  --color-primary: #012B68;
-  --color-primary-content: #F4F7FC;
-  --color-secondary: #012B68;
-  --color-secondary-content: #F4F7FC;
-  --color-accent: #012B68;
-  --color-accent-content: #F4F7FC;
-  --color-neutral: #1D304A;
-  --color-neutral-content: #F4F7FC;
-  --color-info: #8BB8FF;
-  --color-info-content: #08101E;
-  --color-success: #6ED6B5;
-  --color-success-content: #08101E;
-  --color-warning: #F2C66D;
-  --color-warning-content: #08101E;
-  --color-error: #F49AA6;
-  --color-error-content: #08101E;
-  --radius-field: 0.75rem;
-  --radius-box: 1.25rem;
+
+  --color-base-100: #1A1D23;        /* panel, card, table, input */
+  --color-base-200: #111419;        /* app background */
+  --color-base-300: #080B10;        /* sunken: sidebar, code wells, table head */
+  --color-base-content: #ECEFF3;    /* primary text */
+  --color-primary: #4373BA;         /* interactive navy: buttons, progress */
+  --color-primary-content: #FFFFFF;
+  --color-secondary: #4373BA;       /* alias; not a separate hierarchy */
+  --color-secondary-content: #FFFFFF;
+  --color-accent: #E19D63;          /* amber, budgeted */
+  --color-accent-content: #211208;
+  --color-neutral: #23272C;         /* raised/hover surface, neutral badge */
+  --color-neutral-content: #ECEFF3;
+  --color-info: #5ABBE6;
+  --color-info-content: #0B1A22;
+  --color-success: #69C27E;
+  --color-success-content: #07180C;
+  --color-warning: #EBA941;
+  --color-warning-content: #1A0F03;
+  --color-error: #F47B74;
+  --color-error-content: #240A08;
+
+  --radius-selector: 0.25rem;       /* 4px badges, checkboxes */
+  --radius-field: 0.375rem;         /* 6px buttons, inputs, menu items */
+  --radius-box: 0.5rem;             /* 8px cards, alerts, tables, dialogs */
+  --size-selector: 0.25rem;         /* 24px checkbox, 24px badge-md */
+  --size-field: 0.2rem;             /* 32px button/input md */
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
 }
+
 @theme {
-  --color-brand-readable: #8BB8FF;
-  --color-muted: #A9B8CC;
-  --color-control-border: #7086A5;
+  --color-brand: #012B68;           /* exact brand navy; see usage rules */
+  --color-brand-content: #EEF2F9;
+  --color-brand-readable: #83AFF3;  /* links, focus ring, selected indicator */
+  --color-brand-tint: #192941;      /* selected row / active nav background */
+  --color-muted: #A0A5AC;           /* secondary text */
+  --color-faint: #6D7279;           /* tertiary text, placeholders, icons at rest */
+  --color-edge: #2B3139;            /* decorative borders and dividers */
+  --color-control-border: #666C76;  /* input and secondary-button edges, 3:1 */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 ```
 
-This uses daisyUI's documented same-name theme customization; unspecified sizing, selector radii, and effects inherit from `dim`. Fields/buttons use a 0.75rem radius (12px at the default root size); cards, glass panels, and dialogs use 1.25rem (20px). Use the same theme radius tokens for custom containers; reserve fully rounded shapes for naturally circular controls and existing badges. `secondary` and `accent` intentionally alias the primary value so upstream defaults cannot introduce extra brand hues. Do not use those aliases as separate action hierarchies.
+Set `<html lang="en" data-theme="atlas">` in the shared document layout with a viewport meta tag. `themes: false` stops daisyUI from also emitting `light`/`dark`; a new theme name inherits nothing, so every token above is required. No light theme, theme switcher, or `dark:` variants.
+
+Use complete, literal class names in server templates and HTMX fragments; Tailwind scans `src/`. Runtime-built names such as `badge-${state}` are not detected.
 
 ### Approved palette
 
-| Role | Exact color | Character |
-| --- | --- | --- |
-| Brand / primary fill | `#012B68` | Deep navy |
-| Brand-readable / information | `#8BB8FF` | Frost blue for links, selection indicators, focus, and information |
-| App background (`base-200`) | `#0B1628` | Blue-black |
-| Panel (`base-100`) | `#132238` | Midnight blue; translucent only for glass |
-| Deep surface (`base-300`) | `#08101E` | Ink blue |
-| Neutral control | `#1D304A` | Muted steel navy |
-| Main text | `#F4F7FC` | Ice white |
-| Supporting text (`muted`) | `#A9B8CC` | Cool blue-gray |
-| Essential control edge | `#7086A5` | Steel blue |
-| Success | `#6ED6B5` | Cool mint |
-| Warning / special attention | `#F2C66D` | Soft amber |
-| Error / destructive action | `#F49AA6` | Soft rose |
+| Role | Hex | Contrast | Notes |
+| --- | --- | --- | --- |
+| App background (`base-200`) | `#111419` | | OKLCH L 0.19, chroma 0.011 at the brand hue |
+| Panel / table / input (`base-100`) | `#1A1D23` | 1.09:1 vs base-200 | Elevation is a lighter surface, not a shadow |
+| Sunken (`base-300`) | `#080B10` | | Sidebar body, code wells, table head |
+| Raised / hover (`neutral`) | `#23272C` | | Row hover, menu hover, neutral badge |
+| Primary text (`base-content`) | `#ECEFF3` | 14.6:1 on base-100 | |
+| Secondary text (`muted`) | `#A0A5AC` | 6.8:1 on base-100 | Descriptions, table metadata |
+| Tertiary text (`faint`) | `#6D7279` | 3.5:1 on base-100 | Large or non-essential text only |
+| Decorative edge (`edge`) | `#2B3139` | | Dividers, card and table borders |
+| Control edge (`control-border`) | `#666C76` | 3.2:1 on base-100 | Inputs, secondary buttons |
+| Brand (`brand`) | `#012B68` | 12.1:1 with brand-content | Exact brand; see rules below |
+| Brand tint (`brand-tint`) | `#192941` | 12.7:1 with primary text | Selected row, active nav |
+| Brand readable (`brand-readable`) | `#83AFF3` | 8.3:1 on base-200 | Links, focus outline, active indicator |
+| Interactive primary (`primary`) | `#4373BA` | 4.8:1 with white; 3.5:1 vs base-100 | Buttons, progress, checked controls |
+| Accent (`accent`) | `#E19D63` | 8.1:1 on base-200; 8.0:1 with accent-content | Amber |
+| Info | `#5ABBE6` | 7.8:1 on base-100 | Running |
+| Success | `#69C27E` | 7.7:1 on base-100 | Succeeded, Available |
+| Warning | `#EBA941` | 8.3:1 on base-100 | Waiting, Stale, Archived |
+| Error | `#F47B74` | 6.4:1 on base-100 | Failed, Access unavailable |
 
-The CSS block defines foreground pairings: ice white on primary/neutral, ink blue on filled semantic colors. These are Atlas choices, not stock `dim` tokens.
+Ratios are opaque sRGB WCAG 2.x calculations (`docs/research/design-dark-palettes.md`). They do not certify rendered hover states or composited glass; measure those in the browser.
 
-Set `<html lang="en" data-theme="dim">` in the shared document layout and include a viewport meta tag. Enable only `dim`; it supplies a dark native `color-scheme`. No light theme, theme switcher, or system-preference theme branching. Avoid duplicating styles with `dark:` variants.
+### Brand navy rules
 
-Use complete, literal class names in server templates and state mappings, including HTMX fragments. Ensure Tailwind scans those directories; configure `@source` if they are outside its detected sources. Runtime-built class names such as `text-${state}` are not reliably detected.
+`#012B68` is the brand, not the interaction color. On dark surfaces it measures 1.2–1.4:1, so it cannot be a button fill, link, focus ring, or the only selected-state indicator.
 
-### Semantic colors and surfaces
+Use exact `#012B68` (`bg-brand text-brand-content`) only for:
 
-| Role | Default |
+- The sidebar brand band: the 48px strip at the top of the sidebar holding the Atlas mark and name.
+- The logo mark itself, wherever it appears.
+- Full-bleed brand moments that are not controls, such as the sign-in page header band.
+
+Use `brand-tint` for the selected row and active navigation background, always with a 2px `brand-readable` left border and `aria-current`. Use `brand-readable` for link text, keyboard focus outlines, and selection indicators. Use `primary` for filled buttons and checked controls. Do not lighten or darken `#012B68` for new roles; the navy ladder in the palette research is the only source of additional navy shades, and adding one requires a design change.
+
+### Accent budget
+
+Amber is a highlight, not a theme. Allowed uses, in total:
+
+- The section eyebrow or one key figure that needs attention on a page.
+- The mark next to a Repository or Session that needs a human decision (Waiting is `warning`, which shares the amber family on purpose).
+- An `accent` filled button only when a page has a second, non-primary but important action that must not look like the primary. Expect this to be rare.
+
+Everything else stays neutral or navy. If a screen has more than two amber elements, remove some.
+
+### Semantic colors
+
+Use daisyUI pairs on filled surfaces: `badge-success` gives `#69C27E` with dark content. Semantic fills are bright-on-dark, so their content color is dark, not white; this is the "vibrant, not luminous" look chosen in the prototype. Semantic colors are for actual state and feedback: badges, alerts, inline messages, icons. Never decoration. `info` is cyan-shifted so it does not read as another navy.
+
+For alerts use `alert alert-<state> alert-soft`: tinted background, semantic text, no solid fill. For text-only status, use `text-<state>` with an icon or a word; never color alone.
+
+### Surfaces, borders, elevation
+
+- Background `base-200`; panels, tables, forms `base-100`; sidebar body and code wells `base-300`; hover and raised `neutral`. Each step is a lighter surface. No drop shadows on cards, buttons, inputs, or alerts.
+- Borders are 1px `edge` for containers and dividers. Inputs and secondary buttons use `control-border` so their boundary meets 3:1. Primary buttons have no visible border.
+- Shadows are allowed only on floating layers (menus, popovers, dialogs): `0 8px 24px rgb(0 0 0 / 0.32)`.
+- No background gradients, radial washes, noise, or textures. Delete the old `atlas-backdrop` wash when migrating.
+
+### Glass header
+
+The sticky page header is the only translucent surface. Everything else, including the sidebar, tables, forms, menus, and dialogs, is opaque.
+
+| Property | Value |
 | --- | --- |
-| App background | `bg-base-200 text-base-content` |
-| Shell chrome / elevated panels | Shared frosted-glass treatment below, with `text-base-content` |
-| Dense content / form controls | Opaque `bg-base-100 text-base-content` |
-| Decorative divider/card border | `border-base-300`; not sufficient by itself for essential control boundaries |
-| Brand / main action | Exact `primary` fill with `primary-content` text and a visible `control-border` edge |
-| Links / focus / selected navigation | `brand-readable` text or indicators; selected navigation may also have a primary-tinted background |
-| Informational state | `info` and its paired `info-content` foreground |
-| Confirmed success | `success` and `success-content` |
-| Attention or freshness warning | `warning` and `warning-content` |
-| Error or destructive action | `error` and `error-content` |
+| Fallback | Opaque `bg-base-200` with `border-b border-edge` |
+| Enhanced | `bg-base-200/78` + `backdrop-blur-sm` (8px) inside `@supports (backdrop-filter: blur(8px))` |
+| Preferences | Remove translucency and blur for `prefers-reduced-transparency: reduce`, `prefers-contrast: more`, and forced colors |
 
-Use daisyUI's paired foregrounds on colored surfaces, e.g. `bg-primary text-primary-content`; component modifiers already pair them. Keep raw hex/OKLCH colors out of page templates. Use the shared theme radii and surface elevation below, not per-page shadows or corner styles.
-
-Use neutral styling for secondary actions. Supporting `info`, `success`, `warning`, and `error` roles are reserved for actual state/feedback, in small labelled badges, icons, or messages. Special attention uses `warning`, not an extra accent. Ordinary notices can stay neutral. The informational blue intentionally shares the brand-readable shade; wording and icons distinguish status from navigation.
-
-**Dark-brand contrast rule:** `#012B68` is a fill/logo color, not body text, a focus outline, or the only selected-state indicator on dark surfaces. Use `text-brand-readable` for links and `outline-brand-readable` for visible keyboard focus. Give primary buttons and essential control boundaries a shared `border-control-border` treatment; fine glass edges are not a substitute. Keep the primary button's default fill exactly `#012B68`; do not silently replace it with the lighter blue to solve contrast.
-
-Calculated opaque sRGB pairings: primary text on primary is **12.64:1**; main text on `base-100` **14.89:1**; muted text **7.93:1** and brand-readable **7.92:1** on `base-100`. The control edge is **3.65:1** against primary and **4.30:1** against `base-100`; semantic fill/text pairings exceed **9:1**. These checks do not certify composited glass, hover states, or rendered components; measure those separately.
-
-Use full-strength `text-base-content` for important text; distinguish metadata first through size and placement. Any reduced-opacity text needs measured contrast. Avoid neutral outline/dash button and badge variants: upstream documents their dark foreground as intended for light backgrounds. Use the default button or a verified semantic alternative.
-
-### Glassmorphism surface recipe
-
-Implement this once in the shared stylesheet/template layer, not as separately tuned effects per page. Glass uses the Atlas palette above:
-
-| Property | Shared value |
-| --- | --- |
-| Fallback background | Opaque `base-100` |
-| Enhanced background | `base-100` at 60% opacity (`bg-base-100/60`) |
-| Backdrop blur | 4px (`backdrop-blur-xs`); keep backdrop shapes discernible |
-| Decorative edge | 1px solid ice white at 16% opacity (`border border-base-content/16`) |
-| Reflection | One inset top-edge highlight, `inset 0 1px 0 rgb(244 247 252 / 0.10)`, in the shared surface style |
-| Elevation | Combine the inset highlight with one subtle neutral outer shadow; no colored glow |
-| Corners | Shared box radius: 1.25rem (20px); internal buttons/fields: 0.75rem (12px) |
-
-- Use glass for the header, sidebar/mobile navigation, and top-level summary panels. Keep tables, Session output, form fields, menus, and dialog bodies opaque so text is stable and underlying content cannot compete with it.
-- Apply transparency and blur together only inside a CSS `@supports (backdrop-filter: blur(4px))` enhancement. Without support, retain the opaque fallback. Apply alpha to the background color, never `opacity` to the whole panel and its text.
-- Let the quiet blue backdrop show through. Keep highlights confined to edges rather than a white overlay across the pane; avoid haze, grain, heavy blur, and animated reflections. Use this same 60%/4px recipe across glass surfaces instead of inventing clearer or frostier variants per page.
-- Use only one glass layer at any point; children of a glass panel use opaque or unstyled surfaces. Avoid blur on every card/row, full-viewport filtered layers, and animated blur for mobile performance.
-- Keep the backdrop quiet: blue-black base colors with at most one static radial wash of `primary` at 20% opacity fading to transparent in the shared shell. This restrained tonal variation makes the glass visible without adding another hue. No photographs, moving blobs, neon glows, or multicolor gradients. Glass should frame the work, not obscure it.
-- For `prefers-reduced-transparency: reduce`, `prefers-contrast: more`, or forced colors, remove translucency and blur. Reduced-transparency detection has limited browser support; readability must not depend on that query working. Preserve system colors in forced-colors mode.
-- Fine glass edges are decorative, not sufficient focus or input boundaries. Measure text and control contrast over the actual composited backdrop, including while scrolling. If it fails, make that surface opaque rather than weakening the accessibility rule.
+Keep it as one shared `atlas-glass` class in the stylesheet. Do not reuse daisyUI's `glass` utility; it is a light-mode white gradient. Text in the header must meet contrast over any scrolled content; if it does not, make the header opaque.
 
 ## Agent workflow
 
@@ -134,124 +173,136 @@ Implement this once in the shared stylesheet/template layer, not as separately t
 3. Build only the requested workflow, including applicable loading, empty, error, and success states.
 4. Verify the acceptance checklist below. Report checks actually performed and any gaps; do not claim visual verification from source inspection alone.
 
-Changes to the theme or these rules require explicit design scope or human approval. Update affected shared styles/templates and this document together; do not rewrite a rule just to justify a one-off implementation.
+Changes to the theme or these rules require explicit design scope or human approval. Update affected shared styles/templates and this document together; do not rewrite a rule just to justify a one-off implementation. When proposing a new look, build a `?variant=` prototype and let the owner react to renders; they decide by like/dislike, not by token discussion.
 
 ## Layout and spacing
 
-- Use one shared app shell: navigation, page header, main content, and a stable location for global notices. Provide a skip link to `main`.
-- On wide screens, use a restrained sidebar. Below the `lg` breakpoint, use a labelled navigation button and an accessible drawer. Preserve the same destinations and names on both.
-- Use a fluid main region capped at `max-w-7xl`, with `px-4 sm:px-6 lg:px-8` and `py-6`. Forms should normally be narrower (`max-w-2xl`); detailed output can use the available width.
-- Each page has one H1, an optional short description, and one visually dominant primary action. Wrap actions on small screens without changing reading order.
-- Use the standard spacing scale: 4px for tightly related details, 8px for compact groups, 12–16px within components, 24px between groups, and 32px between major sections. Express these through Tailwind utilities.
-- Stack columns on phones. Introduce columns only when content fits; never shrink labels and controls to preserve a desktop arrangement.
-- Use bordered sections only to group meaningful content. Prefer whitespace and headings to nested cards. Use glass only as defined above; avoid decorative heroes and ornamental dashboard metrics.
+- One shared app shell: a 48px sticky glass header, a 224px (`w-56`) sidebar on `lg` and up, a main region, and a stable location for global notices. Provide a skip link to `main`.
+- Sidebar: brand band on top, then navigation groups with an uppercase 12px `faint` label, 32px rows, `brand-tint` plus left border for the active item. Below `lg`, replace it with a labelled navigation button and an accessible drawer with the same destinations and names.
+- Header: breadcrumb-style context on the left (Repository full name in `muted`), session controls on the right. Nothing else lives in the header.
+- Main region: `max-w-6xl`, `px-4 sm:px-6`, `py-5`. Forms `max-w-2xl`. Session output may use the full width.
+- Each page has one H1, an optional one-line description in `muted`, and one visually dominant primary action aligned to the right of the title row. Wrap on small screens without changing reading order.
+- Spacing scale: 4px within a control, 8px between related controls, 12–16px inside containers, 24px between groups, 32px between major sections. Express these through Tailwind utilities; do not redefine `--spacing`.
+- Prefer whitespace and headings over nested cards. A bordered `base-100` container is for tables, forms, and grouped records, not for every paragraph. No hero blocks or decorative metric tiles.
 
 ## Typography and iconography
 
-- Use Tailwind's system `font-sans` stack throughout. No web-font dependency. Use `font-mono` only for code, identifiers, and Session output.
-- Body text and form controls: `text-base` (16px on the default scale). Supporting metadata: `text-sm` (14px). Avoid smaller text for information users need to read.
-- Page title: `text-2xl font-semibold`; section title: `text-lg font-semibold`; controls and column labels: `font-medium`. Use sentence case.
-- Use comfortable body line height (`leading-normal` or `leading-relaxed`). Constrain long prose to about 65 characters (`max-w-prose`).
-- Use one icon family: Heroicons outline SVGs, normally 20px or 24px. Inline SVGs work with server templates; a JavaScript icon package is unnecessary. Pair unfamiliar icons with text. Decorative SVGs use `aria-hidden="true"`; icon-only buttons need an accessible name.
-- Use tabular numerals for changing counts and aligned numeric columns. Wrap long Repository/Spec names; expose full identifiers through selectable text, not hover-only tooltips.
+- System `font-sans` stack; no web fonts. `font-mono` for identifiers, branch names, Session IDs, and Session output.
+- UI text is 14px (`text-sm`): tables, controls, navigation, metadata, alerts. Prose paragraphs such as page descriptions and empty states may use 16px (`text-base`). Captions and eyebrow labels are 12px (`text-xs`); nothing smaller.
+- Page title `text-xl font-semibold`; section title `text-base font-semibold`; column headers and labels `font-medium` in `muted`. Bold is 600, never 700. Sentence case throughout.
+- Line height `leading-normal`; long prose `max-w-prose`.
+- Text ladder: primary text for content, `muted` for supporting text, `faint` for placeholders and tertiary metadata. Do not use opacity to make text quieter.
+- Heroicons outline, 16px inside buttons and inputs, 20px in navigation and tables. Inline SVG with `aria-hidden="true"`; icon-only buttons need an accessible name. Pair unfamiliar icons with text.
+- Tabular numerals (`tabular-nums`) for counts and aligned numeric columns, right-aligned in tables. Wrap long names; expose full identifiers as selectable text.
 
 ## Component and page patterns
 
-Use daisyUI components for controls and Tailwind utilities for layout. Preserve component defaults unless this document specifies a shared adjustment. The same action must have the same label, hierarchy, and interaction across pages.
+daisyUI components for controls, Tailwind utilities for layout. Preserve component defaults unless this document specifies a shared adjustment. The same action has the same label, hierarchy, and interaction on every page.
 
 | Need | Pattern |
 | --- | --- |
-| Main action | One `btn btn-primary` in each action group; use verb + object, e.g. “Start Session”. |
-| Secondary action | Default `btn`; `btn-ghost` for low-emphasis actions. |
-| Destructive action | `btn-error` with explicit wording and confirmation when irreversible. Keep it separate from routine actions. |
-| Navigation | Real links with meaningful URLs; show the active destination with `aria-current="page"` and a visible indicator. |
-| Forms | Visible labels, helper/error text, and daisyUI `input`, `select`, `textarea`, `checkbox`, or `radio` components. |
-| Status | Compact text-labelled `badge`; color reinforces the wording rather than replacing it. |
-| Feedback | Local inline message or `alert`; use a toast only for nonessential, supplementary confirmation. |
-| Grouped content | Plain section first; top-level summary `card` may use the shared glass treatment; dense or nested content remains opaque. |
-| Lists of records | Table when comparison matters; stacked records on narrow screens when the same information works better that way. |
-| Short confirmation | Native `dialog` styled with daisyUI `modal`; use a full page for complex editing. |
+| Main action | One `btn btn-primary` per action group; verb + object, e.g. "Start Session". 32px, 14px text, optional leading 16px icon. |
+| Secondary action | `btn` (neutral fill, `control-border` edge). `btn-ghost` for low-emphasis and in-table actions (`btn-ghost btn-xs`). |
+| Destructive action | `btn-error` with explicit wording and confirmation when irreversible; kept apart from routine actions. |
+| Navigation | Real links with meaningful URLs; active item uses `brand-tint`, left border, and `aria-current="page"`. |
+| Forms | Label above the field, `input`/`select`/`textarea` at 32px with `control-border`, helper text in `faint`, errors in `error`. |
+| Filter | An `input` with a leading search icon, at the top of the list it filters, in a GET form. |
+| Status | `badge badge-sm badge-<state>` with text; color reinforces the word. Never color alone. |
+| Feedback | `alert alert-<state> alert-soft` inline near the cause; toasts only for supplementary confirmation. |
+| Lists of records | A `table` inside a `rounded-box border border-edge bg-base-100` container with compact rows; stacked records below `md`. |
+| Grouped content | Plain section with a heading first; a bordered container only for tables, forms, and record groups. |
+| Short confirmation | Native `dialog` styled with `modal`; full page for complex editing. |
+
+### Tables
+
+Tables are the default list presentation on desktop. Use `table` with the shared `table-compact` utility: 8px vertical and 12px horizontal cell padding, 14px text, 36px rows. Header cells are `muted font-medium` on `base-300`. Row hover uses `neutral`. Column order: identity (link) with a `faint` monospace sub-line, state badge, numeric columns right-aligned, freshness, then actions as `btn-ghost btn-xs`. Contain any horizontal scrolling inside the table container with an accessible name; the page itself never scrolls sideways.
 
 ### Atlas content
 
 - Keep Repository context visible on Spec, Session, and PR views. Use exactly the domain vocabulary in `CONTEXT.md`.
 - For record lists, prioritize identity/title, semantic state, freshness or update time, and the main action. Show supporting metadata second; align comparable values.
-- Display actual Session states as text. Queued/Preparing may use neutral styling; Running informational styling; Waiting warning styling; Idle neutral styling. Terminal styling must reflect an actual confirmed outcome from the domain model.
-- An Active Session is not necessarily Running. Idle is not completion or failure. Show Stale as a separate freshness warning alongside the last known state, with last-updated information when available.
-- Show Blockers as context; do not invent a disabled “Start Session” gate from their presence. Eligibility comes from the backend's business rules.
-- Render Session output as readable, selectable text. Keep any necessary horizontal scrolling inside the output region. Live updates must not steal focus or force a reader back to the bottom after they scroll away.
+- Display actual Session states as text. Queued/Preparing use the neutral badge; Running `info`; Waiting `warning`; Idle neutral; Succeeded `success`; Failed, Interrupted, and Failed setup `error`. Terminal styling must reflect an actual confirmed outcome from the domain model.
+- An Active Session is not necessarily Running. Idle is not completion or failure. Show Stale as a separate `warning` badge beside the last known state, with last-updated information when available.
+- Show Blockers as context; do not invent a disabled "Start Session" gate from their presence. Eligibility comes from the backend's business rules.
+- Render Session output as readable, selectable monospace text on `base-300`. Keep any horizontal scrolling inside the output region. Live updates must not steal focus or force a reader back to the bottom after they scroll away.
 
 ### Mobile records and controls
 
-- Core actions must remain available on phones, including touch and keyboard access. Avoid hover-only menus and row actions.
-- Aim for at least 44×44 CSS px interactive targets; apply a shared minimum size to buttons/inputs as needed, rather than compressing controls on mobile. Space checkbox/radio labels so the entire label is a comfortable target.
-- On narrow screens, turn ordinary record rows into labelled stacked items; retain state and actions. Share the same server data and action definitions between presentations.
-- If a genuinely two-dimensional comparison requires a table, contain horizontal scrolling in a labelled region. Keep the page itself free of horizontal overflow. Use proper headers and a caption or accessible name.
-- Avoid entire clickable rows containing nested controls. Make the record title a link and actions separate buttons/links.
-- Sticky headers/footers must not obscure content, focused controls, validation messages, or the mobile keyboard.
+- Core actions must remain available on phones with touch and keyboard. No hover-only menus or row actions.
+- Controls are 32px on desktop. Under `@media (pointer: coarse)` raise buttons and inputs to a 44px minimum through the shared stylesheet rather than per-template `min-h-*` classes.
+- Below `md`, render table rows as labelled stacked items with the same state and actions, sharing the same server data and action definitions.
+- Avoid entire clickable rows containing nested controls. The record title is the link; actions are separate buttons.
+- Sticky headers must not obscure content, focused controls, validation messages, or the mobile keyboard.
 
 ### Forms and feedback
 
-- Put the label above its field; placeholders are examples, not labels. Mark optional fields explicitly when most fields are required. Use appropriate native input types and autocomplete values.
-- Keep the main form action in a predictable location after the fields. Preserve entered values after validation or network errors.
+- Label above the field; placeholders are examples, not labels. Mark optional fields when most are required. Use native input types and autocomplete values.
+- Keep the main form action after the fields in a predictable place. Preserve entered values after validation or network errors.
 - Associate field errors with `aria-describedby` and set `aria-invalid="true"`. Use a concise error summary for multi-field failures, with links to affected fields.
-- During submission, show a labelled pending state and prevent accidental repeats. Re-enable controls after failure. Backend safeguards remain necessary for duplicate requests.
-- Empty states explain what is missing and offer the relevant next action. Distinguish “no records yet” from “no matches”; offer clearing filters for the latter.
+- During submission show a labelled pending state and prevent accidental repeats. Re-enable controls after failure. Backend safeguards remain necessary for duplicate requests.
+- Empty states explain what is missing and offer the relevant next action. Distinguish "no records yet" from "no matches"; offer clearing filters for the latter.
 - Error states explain what failed and a safe next step. Do not imply a Session failed merely because its live connection was lost.
-- Persistent results belong inline. Screen-reader announcements should be brief; do not announce an entire frequently updating Session output stream.
+- Persistent results belong inline. Screen-reader announcements are brief; never announce an entire frequently updating Session output stream.
 
 ## HTMX interaction contract
 
-Use server-rendered HTML and native browser behavior first, with HTMX for targeted updates and minimal JavaScript for focus/dialog behavior. Do not add a client-side component framework to use daisyUI. The researched HTMX behavior is 2.x; verify it against the pinned version when implementing.
+Server-rendered HTML and native browser behavior first, HTMX for targeted updates, minimal JavaScript for focus and dialog behavior. Do not add a client-side component framework. The researched HTMX behavior is 2.x; verify against the pinned version when implementing.
 
-- **Navigation:** use working `href` links and forms with `action`/`method`. Search, filters, sorting, and pagination belong in GET URLs. Start with ordinary page navigation; boost only when focus and history behavior are implemented. Background refreshes do not create history entries.
+- **Navigation:** working `href` links and forms with `action`/`method`. Search, filters, sorting, and pagination belong in GET URLs. Start with ordinary page navigation; boost only when focus and history behavior are implemented. Background refreshes do not create history entries.
 - **Swap boundaries:** target the smallest meaningful region. Keep stable input IDs; avoid replacing a form being edited, the whole app shell for a local update, or an open dialog element.
-- **Validation:** enable HTMX's `reportValidityOfForms` and retain server validation. Return validation errors as HTTP 422 with a value-preserving form fragment; explicitly configure 422 swapping before the general error rule. HTMX 2.x does not swap 422 by default. Preserve handling of other errors rather than swapping arbitrary 4xx/5xx bodies into a form.
+- **Validation:** enable HTMX's `reportValidityOfForms` and retain server validation. Return validation errors as HTTP 422 with a value-preserving form fragment; configure 422 swapping explicitly before the general error rule. Preserve handling of other errors rather than swapping arbitrary 4xx/5xx bodies into a form.
 - **Failure:** show unexpected HTTP/network failures locally and preserve input. A 204 does not swap a success fragment; HTMX response headers on a 3xx are not processed as an HTMX redirect. Use the appropriate enhanced response while retaining ordinary form fallback.
-- **Pending:** use a local indicator (`hx-indicator`) and disable the submit control during the request (`hx-disabled-elt`). Show “Starting Session…” rather than an unlabelled spinner. The server must enforce one unfinished Session per Spec; after a lost response, reconcile before inviting a retry.
-- **Focus:** enhanced page navigation moves focus to the main heading; invalid submission to its error summary/first invalid field; inline updates retain focus or move it to a logical successor when the trigger disappears. Background updates never move focus. Use scoped handlers rather than globally focusing the first input after every swap.
-- **Announcements:** keep a stable, initially present `role="status" aria-atomic="true"` region and update its contents with brief meaningful changes. Avoid announcing every poll or duplicating a focused error summary as an alert.
-- **History:** every navigable URL must also return a full page for direct visits and restoration. When `HX-Request` selects fragments, follow the documented `historyRestoreAsHxRequest: false` guidance and separate HTTP cache variants. Reconcile restored Session views before treating their state as fresh. Disable HTMX snapshot storage on sensitive Session detail pages with `hx-history="false"`; this is not a general browser-storage security control.
-- **Dialogs:** open native dialogs with `showModal()`, not just the `open` attribute. Mutations use a real POST form, not `method="dialog"`. Keep the dialog open with errors until success; Cancel must remain usable despite invalid fields. Prefer initial focus on Cancel for irreversible actions.
+- **Pending:** local indicator (`hx-indicator`) and disable the submit control during the request (`hx-disabled-elt`). Show "Starting Session…" rather than an unlabelled spinner. The server must enforce one unfinished Session per Spec; after a lost response, reconcile before inviting a retry.
+- **Focus:** enhanced page navigation moves focus to the main heading; invalid submission to its error summary or first invalid field; inline updates retain focus or move it to a logical successor when the trigger disappears. Background updates never move focus.
+- **Announcements:** keep a stable, initially present `role="status" aria-atomic="true"` region and update its contents with brief meaningful changes. Do not announce every poll or duplicate a focused error summary as an alert.
+- **History:** every navigable URL also returns a full page for direct visits and restoration. When `HX-Request` selects fragments, follow the documented `historyRestoreAsHxRequest: false` guidance and separate HTTP cache variants. Reconcile restored Session views before treating their state as fresh. Disable HTMX snapshot storage on sensitive Session detail pages with `hx-history="false"`.
+- **Dialogs:** open native dialogs with `showModal()`. Mutations use a real POST form, not `method="dialog"`. Keep the dialog open with errors until success; Cancel must remain usable despite invalid fields. Prefer initial focus on Cancel for irreversible actions.
 
-For implementation details and primary-source links, read [the interaction research](docs/research/design-interactions.md), especially before changing response handling, focus management, or history behavior.
+For implementation details and primary-source links, read [the interaction research](docs/research/design-interactions.md) before changing response handling, focus management, or history behavior.
 
 ## Accessibility and motion
 
-- Target WCAG 2.2 AA. Measure rendered contrast: at least 4.5:1 for normal text, 3:1 for large text, and 3:1 for relevant control boundaries/state indicators. An upstream theme is not a compliance guarantee.
-- Use semantic landmarks, ordered headings, visible keyboard focus, and native links/buttons. Preserve usable focus outlines rather than hiding them for aesthetics.
+- Target WCAG 2.2 AA. Measure rendered contrast: at least 4.5:1 for normal text, 3:1 for large text, and 3:1 for control boundaries and state indicators. The palette table is a starting point, not a certificate.
+- Semantic landmarks, ordered headings, visible keyboard focus (`outline: 2px solid brand-readable; outline-offset: 2px`), and native links and buttons. Never hide focus outlines for aesthetics.
 - Dialogs and navigation overlays need an accessible name, predictable initial focus, Escape dismissal where appropriate, keyboard containment while modal, and focus return to the trigger.
-- Use text and/or icons alongside status colors. Never convey success, danger, selection, or freshness by color alone.
-- Keep hover/focus feedback subtle: color/border transitions around 150ms, without size shifts. Respect `prefers-reduced-motion`; avoid pulsing decorations and unnecessary animation.
+- Text and/or icons alongside status colors. Never convey success, danger, selection, or freshness by color alone.
+- Hover and focus feedback are color and border changes around 150ms, no size shifts. Respect `prefers-reduced-motion`; no pulsing or decorative animation.
 - Support text zoom, long labels, and 320 CSS px reflow. Tooltips may supplement labels but cannot carry essential instructions.
+
+## Migration notes
+
+When implementing this theme over the current codebase, expect these changes together in one change set:
+
+- `src/styles.css`: replace the `dim` override with the `atlas` block above; delete `:root { --fx-noise: none; --spacing: 4px }`, the `atlas-backdrop` wash, and the `.btn { height: auto }` and `min-h` overrides; add `table-compact` and the `pointer: coarse` 44px rule; use `var(--radius-field)` in `atlas-skip-link`.
+- `src/views.ts`: `data-theme="atlas"`; remove `min-h-11` and `border border-control-border` from buttons (the theme supplies both); remove v4 leftovers `input-bordered` and `textarea-bordered`; restyle the shell to the sidebar brand band and glass header; move record lists to compact tables with stacked mobile fallbacks.
+- Brand color references: anything that used `bg-primary` to mean the brand now uses `bg-brand`; `bg-primary/20` selection tints become `bg-brand-tint`.
 
 ## Acceptance checklist
 
 For every changed screen or workflow, verify applicable items:
 
-- [ ] Uses the shared theme, shell, components, spacing, and typography; no page-specific palette.
-- [ ] Uses exact `#012B68` for primary branding; lighter brand-blue shades provide readable links/focus, and supporting colors convey real states rather than decoration.
-- [ ] Glass uses the shared recipe without nested blur; opaque fallbacks, transparency/contrast preferences, and scrolling readability are verified on phone and desktop.
+- [ ] Uses the shared `atlas` theme, shell, components, spacing, and typography; no page-specific colors, radii, or shadows.
+- [ ] Exact `#012B68` appears only in the brand band, mark, or a non-control brand moment; buttons use `primary`; links and focus use `brand-readable`; amber stays within budget.
+- [ ] Only the header is translucent, with an opaque fallback and reduced-transparency handling; all other surfaces are opaque.
+- [ ] Corners are 6px on controls, 8px on containers, 4px on badges; controls are 32px on desktop and at least 44px on coarse pointers.
 - [ ] Domain terms, Session state, freshness, and action eligibility match `CONTEXT.md` and backend rules.
-- [ ] Works at 320, 375, 768, 1024, and 1440 CSS px; no page overflow or inaccessible mobile actions.
+- [ ] Works at 320, 375, 768, 1024, and 1440 CSS px; no page overflow; tables become stacked records on phones.
 - [ ] Keyboard-only navigation works, focus is visible, and overlays return focus correctly.
 - [ ] Labels, errors, status announcements, and contrast are checked in the rendered UI.
 - [ ] Initial, loading, empty, validation-error, network-error, and success states behave correctly where applicable.
-- [ ] Slow/failed/repeated requests preserve input and do not start duplicate work; stale information is identified honestly.
+- [ ] Slow, failed, or repeated requests preserve input and do not start duplicate work; stale information is identified honestly.
 - [ ] HTMX swaps preserve expected focus and navigation; Back/Forward and full-page reload work for navigable views.
 - [ ] Reduced motion and 200% text zoom remain usable.
 - [ ] Capture or inspect representative phone and desktop renders; report any unverified checks.
 
 ## Research and sources
 
-Researched 2026-09-05. These rules are Atlas conventions built on upstream components, not an upstream accessibility certification.
+Researched 2026-09-10. These rules are Atlas conventions built on upstream components, not an upstream accessibility certification.
 
-- [Theme research](docs/research/design-theme.md): comparison of `dim`, `dark`, `business`, and `night`, verified tokens, configuration, and contrast caveats.
-- The original stock `dim` palette and flat-surface recommendation are superseded by this document's Atlas navy palette and Glassmorphism treatment. Historical research is not the current palette authority.
-- [Interaction research](docs/research/design-interactions.md): HTMX forms, loading, focus, history, mobile tables, and native dialogs, with official HTMX/W3C/MDN citations.
-- [daisyUI configuration](https://daisyui.com/docs/config/) and [semantic colors](https://daisyui.com/docs/colors/).
-- [daisyUI theme customization](https://daisyui.com/docs/themes/#how-to-customize-an-existing-theme): same-name overrides inherit unspecified values from the built-in theme.
-- [Tailwind source detection](https://tailwindcss.com/docs/detecting-classes-in-source-files) and [responsive design](https://tailwindcss.com/docs/responsive-design).
-- [Heroicons](https://heroicons.com/): the selected SVG icon family.
-- [Tailwind backdrop blur](https://tailwindcss.com/docs/backdrop-filter-blur) and [background opacity](https://tailwindcss.com/docs/background-color): glass surface primitives.
-- [MDN reduced transparency](https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-transparency): preference handling and browser-support limitations.
+- [Dark palette derivation](docs/research/design-dark-palettes.md): reference systems (Primer, Geist, Radix, Linear, Ant, Claude), OKLCH analysis of `#012B68`, the three candidate palettes, contrast tables, and the navy ladder.
+- [Claude design system](docs/research/design-claude-system.md): verified Claude desktop dark tokens, typography, shape, and accent budget principles.
+- [Ant Design dark mode](docs/research/design-antd-dark.md): dark algorithm, neutral ladder, radius and density tokens, semantic triads.
+- [daisyUI 5 tokens](docs/research/design-daisyui-tokens.md): theme variables, size formulas, custom theme mechanics, hover math, and the migration inventory of custom classes.
+- [Theme research](docs/research/design-theme.md) and the prior blue-black glass palette are historical; this document is the current authority.
+- [Interaction research](docs/research/design-interactions.md): HTMX forms, loading, focus, history, mobile tables, and native dialogs.
+- [daisyUI themes](https://daisyui.com/docs/themes/), [colors](https://daisyui.com/docs/colors/), [config](https://daisyui.com/docs/config/); [Tailwind theme variables](https://tailwindcss.com/docs/theme); [Heroicons](https://heroicons.com/).

@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import type { GitHubRepository } from "../src/github.ts";
-import { renderAddRepositoryPage, repositoryMatchesQuery } from "../src/views.ts";
+import type { Repository } from "../src/persistence.ts";
+import { renderAddRepositoryPage, renderRepositoriesPage, repositoryMatchesQuery } from "../src/views.ts";
 
 const repo = (overrides: Partial<GitHubRepository> = {}): GitHubRepository => ({
   id: "1",
@@ -61,5 +62,53 @@ assert(!all.includes("Clear filter"));
 const none = renderAddRepositoryPage({ csrfToken: "a", available: [] });
 assert(none.includes("No Repositories available"));
 assert(!none.includes('name="q"'));
+
+const hxTargets = (html: string) => [...html.matchAll(/\bhx-target="([^"]*)"/g)].map((match) => match[1]);
+const formOpen = (html: string, id: string) => {
+  const match = html.match(new RegExp(`<form id="${id}"[^>]*>`));
+  assert(match, `missing form ${id}`);
+  return match[0];
+};
+
+const addForm = formOpen(all, "add-repository-1");
+assert(
+  !addForm.includes('hx-target="none"'),
+  "Add Repository uses hx-target=none, which HTMX 2 reports as htmx:targetError, none and never POSTs",
+);
+assert(addForm.includes('hx-target="this"'), "Add Repository must target the form so HX-Redirect can run");
+assert(addForm.includes('hx-swap="none"'));
+
+const readdPage = renderAddRepositoryPage({
+  csrfToken: "a",
+  available: [{ repository: repo(), enrolled: true, removedAt: "2026-01-02T00:00:00.000Z", csrfToken: "a" }],
+});
+const readdForm = formOpen(readdPage, "add-repository-1");
+assert(!readdForm.includes('hx-target="none"'));
+assert(readdForm.includes('hx-target="this"'));
+
+const enrolled: Repository = {
+  githubId: "1",
+  installationId: "1",
+  organization: "SandunRathsara",
+  owner: "SandunRathsara",
+  name: "HelloWorld",
+  fullName: "SandunRathsara/HelloWorld",
+  htmlUrl: "https://github.com/SandunRathsara/HelloWorld",
+  description: "First GitHub project",
+  visibility: "public",
+  defaultBranch: "master",
+  archived: false,
+  disabled: false,
+  hasIssues: true,
+  enrolledAt: "2026-01-01T00:00:00.000Z",
+  removedAt: null,
+  accessStatus: "available",
+  accessReason: null,
+};
+const listPage = renderRepositoriesPage("a", [{ repository: enrolled }]);
+const removeForm = formOpen(listPage, "repository-action-1");
+assert(!removeForm.includes('hx-target="none"'));
+assert(removeForm.includes('hx-target="this"'));
+assert(!hxTargets(`${all}${readdPage}${listPage}`).includes("none"));
 
 console.log("repository filter ok");
