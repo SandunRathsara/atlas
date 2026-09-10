@@ -6,6 +6,8 @@ import {
   alertSoft,
   emptyState,
   pageHeader,
+  recordActions,
+  recordIdentity,
   recordTable,
   refreshLine,
   refreshWarning,
@@ -59,15 +61,10 @@ export const renderSpecsPage = ({
       rows: specs.map((spec) => {
         const sessions = sessionsBySpec?.get(spec.issueNumber) ?? [];
         return `<tr>
-          <td>
-            <div class="flex gap-2">
-              ${icon("document-text", 20)}
-              <div class="min-w-0">${specIdentity(spec)}</div>
-            </div>
-          </td>
-          <td>${statusBadge("badge-info", "Open Spec")}</td>
-          <td class="text-muted">${formatTime(spec.updatedAt)}</td>
-          <td><div class="flex flex-wrap items-center gap-1">${specActions(spec, sessions)}</div></td>
+          <td>${recordIdentity(icon("document-text", 20), specIdentity(spec))}</td>
+          <td class="whitespace-nowrap">${statusBadge("badge-info", "Open Spec")}</td>
+          <td class="whitespace-nowrap tabular-nums text-muted">${formatTime(spec.updatedAt)}</td>
+          <td>${recordActions(specActions(spec, sessions))}</td>
         </tr>`;
       }),
       stacked: specs.map((spec) => {

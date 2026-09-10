@@ -8,7 +8,10 @@ import {
   emptyState,
   pageHeader,
   pullRequestsLink,
+  recordActions,
+  recordIdentity,
   recordTable,
+  refreshCell,
   refreshLine,
   refreshWarning,
   repositoryAction,
@@ -34,12 +37,28 @@ export const repositoryMatchesQuery = (
   );
 };
 
-const repositoryIdentity = (name: string, fullName: string, href?: string) => {
+const repositoryIdentity = (
+  name: string,
+  fullName: string,
+  href?: string,
+  extra?: { compact?: boolean; description?: string | null; defaultBranch?: string | null },
+) => {
   const title = href
     ? `<a class="text-brand-readable underline decoration-brand-readable/50 underline-offset-4" href="${href}">${escapeHtml(name)}</a>`
     : `<span class="font-medium">${escapeHtml(name)}</span>`;
-  return `${title}<p class="mt-1 font-mono text-xs text-faint">${escapeHtml(fullName)}</p>`;
+  const compact = extra?.compact === true;
+  const branch = extra && "defaultBranch" in extra
+    ? `<p class="${compact ? "mt-1 truncate" : "mt-2"} text-sm text-muted">Default branch: <code class="font-mono text-base-content">${escapeHtml(extra.defaultBranch ?? "none")}</code></p>`
+    : "";
+  const description = extra?.description
+    ? `<p class="${compact ? "mt-1 truncate" : "mt-2 max-w-prose"} text-sm text-muted">${escapeHtml(extra.description)}</p>`
+    : "";
+  return `${title}<p class="mt-1 break-words font-mono text-xs text-faint">${escapeHtml(fullName)}</p>${branch}${description}`;
 };
+
+const repositoryNotes = (repository: { defaultBranch: string | null; removedAt?: string | null }, browsingOnly = false) =>
+  `${repository.defaultBranch ? "" : `<p class="mt-1 text-sm text-warning">${browsingOnly ? "No default-branch commit; browsing only." : "No default-branch commit; cannot start Sessions."}</p>`}
+    ${repository.removedAt ? `<p class="mt-1 text-sm text-warning">Removed from Atlas; Sessions and local resources are preserved.</p>` : ""}`;
 
 export const renderRepositoriesPage = (
   csrfToken: string,
@@ -59,30 +78,23 @@ export const renderRepositoriesPage = (
         const href = repositoryLink(repository);
         const github = safeExternalUrl(repository.htmlUrl);
         return `<tr>
-          <td>
-            <div class="flex gap-2">
-              ${icon("rectangle-stack", 20)}
-              <div class="min-w-0">${repositoryIdentity(repository.name, repository.fullName, href)}
-                ${repository.description ? `<p class="mt-2 max-w-prose text-sm text-muted">${escapeHtml(repository.description)}</p>` : ""}
-                <p class="mt-2 text-sm text-muted">Default branch: <code class="font-mono text-base-content">${escapeHtml(repository.defaultBranch ?? "none")}</code></p>
-                ${repository.defaultBranch ? "" : `<p class="mt-1 text-sm text-warning">No default-branch commit; cannot start Sessions.</p>`}
-                ${repository.removedAt ? `<p class="mt-1 text-sm text-warning">Removed from Atlas; Sessions and local resources are preserved.</p>` : ""}
-                ${refreshWarning("Access", accessRefresh)}
-                ${refreshWarning("Specs", specsRefresh)}
-              </div>
-            </div>
-          </td>
-          <td>${statusBadge(accessBadgeClass(repository), accessLabel(repository))}</td>
-          <td class="text-muted">${refreshLine("Access", accessRefresh)}</td>
-          <td class="text-muted">${refreshLine("Specs", specsRefresh)}</td>
-          <td>
-            <div class="flex flex-wrap gap-1">
+          <td class="min-w-0">${recordIdentity(
+            icon("rectangle-stack", 20),
+            `${repositoryIdentity(repository.name, repository.fullName, href, {
+              compact: true,
+              description: repository.description,
+              defaultBranch: repository.defaultBranch,
+            })}${repositoryNotes(repository)}`,
+          )}</td>
+          <td class="whitespace-nowrap">${statusBadge(accessBadgeClass(repository), accessLabel(repository))}</td>
+          <td class="text-muted">${refreshCell(accessRefresh)}</td>
+          <td class="text-muted">${refreshCell(specsRefresh)}</td>
+          <td>${recordActions(`
               <a class="btn btn-ghost btn-xs" href="${href}">Browse Specs</a>
               <a class="btn btn-ghost btn-xs" href="${pullRequestsLink(repository)}">Browse Pull requests</a>
               ${github ? `<a class="btn btn-ghost btn-xs" href="${escapeHtml(github)}" target="_blank" rel="noopener noreferrer">${icon("arrow-top-right-on-square", 16)} Open on GitHub</a>` : ""}
-              ${repositoryAction(repository, csrfToken)}
-            </div>
-          </td>
+              ${repositoryAction(repository, csrfToken, true)}
+            `)}</td>
         </tr>`;
       }),
       stacked: repositories.map(({ repository, accessRefresh, specsRefresh }) => {
@@ -90,13 +102,13 @@ export const renderRepositoriesPage = (
         const github = safeExternalUrl(repository.htmlUrl);
         return `<li class="p-3">
           <div class="flex flex-wrap items-start justify-between gap-3">
-            <div class="min-w-0">${repositoryIdentity(repository.name, repository.fullName, href)}</div>
+            <div class="min-w-0 flex-1">${repositoryIdentity(repository.name, repository.fullName, href, {
+              description: repository.description,
+              defaultBranch: repository.defaultBranch,
+            })}</div>
             ${statusBadge(accessBadgeClass(repository), accessLabel(repository))}
           </div>
-          ${repository.description ? `<p class="mt-2 max-w-prose text-sm text-muted">${escapeHtml(repository.description)}</p>` : ""}
-          <p class="mt-2 text-sm text-muted">Default branch: <code class="font-mono text-base-content">${escapeHtml(repository.defaultBranch ?? "none")}</code></p>
-          ${repository.defaultBranch ? "" : `<p class="mt-1 text-sm text-warning">No default-branch commit; cannot start Sessions.</p>`}
-          ${repository.removedAt ? `<p class="mt-1 text-sm text-warning">Removed from Atlas; Sessions and local resources are preserved.</p>` : ""}
+          ${repositoryNotes(repository)}
           <p class="mt-2 text-sm text-muted">${refreshLine("Access", accessRefresh)} · ${refreshLine("Specs", specsRefresh)}</p>
           ${refreshWarning("Access", accessRefresh)}
           ${refreshWarning("Specs", specsRefresh)}
@@ -167,9 +179,9 @@ export const renderAddRepositoryPage = ({
     : "";
   const addForm = (repository: GitHubRepository, enrolled: boolean, removedAt: string | null | undefined, repositoryCsrf: string) =>
     removedAt
-      ? `<form id="add-repository-${escapeHtml(repository.id)}" action="/repositories" method="post" hx-post="/repositories" hx-target="this" hx-swap="none" hx-indicator="#add-progress-${escapeHtml(repository.id)}" hx-disabled-elt="button[type='submit']"><input type="hidden" name="csrf" value="${escapeHtml(repositoryCsrf || csrfToken)}"><input type="hidden" name="repository_id" value="${escapeHtml(repository.id)}"><span data-form-status class="sr-only" role="status" aria-live="polite"></span><button class="btn btn-primary btn-xs" type="submit">Re-add Repository</button><span id="add-progress-${escapeHtml(repository.id)}" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Re-adding Repository...</span></form><span class="text-sm text-warning">Removed from Atlas; history is preserved.</span>`
+      ? `<form id="add-repository-${escapeHtml(repository.id)}" action="/repositories" method="post" hx-post="/repositories" hx-target="this" hx-swap="none" hx-indicator="#add-progress-${escapeHtml(repository.id)}" hx-disabled-elt="button[type='submit']"><input type="hidden" name="csrf" value="${escapeHtml(repositoryCsrf || csrfToken)}"><input type="hidden" name="repository_id" value="${escapeHtml(repository.id)}"><span data-form-status class="sr-only" role="status" aria-live="polite"></span><button class="btn btn-primary btn-xs" type="submit">Re-add Repository</button><span id="add-progress-${escapeHtml(repository.id)}" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Re-adding Repository...</span></form><span class="max-w-48 text-xs leading-normal text-warning">Removed from Atlas; history is preserved.</span>`
       : enrolled
-        ? `<a class="btn btn-primary btn-xs" href="${repositoryLink({ githubId: repository.id })}">Open Specs</a><span class="text-sm text-muted">Already enrolled; adding again keeps the same Repository.</span>`
+        ? `<a class="btn btn-primary btn-xs" href="${repositoryLink({ githubId: repository.id })}">Open Specs</a><span class="max-w-48 text-xs leading-normal text-muted">Already enrolled; adding again keeps the same Repository.</span>`
         : `<form id="add-repository-${escapeHtml(repository.id)}" action="/repositories" method="post" hx-post="/repositories" hx-target="this" hx-swap="none" hx-indicator="#add-progress-${escapeHtml(repository.id)}" hx-disabled-elt="button[type='submit']"><input type="hidden" name="csrf" value="${escapeHtml(repositoryCsrf || csrfToken)}"><input type="hidden" name="repository_id" value="${escapeHtml(repository.id)}"><span data-form-status class="sr-only" role="status" aria-live="polite"></span><button class="btn btn-primary btn-xs" type="submit">Add Repository</button><span id="add-progress-${escapeHtml(repository.id)}" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Adding Repository...</span></form>`;
 
   const list = visible.length === 0 && !error && !filterQuery
@@ -189,13 +201,16 @@ export const renderAddRepositoryPage = ({
             const badge = repository.archived || repository.disabled ? "badge-warning" : "badge-info";
             const label = repository.archived ? "Archived" : repository.disabled ? "Disabled" : "Available";
             return `<tr>
-              <td>${repositoryIdentity(repository.name, repository.fullName)}
-                ${repository.description ? `<p class="mt-2 max-w-prose text-sm text-muted">${escapeHtml(repository.description)}</p>` : ""}
-                <p class="mt-2 text-sm text-muted">Default branch: <code class="font-mono text-base-content">${escapeHtml(repository.defaultBranch ?? "none")}</code></p>
-                ${repository.defaultBranch ? "" : `<p class="mt-1 text-sm text-warning">No default-branch commit; browsing only.</p>`}
-              </td>
-              <td>${statusBadge(badge, `${label} for browsing`)}</td>
-              <td><div class="flex flex-wrap items-center gap-1">${addForm(repository, enrolled, removedAt, repositoryCsrf)}${github ? `<a class="btn btn-ghost btn-xs" href="${escapeHtml(github)}" target="_blank" rel="noopener noreferrer">${icon("arrow-top-right-on-square", 16)} Open on GitHub</a>` : ""}</div></td>
+              <td class="min-w-0">${recordIdentity(
+                icon("rectangle-stack", 20),
+                `${repositoryIdentity(repository.name, repository.fullName, undefined, {
+                  compact: true,
+                  description: repository.description,
+                  defaultBranch: repository.defaultBranch,
+                })}${repositoryNotes(repository, true)}`,
+              )}</td>
+              <td class="whitespace-nowrap">${statusBadge(badge, `${label} for browsing`)}</td>
+              <td>${recordActions(`${addForm(repository, enrolled, removedAt, repositoryCsrf)}${github ? `<a class="btn btn-ghost btn-xs" href="${escapeHtml(github)}" target="_blank" rel="noopener noreferrer">${icon("arrow-top-right-on-square", 16)} Open on GitHub</a>` : ""}`)}</td>
             </tr>`;
           }),
           stacked: visible.map(({ repository, enrolled, removedAt, csrfToken: repositoryCsrf }) => {
@@ -204,12 +219,13 @@ export const renderAddRepositoryPage = ({
             const label = repository.archived ? "Archived" : repository.disabled ? "Disabled" : "Available";
             return `<li class="p-3">
               <div class="flex flex-wrap items-start justify-between gap-3">
-                <div class="min-w-0">${repositoryIdentity(repository.name, repository.fullName)}</div>
+                <div class="min-w-0">${repositoryIdentity(repository.name, repository.fullName, undefined, {
+                  description: repository.description,
+                  defaultBranch: repository.defaultBranch,
+                })}</div>
                 ${statusBadge(badge, `${label} for browsing`)}
               </div>
-              ${repository.description ? `<p class="mt-2 max-w-prose text-sm text-muted">${escapeHtml(repository.description)}</p>` : ""}
-              <p class="mt-2 text-sm text-muted">Default branch: <code class="font-mono text-base-content">${escapeHtml(repository.defaultBranch ?? "none")}</code></p>
-              ${repository.defaultBranch ? "" : `<p class="mt-1 text-sm text-warning">No default-branch commit; browsing only.</p>`}
+              ${repositoryNotes(repository, true)}
               <div class="mt-3 flex flex-wrap items-center gap-2">${addForm(repository, enrolled, removedAt, repositoryCsrf)}${github ? `<a class="btn btn-ghost btn-xs" href="${escapeHtml(github)}" target="_blank" rel="noopener noreferrer">${icon("arrow-top-right-on-square", 16)} Open on GitHub</a>` : ""}</div>
             </li>`;
           }),

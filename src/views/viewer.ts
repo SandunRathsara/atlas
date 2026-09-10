@@ -212,7 +212,7 @@ const renderViewerDescendants = (
     return {
       row: `<tr>
         <td>${identity}</td>
-        <td>${badges}</td>
+        <td class="whitespace-nowrap">${badges}</td>
         <td>${action}</td>
       </tr>`,
       stacked: `<li class="p-3">
@@ -256,7 +256,7 @@ const renderViewerShells = (node: ViewerSessionNode, rootId: string, endpoint: s
     return {
       row: `<tr>
         <td>${command}${output}</td>
-        <td>${badge}</td>
+        <td class="whitespace-nowrap">${badge}</td>
         <td class="text-muted">${cwd}</td>
       </tr>`,
       stacked: `<li class="p-3">

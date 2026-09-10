@@ -25,7 +25,7 @@ export const formatTime = (value: string | null) => {
   const date = new Date(value);
   return Number.isNaN(date.valueOf())
     ? "Unknown"
-    : `${date.toISOString().replace("T", " ").replace(".000Z", " UTC")}`;
+    : `${date.toISOString().slice(0, 19).replace("T", " ")} UTC`;
 };
 
 const htmxConfig =

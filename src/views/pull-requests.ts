@@ -114,7 +114,7 @@ const renderActiveRows = (pullRequest: PullRequest) => {
       <td class="align-top break-words font-mono">${escapeHtml(pullRequest.headRef)}</td>
       <td class="align-top break-words font-mono">${escapeHtml(pullRequest.baseRef)}</td>
       <td class="align-top">${headRefStatus(pullRequest)}</td>
-      <td class="align-top text-muted">${formatTime(pullRequest.updatedAt)}</td>
+      <td class="align-top whitespace-nowrap tabular-nums text-muted">${formatTime(pullRequest.updatedAt)}</td>
     </tr>`,
     stacked: `<li class="p-3">
       <div class="flex flex-wrap items-start justify-between gap-3">

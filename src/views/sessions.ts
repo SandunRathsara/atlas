@@ -10,6 +10,8 @@ import {
   publicationRefreshMarkup,
   publicationResultMarkup,
   publicationStatusLabel,
+  recordActions,
+  recordIdentity,
   recordTable,
   refreshLine,
   refreshWarning,
@@ -244,25 +246,19 @@ const sessionListRecord = (session: Session, pullRequestsRefresh?: RefreshState)
     ${publicationRefreshMarkup(pullRequestsRefresh)}`;
   return {
     row: `<tr>
-      <td>
-        <div class="flex gap-2">
-          ${icon("command-line", 20)}
-          <div class="min-w-0">${identity}
-            <p class="mt-2 max-w-prose truncate text-sm text-muted">Prompt: ${escapeHtml(session.prompt)}</p>
-            ${extra}
-          </div>
-        </div>
-      </td>
-      <td>${badges}</td>
-      <td class="text-right tabular-nums">${session.submissionOrder}</td>
-      <td class="text-muted">${escapeHtml(formatTime(session.submittedAt))}</td>
+      <td>${recordIdentity(icon("command-line", 20), `${identity}
+            <p class="mt-1 max-w-prose truncate text-sm text-muted">Prompt: ${escapeHtml(session.prompt)}</p>
+            ${extra}`)}</td>
+      <td class="whitespace-nowrap">${badges}</td>
+      <td class="whitespace-nowrap text-right tabular-nums">${session.submissionOrder}</td>
+      <td class="whitespace-nowrap tabular-nums text-muted">${escapeHtml(formatTime(session.submittedAt))}</td>
       <td>${escapeHtml(sessionTargetLabel(session))}</td>
       <td>
-        <p class="text-sm">${session.executionSlotHeld ? "Held" : "Not held"}</p>
+        <p class="whitespace-nowrap text-sm">${session.executionSlotHeld ? "Held" : "Not held"}</p>
         <p class="mt-1 text-sm text-muted">${escapeHtml(publicationStatusLabel(session.publicationStatus))}</p>
         <p class="mt-1 text-sm text-muted">${session.reservationState === "held" ? "Held" : session.reservationState === "released" ? "Released" : "None"}</p>
       </td>
-      <td><a class="btn btn-ghost btn-xs" href="${href}">View Session</a></td>
+      <td>${recordActions(`<a class="btn btn-ghost btn-xs" href="${href}">View Session</a>`)}</td>
     </tr>`,
     stacked: `<li class="p-3">
       <div class="flex flex-wrap items-start justify-between gap-3">

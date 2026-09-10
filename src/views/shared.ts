@@ -12,7 +12,7 @@ export const sessionsLink = (repository: Pick<Repository, "githubId">) =>
   `/repositories/${encodeURIComponent(repository.githubId)}/sessions`;
 
 export const statusBadge = (tone: string, label: string) =>
-  `<span class="badge badge-sm ${tone}">${escapeHtml(label)}</span>`;
+  `<span class="badge badge-sm shrink-0 whitespace-nowrap ${tone}">${escapeHtml(label)}</span>`;
 
 export const alertSoft = (state: string, role: "alert" | "status", body: string, extra = "") =>
   `<div class="alert alert-${state} alert-soft mt-6 leading-normal" role="${role}"${extra}>${body}</div>`;
@@ -61,9 +61,9 @@ export const recordTable = ({
       `<th scope="col" class="font-medium text-muted ${aligns?.[index] === "right" ? "text-right" : "text-left"}">${header}</th>`,
     )
     .join("");
-  return `<div class="mt-6 rounded-box border border-edge bg-base-100">
-    <div class="hidden overflow-x-auto md:block" role="region" aria-label="${escapeHtml(label)}">
-      <table class="table table-compact w-full">
+  return `<div class="mt-6 overflow-hidden rounded-box border border-edge bg-base-100">
+    <div class="atlas-table hidden md:block" role="region" aria-label="${escapeHtml(label)}">
+      <table class="table table-compact">
         <caption class="sr-only">${escapeHtml(label)}</caption>
         <thead><tr>${head}</tr></thead>
         <tbody>${rows.join("")}</tbody>
@@ -103,6 +103,12 @@ export const eligibilityNotice = (repository: Repository) => {
   return reasons.join(" ");
 };
 
+export const recordIdentity = (mark: string, body: string) =>
+  `<div class="flex items-start gap-2"><span class="mt-0.5 text-faint">${mark}</span><div class="min-w-0 max-w-md">${body}</div></div>`;
+
+export const recordActions = (actions: string) =>
+  `<div class="record-actions">${actions}</div>`;
+
 export const refreshLine = (label: string, refresh: RefreshState | undefined) => {
   if (!refresh || refresh.availability === "never") return `${label}: never synchronized`;
   if (refresh.requestedGeneration > refresh.completedGeneration) {
@@ -112,6 +118,20 @@ export const refreshLine = (label: string, refresh: RefreshState | undefined) =>
     return `${label}: last complete sync ${formatTime(refresh.lastSuccessAt)}; latest sync unavailable`;
   }
   return `${label}: synced ${formatTime(refresh.lastSuccessAt)}`;
+};
+
+export const refreshCell = (refresh: RefreshState | undefined) => {
+  if (!refresh || refresh.availability === "never") {
+    return `<span class="whitespace-nowrap">never synchronized</span>`;
+  }
+  const time = `<span class="tabular-nums">${formatTime(refresh.lastSuccessAt)}</span>`;
+  if (refresh.requestedGeneration > refresh.completedGeneration) {
+    return `<p class="whitespace-nowrap text-warning">refresh pending</p><p class="mt-1 whitespace-nowrap text-muted">last complete sync ${time}</p>`;
+  }
+  if (refresh.availability === "unavailable" || refresh.availability === "partial") {
+    return `<p class="whitespace-nowrap text-warning">latest sync unavailable</p><p class="mt-1 whitespace-nowrap text-muted">last complete sync ${time}</p>`;
+  }
+  return `<span class="whitespace-nowrap tabular-nums">synced ${time}</span>`;
 };
 
 export const refreshWarning = (label: string, refresh: RefreshState | undefined) => {
@@ -174,13 +194,13 @@ export const specsNotice = (refresh: RefreshState | undefined, specs: Spec[]) =>
   return "";
 };
 
-export const repositoryAction = (repository: Repository, csrfToken: string) => {
+export const repositoryAction = (repository: Repository, csrfToken: string, compact = false) => {
   const id = encodeURIComponent(repository.githubId);
   const action = repository.removedAt ? "/repositories" : `/repositories/${id}/remove`;
   const label = repository.removedAt ? "Re-add Repository" : "Remove from Atlas";
   const progress = repository.removedAt ? "Re-adding Repository..." : "Removing Repository...";
-  const buttonClass = repository.removedAt ? "btn-primary" : "btn-error";
-  return `<form id="repository-action-${escapeHtml(repository.githubId)}" class="flex flex-wrap items-center gap-2" action="${action}" method="post" hx-post="${action}" hx-target="this" hx-swap="none" hx-indicator="#repository-progress-${escapeHtml(repository.githubId)}" hx-disabled-elt="button[type='submit']">
+  const buttonClass = `${repository.removedAt ? "btn-primary" : "btn-error"}${compact ? " btn-xs" : ""}`;
+  return `<form id="repository-action-${escapeHtml(repository.githubId)}" class="flex items-center gap-2" action="${action}" method="post" hx-post="${action}" hx-target="this" hx-swap="none" hx-indicator="#repository-progress-${escapeHtml(repository.githubId)}" hx-disabled-elt="button[type='submit']">
     <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
     ${repository.removedAt ? `<input type="hidden" name="repository_id" value="${escapeHtml(repository.githubId)}">` : ""}
     <span data-form-status class="sr-only" role="status" aria-live="polite"></span>
@@ -333,10 +353,10 @@ export const sessionHistoryRow = (session: Session) => {
   return {
     row: `<tr>
       <td>${identity}</td>
-      <td><span class="flex flex-wrap items-center gap-1">${statusBadge(sessionBadgeClass(session.state), sessionStateLabel(session.state))}${sessionFreshnessMarkup(session)}</span></td>
-      <td class="text-right tabular-nums">${session.submissionOrder}</td>
-      <td class="text-muted">${escapeHtml(formatTime(session.submittedAt))}</td>
-      <td><a class="btn btn-ghost btn-xs" href="${href}">View Session</a></td>
+      <td class="whitespace-nowrap"><span class="flex flex-wrap items-center gap-1">${statusBadge(sessionBadgeClass(session.state), sessionStateLabel(session.state))}${sessionFreshnessMarkup(session)}</span></td>
+      <td class="whitespace-nowrap text-right tabular-nums">${session.submissionOrder}</td>
+      <td class="whitespace-nowrap tabular-nums text-muted">${escapeHtml(formatTime(session.submittedAt))}</td>
+      <td>${recordActions(`<a class="btn btn-ghost btn-xs" href="${href}">View Session</a>`)}</td>
     </tr>`,
     stacked: `<li class="p-3">
       <div class="flex flex-wrap items-start justify-between gap-3">

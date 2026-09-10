@@ -100,6 +100,10 @@
     min-width: 0;
   }
 
+  .flex > .btn {
+    min-width: max-content;
+  }
+
   .font-mono {
     overflow-wrap: anywhere;
   }
@@ -142,23 +146,59 @@
     outline-color: var(--color-brand-readable);
   }
 
+  .atlas-table {
+    overflow-x: auto;
+  }
+
+  .table-compact {
+    width: max-content;
+    min-width: 100%;
+  }
+
   .table-compact :where(th, td) {
     padding-block: 0.5rem;
     padding-inline: 0.75rem;
     font-size: 0.875rem;
     line-height: 1.5;
+    vertical-align: top;
+  }
+
+  .table-compact tbody td:first-child {
+    min-width: 12rem;
+    max-width: 20rem;
+  }
+
+  .table-compact tbody td:not(:first-child) {
+    white-space: nowrap;
   }
 
   .table-compact :where(thead th) {
     background-color: var(--color-base-300);
     color: var(--color-muted);
     font-weight: 500;
+    white-space: nowrap;
   }
 
   .table-compact :where(tbody tr:hover),
   .table-compact :where(tbody tr:hover th),
   .table-compact :where(tbody tr:hover td) {
     background-color: var(--color-neutral);
+  }
+
+  .table-compact .font-mono {
+    overflow-wrap: break-word;
+  }
+
+  .record-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+
+  .record-actions > * {
+    min-width: max-content;
+    flex-shrink: 0;
   }
 }
 
@@ -211,6 +251,21 @@
     white-space: normal;
     overflow-wrap: anywhere;
   }
+}
+
+/* Unlayered so these beat daisyUI/Tailwind utility wrap rules inside tables. */
+.table-compact .badge {
+  display: inline-flex;
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.table-compact .btn {
+  max-width: none;
+  min-width: max-content;
+  white-space: nowrap;
 }
 
 .radio.radio-primary {
