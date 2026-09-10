@@ -16,7 +16,7 @@
     if (!status) return;
 
     status.hidden = false;
-    status.className = "alert alert-error mt-4 leading-normal";
+    status.className = "alert alert-error alert-soft mt-4 leading-normal";
     status.textContent = requestMessage(event.detail.xhr?.status ?? 0);
   });
 
@@ -121,7 +121,7 @@
     const badge = root.querySelector("[data-viewer-connection]");
     if (badge) {
       badge.textContent = state === "fresh" ? "Fresh" : state === "auth" ? "Sign-in expired" : state === "stale" ? "Stale" : "Partial";
-      badge.className = `badge ${state === "fresh" ? "badge-success" : "badge-warning"}`;
+      badge.className = `badge badge-sm ${state === "fresh" ? "badge-success" : "badge-warning"}`;
     }
     const status = root.querySelector("[data-viewer-connection-message]");
     if (status) {
@@ -130,11 +130,11 @@
         status.dataset.viewerState = state;
         status.textContent = text;
       }
-      status.className = state === "fresh" ? "sr-only" : "alert alert-warning mt-6 leading-normal";
+      status.className = state === "fresh" ? "sr-only" : "alert alert-warning alert-soft mt-6 leading-normal";
     } else {
       const notice = document.createElement("div");
       notice.dataset.viewerConnectionMessage = "true";
-      notice.className = "alert alert-warning mt-6 leading-normal";
+      notice.className = "alert alert-warning alert-soft mt-6 leading-normal";
       notice.setAttribute("role", "status");
       notice.textContent = reason || (state === "auth" ? "Your sign-in expired. Sign in again before refreshing this Session view." : "Live Session data is stale; visible content is retained while Atlas reconciles.");
       root.querySelector("[data-viewer-content]")?.before(notice);

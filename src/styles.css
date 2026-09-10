@@ -1,46 +1,56 @@
 @import "tailwindcss";
 
 @plugin "daisyui" {
-  themes: dim --default;
+  themes: false;
 }
 
 @plugin "daisyui/theme" {
-  name: "dim";
+  name: "atlas";
   default: true;
   color-scheme: dark;
-  --color-base-100: #132238;
-  --color-base-200: #0B1628;
-  --color-base-300: #08101E;
-  --color-base-content: #F4F7FC;
-  --color-primary: #012B68;
-  --color-primary-content: #F4F7FC;
-  --color-secondary: #012B68;
-  --color-secondary-content: #F4F7FC;
-  --color-accent: #012B68;
-  --color-accent-content: #F4F7FC;
-  --color-neutral: #1D304A;
-  --color-neutral-content: #F4F7FC;
-  --color-info: #8BB8FF;
-  --color-info-content: #08101E;
-  --color-success: #6ED6B5;
-  --color-success-content: #08101E;
-  --color-warning: #F2C66D;
-  --color-warning-content: #08101E;
-  --color-error: #F49AA6;
-  --color-error-content: #08101E;
-  --radius-field: 0.75rem;
-  --radius-box: 1.25rem;
+
+  --color-base-100: #1A1D23;
+  --color-base-200: #111419;
+  --color-base-300: #080B10;
+  --color-base-content: #ECEFF3;
+  --color-primary: #4373BA;
+  --color-primary-content: #FFFFFF;
+  --color-secondary: #4373BA;
+  --color-secondary-content: #FFFFFF;
+  --color-accent: #E19D63;
+  --color-accent-content: #211208;
+  --color-neutral: #23272C;
+  --color-neutral-content: #ECEFF3;
+  --color-info: #5ABBE6;
+  --color-info-content: #0B1A22;
+  --color-success: #69C27E;
+  --color-success-content: #07180C;
+  --color-warning: #EBA941;
+  --color-warning-content: #1A0F03;
+  --color-error: #F47B74;
+  --color-error-content: #240A08;
+
+  --radius-selector: 0.25rem;
+  --radius-field: 0.375rem;
+  --radius-box: 0.5rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.2rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
 }
 
 @theme {
-  --color-brand-readable: #8BB8FF;
-  --color-muted: #A9B8CC;
-  --color-control-border: #7086A5;
-}
-
-:root {
-  --fx-noise: none;
-  --spacing: 4px;
+  --color-brand: #012B68;
+  --color-brand-content: #EEF2F9;
+  --color-brand-readable: #83AFF3;
+  --color-brand-tint: #192941;
+  --color-muted: #A0A5AC;
+  --color-faint: #6D7279;
+  --color-edge: #2B3139;
+  --color-control-border: #666C76;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 @source "./";
@@ -58,14 +68,31 @@
 
 @layer components {
   .atlas-glass {
-    background-color: var(--color-base-100);
-    border: 1px solid rgb(244 247 252 / 0.16);
-    box-shadow: inset 0 1px 0 rgb(244 247 252 / 0.10), 0 12px 30px rgb(0 0 0 / 0.18);
+    background-color: var(--color-base-200);
+    border-bottom: 1px solid var(--color-edge);
+  }
+
+  .atlas-float {
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.32);
   }
 
   .btn {
     max-width: 100%;
     white-space: normal;
+  }
+
+  .btn-primary {
+    border-color: transparent;
+  }
+
+  .btn:not(.btn-primary):not(.btn-secondary):not(.btn-accent):not(.btn-info):not(.btn-success):not(.btn-warning):not(.btn-error):not(.btn-ghost):not(.btn-link) {
+    border-color: var(--color-control-border);
+  }
+
+  .input,
+  .select,
+  .textarea {
+    border-color: var(--color-control-border);
   }
 
   .grid > *,
@@ -87,10 +114,10 @@
     top: 1rem;
     z-index: 50;
     transform: translateY(-200%);
-    border-radius: 0.75rem;
+    border-radius: var(--radius-field);
     background: var(--color-primary);
     color: var(--color-primary-content);
-    padding: 0.75rem 1rem;
+    padding: 0.5rem 0.75rem;
   }
 
   .atlas-skip-link:focus {
@@ -114,18 +141,37 @@
   a:focus-visible {
     outline-color: var(--color-brand-readable);
   }
+
+  .table-compact :where(th, td) {
+    padding-block: 0.5rem;
+    padding-inline: 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  .table-compact :where(thead th) {
+    background-color: var(--color-base-300);
+    color: var(--color-muted);
+    font-weight: 500;
+  }
+
+  .table-compact :where(tbody tr:hover),
+  .table-compact :where(tbody tr:hover th),
+  .table-compact :where(tbody tr:hover td) {
+    background-color: var(--color-neutral);
+  }
 }
 
-@supports (backdrop-filter: blur(4px)) {
+@supports (backdrop-filter: blur(8px)) {
   .atlas-glass {
-    background-color: color-mix(in srgb, var(--color-base-100) 60%, transparent);
-    backdrop-filter: blur(4px);
+    background-color: color-mix(in srgb, var(--color-base-200) 78%, transparent);
+    backdrop-filter: blur(8px);
   }
 }
 
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
   .atlas-glass {
-    background-color: var(--color-base-100);
+    background-color: var(--color-base-200);
     backdrop-filter: none;
   }
 }
@@ -147,11 +193,16 @@
   }
 }
 
-@layer utilities {
-  .btn {
-    height: auto;
+@media (pointer: coarse) {
+  .btn,
+  .input,
+  .select,
+  .textarea {
+    min-height: 44px;
   }
+}
 
+@layer utilities {
   .badge {
     max-width: 100%;
     min-height: var(--size);
@@ -159,10 +210,6 @@
     line-height: 1.25;
     white-space: normal;
     overflow-wrap: anywhere;
-  }
-
-  .atlas-backdrop {
-    background-image: radial-gradient(circle at top left, rgb(1 43 104 / 0.2), transparent 36rem);
   }
 }
 

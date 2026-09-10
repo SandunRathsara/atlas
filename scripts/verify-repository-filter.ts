@@ -47,7 +47,7 @@ assert(filtered.includes("Showing"));
 assert(filtered.includes("tabular-nums\">1</span>"));
 assert(filtered.includes("tabular-nums\">2</span>"));
 assert(filtered.includes("Clear filter"));
-assert(filtered.includes("join-item"));
+assert(filtered.includes('id="repository-filter"'));
 
 const empty = renderAddRepositoryPage({ csrfToken: "a", available, query: "zzzz" });
 assert(empty.includes("No matching Repositories"));
