@@ -51,6 +51,11 @@ test -d "$release_root/node_modules/htmx.org"
 test ! -d "$release_root/node_modules/typescript"
 test -f "$release_root/scripts/atlas-gh.ts"
 test -f "$release_root/scripts/atlas-git-credential.ts"
+test -f "$release_root/src/updater-server.ts"
+test -f "$release_root/src/updater.ts"
+test -x "$release_root/deploy/bootstrap.sh"
+test -x "$release_root/deploy/check-health.sh"
+test -f "$release_root/deploy/systemd/atlas-updater.service"
 bash "$release_root/deploy/verify-assets.sh"
 
 pick_port() {
@@ -104,6 +109,11 @@ jq -e --arg tag "$tag" --arg sha "$commit" \
   '.atlas.process == true and .atlas.release.published == true and .atlas.release.tag == $tag and
    .atlas.release.gitSha == $sha and .persistence.healthy == true and .openCode.ready == false' \
   >/dev/null <<<"$response"
+activation_response=$(printf 'Authorization: Bearer fixture-secret\nAccept: application/json\n' |
+  curl --silent --show-error --max-time 10 --header @- "http://127.0.0.1:$port/health?activation=1")
+jq -e --arg tag "$tag" --arg sha "$commit" \
+  '.atlas.process == true and .atlas.release.tag == $tag and .atlas.release.gitSha == $sha and
+   .persistence.healthy == true and (has("openCode") | not)' >/dev/null <<<"$activation_response"
 if ATLAS_SHARED_TOKEN=fixture-secret \
     ATLAS_HEALTH_URL="http://127.0.0.1:$port/health" \
     ATLAS_EXPECTED_RELEASE_TAG="$tag" \

@@ -93,7 +93,7 @@ must be non-empty and a normal updater must refuse activation. Schema-1 fields
 will not be removed or reinterpreted; a future incompatible contract requires
 an explicit compatibility path readable by the installed and previous release.
 
-## Discovery and staging
+## Discovery, staging, and approval
 
 An installed Atlas process lists all public GitHub Releases at startup and every
 four hours; **Check now** uses the same path. It reads every candidate's
@@ -113,9 +113,26 @@ reconciled from updater status. Host runtime differences and rollback-incompatib
 release instructions remain visible on `/updates`.
 
 Staging does not pause Session preparation, install dependencies, build CSS,
-select a release, restart Atlas, or inspect/manage OpenCode. Approval remains
-required, but activation controls are intentionally absent until the activation
-and rollback slice is delivered.
+select a release, restart Atlas, or inspect/manage OpenCode. A staged,
+host-runtime-eligible, code-only-compatible candidate exposes **Install**. The
+authenticated approval is durably recorded before Atlas waits up to five minutes
+for preparation/handoff to reach a safe checkpoint. Repeated or lost requests
+reconcile against the one updater status boundary rather than starting a second
+activation.
+
+The surviving updater stops only Atlas, atomically changes `/opt/atlas/current`,
+restarts Atlas, and allows 60 seconds for the candidate's exact identity and
+healthy persistence. It uses the Atlas-only form of the authenticated health
+route and never queries or gates on OpenCode. Failure selects and verifies the
+previous working release without restoring older data. The failed tag remains
+suppressed across restarts until **Retry**; a later Release is independently
+eligible. A checkpoint timeout is a durable abandonment and leaves the current
+release selected. Release deletion remains outside this slice.
+
+Updater schema 1 keeps its original staging fields and adds activation state,
+previous-release identity, progress/result, and failed-tag suppression. This is
+deliberately additive so the previous Atlas release can still read staging
+status after rollback.
 
 Authenticated health reports the same identity under `atlas.release`, existing
 `persistence` health, and independent OpenCode diagnostics. Candidate success

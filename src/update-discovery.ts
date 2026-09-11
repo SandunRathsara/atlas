@@ -1,4 +1,5 @@
 import type { Persistence, UpdateDiscoveryState } from "./persistence.ts";
+import type { UpdatePauseOutcome } from "./update-pause.ts";
 import {
   assertReleaseMetadata,
   compareReleaseTags,
@@ -27,6 +28,7 @@ export type UpdateService = {
   stop: () => void;
   check: () => Promise<void>;
   status: () => Promise<UpdateStatus>;
+  install: (tag: string, retry: boolean, pause: () => Promise<UpdatePauseOutcome>) => Promise<void>;
 };
 
 type GitHubRelease = { tag_name: string; draft: boolean; prerelease: boolean };
@@ -69,6 +71,7 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
   let checking = false;
   let currentCheck: Promise<void> | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
+  let activationWork: { tag: string; task: Promise<void> } | undefined;
 
   const persist = (operation: () => void) => {
     try {
@@ -171,9 +174,138 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
     };
   };
 
+  const matchingActivation = (updaterStatus: UpdaterStatus, candidate: ReleaseMetadata) =>
+    updaterStatus.activation.metadata?.identity.tag === candidate.identity.tag;
+
+  const abandonDurably = async (candidate: ReleaseMetadata, message: string) => {
+    while (true) {
+      try {
+        const durable = await options.updater.abandonActivation(candidate, message);
+        if (matchingActivation(durable, candidate) && durable.activation.state !== "awaiting_checkpoint") return;
+      } catch {
+        try {
+          const durable = await options.updater.status();
+          if (!matchingActivation(durable, candidate) || durable.activation.state !== "awaiting_checkpoint") return;
+        } catch {
+          // Retry until the surviving updater records or supersedes this abandonment.
+        }
+      }
+      await Bun.sleep(250);
+    }
+  };
+
+  const continueActivation = async (
+    candidate: ReleaseMetadata,
+    pause: () => Promise<UpdatePauseOutcome>,
+  ) => {
+    const outcome = await pause();
+    if (outcome.status === "timed_out") {
+      await abandonDurably(
+        candidate,
+        "Activation was abandoned because Atlas preparation or handoff did not reach a safe checkpoint within five minutes.",
+      );
+      return;
+    }
+
+    let accepted = false;
+    try {
+      const requested = await options.updater.activate(candidate);
+      accepted = matchingActivation(requested, candidate) && requested.activation.state !== "awaiting_checkpoint";
+    } catch {
+      // Reconcile the lost response from durable updater state below.
+    }
+    while (!accepted) {
+      try {
+        const durable = await options.updater.status();
+        if (!matchingActivation(durable, candidate)) break;
+        if (durable.activation.state !== "awaiting_checkpoint") {
+          accepted = true;
+          break;
+        }
+        const requested = await options.updater.activate(candidate);
+        accepted = matchingActivation(requested, candidate) && requested.activation.state !== "awaiting_checkpoint";
+      } catch {
+        // Keep the safe pause while the surviving updater's decision is unavailable.
+      }
+      if (!accepted) await Bun.sleep(250);
+    }
+    if (!accepted) {
+      outcome.resume();
+      await abandonDurably(candidate, "Activation was abandoned because the host updater could not confirm the request.");
+      return;
+    }
+
+    while (true) {
+      try {
+        const durable = await options.updater.status();
+        if (matchingActivation(durable, candidate) && ![
+          "awaiting_checkpoint", "requested", "stopping", "selecting", "starting", "validating",
+          "selecting_previous", "restarting_previous", "validating_previous",
+        ].includes(durable.activation.state)) {
+          outcome.resume();
+          return;
+        }
+      } catch {
+        // The updater owns recovery; retry status without changing the active selection.
+      }
+      await Bun.sleep(250);
+    }
+  };
+
+  const install = async (tag: string, retry: boolean, pause: () => Promise<UpdatePauseOutcome>) => {
+    if (activationWork) {
+      if (activationWork.tag !== tag) throw new Error("Another Atlas activation is already in progress.");
+      return;
+    }
+    const current = await status();
+    const candidate = current.available;
+    const updaterStatus = current.updater;
+    if (!candidate || candidate.identity.tag !== tag) throw new Error("The requested release is not the available Atlas release.");
+    if (!updaterStatus) throw new Error("The host updater is unavailable.");
+    if (matchingActivation(updaterStatus, candidate) &&
+        ["awaiting_checkpoint", "requested", "stopping", "selecting", "starting", "validating", "selecting_previous", "restarting_previous", "validating_previous"].includes(updaterStatus.activation.state)) {
+      return;
+    }
+    if (updaterStatus.state !== "staged" || updaterStatus.metadata?.identity.tag !== tag || !updaterStatus.stagedPath ||
+        updaterStatus.requirements === null || updaterStatus.requirements.unmet.length > 0) {
+      throw new Error("The requested release is not fully staged and host-runtime eligible.");
+    }
+    if (!candidate.rollback.codeOnlyCompatible) throw new Error("The requested release requires manual maintenance.");
+    const suppressed = updaterStatus.activation.failedTags.includes(tag);
+    if (suppressed !== retry) throw new Error(suppressed ? "This failed release requires Retry." : "This release does not require Retry.");
+
+    let prepared: UpdaterStatus;
+    try {
+      prepared = await options.updater.prepareActivation(candidate, retry);
+    } catch (error) {
+      try {
+        const durable = await options.updater.status();
+        if (!matchingActivation(durable, candidate) || durable.activation.state !== "awaiting_checkpoint") throw error;
+        prepared = durable;
+      } catch {
+        throw error;
+      }
+    }
+    if (!matchingActivation(prepared, candidate) || prepared.activation.state !== "awaiting_checkpoint") {
+      throw new Error("The host updater did not persist the activation approval.");
+    }
+    const task = continueActivation(candidate, pause).finally(() => {
+      if (activationWork?.task === task) activationWork = undefined;
+    });
+    activationWork = { tag, task };
+  };
+
   const start = () => {
     if (timer) return;
     void check();
+    void options.updater.status().then((updaterStatus) => {
+      if (updaterStatus.activation.state === "awaiting_checkpoint" && updaterStatus.activation.metadata) {
+        return options.updater.abandonActivation(
+          updaterStatus.activation.metadata,
+          "Activation was abandoned because Atlas restarted before confirming its safe checkpoint.",
+        );
+      }
+    }).catch(() => undefined);
     timer = scheduleEvery(() => void check(), UPDATE_CHECK_INTERVAL_MS);
     (timer as { unref?: () => void }).unref?.();
   };
@@ -183,7 +315,7 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
     timer = undefined;
   };
 
-  return { start, stop, check, status };
+  return { start, stop, check, status, install };
 };
 
 export const createUnavailableUpdateService = (
@@ -193,6 +325,7 @@ export const createUnavailableUpdateService = (
   start: () => undefined,
   stop: () => undefined,
   check: async () => undefined,
+  install: async () => { throw new Error("The host updater is unavailable."); },
   status: async () => {
     const discovery = persistence.getUpdateDiscoveryState();
     return {

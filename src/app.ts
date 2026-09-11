@@ -118,6 +118,7 @@ export type AppOptions = {
   openCode?: OpenCodeHandoffService;
   releaseIdentity?: ReleaseIdentity;
   updates?: UpdateService;
+  startPausedForUpdate?: boolean;
   sharedToken?: string;
 };
 
@@ -493,6 +494,7 @@ export const createApp = (options: AppOptions) => {
   });
   openCode = openCodeService;
   const updatePause = createUpdatePauseCoordinator({ preparation, openCode: openCodeService });
+  if (options.startPausedForUpdate) void updatePause.pause();
   const sessionViewer = createSessionViewerService(openCodeService);
   openCodeService.onTransport((state) => {
     if (state === "connected") preparation.enqueue();
@@ -527,14 +529,14 @@ export const createApp = (options: AppOptions) => {
   app.get("/health", (c) => {
     const databaseHealthy = persistence.checkHealth();
     const persistenceHealth = persistence.getHealth();
-    const openCodeReadiness = currentOpenCodeReadiness();
+    const activationHealth = c.req.query("activation") === "1";
     const status: 200 | 503 = databaseHealthy && persistenceHealth.healthy ? 200 : 503;
     setPrivateHtmlHeaders(c);
     return c.json({
       status: status === 200 ? "ok" : "degraded",
       atlas: { process: true, release: releaseIdentity },
       persistence: persistenceHealth,
-      openCode: openCodeReadiness,
+      ...(!activationHealth ? { openCode: currentOpenCodeReadiness() } : {}),
     }, status);
   });
 
@@ -927,13 +929,14 @@ export const createApp = (options: AppOptions) => {
   const updatesPage = async (c: Context, fragment = false) => {
     const identity = c.get("auth");
     const status = await updates.status();
+    const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
     setPrivateHtmlHeaders(c);
-    if (fragment && isHtmx(c)) return c.html(renderUpdatesStatus(status));
+    if (fragment && isHtmx(c)) return c.html(renderUpdatesStatus(status, csrfToken));
     return c.html(renderShell({
       title: "Updates",
-      csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
+      csrfToken,
       inbox: inboxFromRequest(c),
-      content: renderUpdatesPage(status, auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined)),
+      content: renderUpdatesPage(status, csrfToken),
     }));
   };
 
@@ -951,6 +954,31 @@ export const createApp = (options: AppOptions) => {
     const identity = c.get("auth");
     if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return c.text("Request rejected", 403);
     void updates.check().catch(() => undefined);
+    if (isHtmx(c)) {
+      c.header("HX-Redirect", "/updates");
+      return c.body(null, 200);
+    }
+    return c.redirect("/updates", 303);
+  });
+  app.post("/updates/install", async (c) => {
+    setPrivateHtmlHeaders(c);
+    let form: Record<string, unknown>;
+    try {
+      form = await parseForm(c.req.raw);
+    } catch (error) {
+      if (error instanceof FormBodyTooLarge) return c.text("Request body is too large", 413);
+      return c.text("Malformed update request", 400);
+    }
+    const identity = c.get("auth");
+    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return c.text("Request rejected", 403);
+    const tag = stringField(form.tag);
+    const retry = stringField(form.retry) === "1";
+    if (!tag) return c.text("A release tag is required", 400);
+    try {
+      await updates.install(tag, retry, updatePause.pause);
+    } catch (error) {
+      return c.text(error instanceof Error ? error.message : "The activation request was rejected.", 409);
+    }
     if (isHtmx(c)) {
       c.header("HX-Redirect", "/updates");
       return c.body(null, 200);

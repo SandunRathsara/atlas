@@ -20,7 +20,7 @@ service_group=omega
   echo "credential supplier assets are incomplete" >&2
   exit 1
 }
-[[ -f "$source_root/src/updater-server.ts" && -f "$source_root/src/updater.ts" && -f "$source_root/src/release.ts" ]] || {
+[[ -f "$source_root/src/updater-server.ts" && -f "$source_root/src/updater.ts" && -f "$source_root/src/release.ts" && -f "$source_root/deploy/check-health.sh" ]] || {
   echo "updater assets are incomplete" >&2
   exit 1
 }
@@ -36,6 +36,7 @@ install -d -m 0755 -o root -g root "$updater_root"
 install -m 0444 -o root -g root "$source_root/src/updater-server.ts" "$updater_root/updater-server.ts"
 install -m 0444 -o root -g root "$source_root/src/updater.ts" "$updater_root/updater.ts"
 install -m 0444 -o root -g root "$source_root/src/release.ts" "$updater_root/release.ts"
+install -m 0555 -o root -g root "$source_root/deploy/check-health.sh" "$updater_root/check-health.sh"
 install -d -m 0750 -o root -g "$service_group" "$config_root"
 install -d -m 0700 -o "$service_user" -g "$service_group" "$data_root"
 install -d -m 0755 -o root -g root /opt/atlas/releases
