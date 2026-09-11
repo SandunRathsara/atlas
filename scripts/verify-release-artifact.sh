@@ -64,6 +64,8 @@ mkdir -m 0700 "$run_root" "$run_root/home" "$run_root/sessions"
 ATLAS_RELEASE_ROOT="$release_root" \
 ATLAS_SHARED_TOKEN=fixture-secret \
 ATLAS_GITHUB_WEBHOOK_SECRET=fixture-webhook-secret \
+ATLAS_GITHUB_ORGANIZATION=fixture-org \
+ATLAS_GITHUB_INSTALLATION_ID=1 \
 ATLAS_PORT="$port" \
 ATLAS_WEBHOOK_PORT="$webhook_port" \
 ATLAS_DATABASE_PATH="$run_root/atlas.sqlite" \
