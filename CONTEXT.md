@@ -51,3 +51,7 @@ _Avoid_: Running Session when referring to all unfinished Sessions
 **Stale**:
 A freshness warning that Atlas's live connection is disconnected or reconciliation is incomplete. It accompanies rather than replaces a Session's semantic state.
 _Avoid_: Stall, timeout, hang
+
+## UI wording
+
+**Inbox** is shell wording for current Specs and their latest Session, not a domain object. **Settled** is a UI group for Specs whose latest Session is terminal, not a Session state.
