@@ -253,8 +253,22 @@ try {
 
     if (mode === "retry") {
       failureHost.unhealthy.delete(sameBuild10.identity.tag);
-      await failureUpdates.install(sameBuild10.identity.tag, true, pause);
+      const retryApp = createApp({
+        persistence: failurePersistence,
+        releaseIdentity: installed.identity,
+        updates: failureUpdates,
+        sharedToken: "secret",
+        github,
+        openCode,
+      });
+      response = await retryApp.fetch(new Request("http://atlas.test/updates/install", {
+        method: "POST",
+        headers: { Authorization: "Bearer secret", "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ tag: sameBuild10.identity.tag, retry: "1" }),
+      }));
+      assert.equal(response.status, 303, "explicit Retry HTTP did not accept the failed build");
       await waitFor(async () => (await failureClient.status()).activation.state === "succeeded", "explicit Retry did not permit the failed build");
+      await waitFor(() => retryApp.updatePause.state() === "active", "explicit Retry did not release the safe pause");
     } else {
       failureReleases = [semverChange, sameBuild12, sameBuild10, installed];
       await failureUpdates.check(pause);
