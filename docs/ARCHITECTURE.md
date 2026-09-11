@@ -107,4 +107,4 @@ No accepted ADRs (`docs/adr/INDEX.md` is empty). Constraints from shipped code a
 - Managed Git invocations must match `deploy/pins.env`.
 - Theme tokens live in `src/styles.css` / `DESIGN.md`. Do not copy hex values into templates.
 
-<!-- repo-map-synced: 7d9e6454ba65aeef70d1ec7bf877807bb3e23a28 -->
+<!-- repo-map-synced: 1546f2d1ed3c9c58dca279e24a0b66d1de784525 -->

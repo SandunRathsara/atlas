@@ -157,4 +157,4 @@ _Avoid_: Stall, timeout, hang
 - Design guidelines do not introduce features or change business rules.
 - Phase 1 has no off-site backup. Snapshots cannot undo GitHub effects. Shared host identity `omega` is not hostile-agent isolation.
 
-<!-- repo-map-synced: 7d9e6454ba65aeef70d1ec7bf877807bb3e23a28 -->
+<!-- repo-map-synced: 1546f2d1ed3c9c58dca279e24a0b66d1de784525 -->

@@ -52,7 +52,7 @@ Returns `AtlasApp`. Options: `AppOptions`.
 | GET/POST | `/sessions/:sessionId/reservation/release` | Explicit reservation release. |
 | GET | `/sessions/:sessionId/view` | Viewer fragment or page. |
 
-Internal (not exported): `isCurrentSpec`, `isEligibleRepository`, `parseForm`, `securityHeaders`, `saveCandidate`, `refreshRepository`, `refreshPullRequests`, `enrolledInboxRepository`, `inboxPath`, `selectedSpecForPath`, `inboxFromRequest`, `rememberInboxFilter`, `manageInboxFilter`.
+Internal (not exported): `isCurrentSpec`, `isEligibleRepository`, `parseForm`, `securityHeaders`, `saveCandidate`, `refreshRepository`, `refreshPullRequests`, `enrolledInboxRepository`, `inboxLocation`, `selectedSpecForPath`, `inboxFromRequest`, `rememberInboxFilter`, `manageInboxFilter`.
 
 ### Auth — `src/auth.ts#createAuth`
 
@@ -112,7 +112,7 @@ Returns `{ hydrate }`. Also `createViewerEventReducer`, `ViewerScopeError`. Type
 
 | Symbol | Owner |
 |---|---|
-| `renderLoginForm`, `renderLoginPage`, `PendingStartSession` | `src/views/shell.ts` |
+| `renderShell`, `renderLoginForm`, `renderLoginPage`, `PendingStartSession` | `src/views/shell.ts` |
 | `InboxContext`, `renderInboxFilter`, `renderInboxGroups`, `renderInboxList`, `renderInboxPage` | `src/views/inbox.ts` |
 | `renderRepositoriesPage`, `renderAddRepositoryPage`, `repositoryMatchesQuery` | `src/views/repositories.ts` |
 | `renderSpecsPage`, `renderSpecDetailPage`, `renderSpecUnavailablePage` | `src/views/specs.ts` |
@@ -120,6 +120,8 @@ Returns `{ hydrate }`. Also `createViewerEventReducer`, `ViewerScopeError`. Type
 | `renderPullRequestsPage` | `src/views/pull-requests.ts` |
 | `renderStartSessionForm`, `renderStartSessionPage`, `renderSessionsPage`, `renderPendingStartSessionPage`, `renderPendingStartSessionFragment`, `renderTargetReconfirmationPage`, `renderTargetReconfirmationForm`, `renderReservationReleasePage`, `renderReservationReleaseForm` | `src/views/sessions.ts` |
 | `renderSessionDetailPage`, `renderSessionViewerFragment` | `src/views/viewer.ts` |
+
+Inbox navigation internals: `src/views/inbox.ts#renderInboxUtility` owns the filtered Repository utility links and their path/query current-state predicates; `utilityLink` owns their shared markup.
 
 Shared markup: `src/views/html.ts` (`escapeHtml`, `safeExternalUrl`, `renderDocument`), `src/views/shared.ts` (`pageHeader`, `recordTable`, access labels/badges, refresh warnings, session/publication markup), `src/views/icons.ts#icon`. Theme: `src/styles.css` → `public/app.css`. Client glue: `public/app.js` preserves inbox poll focus, open details, and scroll position after outerHTML swaps.
 
@@ -131,7 +133,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 
 **Land on `/`.** `src/app.ts#createApp` GET `/` → `src/inbox-state.ts#readVisitCookie` → `Persistence.findLandingSession` → 303 to the earliest new terminal Session, otherwise the earliest unfinished Session with Waiting first, otherwise the remembered enrolled Repository's Spec list, `/inbox` when Repositories exist, or `/repositories/new`. Every redirect writes `atlas_visit`; a selected Session/Repository also writes `atlas_inbox`.
 
-**Inbox.** GET `/inbox` → `inboxFromRequest` (`listInbox`, cookie/query filter) → `src/views/inbox.ts#renderInboxPage` in `renderShell`; a valid remembered filter makes bare `/inbox` redirect to the canonical `?repository=` URL. GET `/inbox/list` with `HX-Request` → `renderInboxList` (self-swapping outerHTML, 30s poll, `hx-push-url="false"`). `inboxPath` reads `HX-Current-URL`; `selectedSpecForPath` keeps the Spec row selected across Spec, Start Session, Session target/release/view paths. `renderSpecsUnavailable` warns for mixed `never`/`partial`/`unavailable` Specs refresh states without replacing cached rows or showing a false empty state. `public/app.js` restores focus, `<details>` state, and scroll after a successful poll swap. Direct visit returns the full page.
+**Inbox.** GET `/inbox` → `inboxFromRequest` (`listInbox`, cookie/query filter) → `src/views/inbox.ts#renderInboxPage` in `renderShell`; a valid remembered filter makes bare `/inbox` redirect to the canonical `?repository=` URL. GET `/inbox/list` with `HX-Request` → `renderInboxList` (self-swapping outerHTML, 30s poll, `hx-push-url="false"`). `inboxLocation` reads the path and query from `HX-Current-URL`; `selectedSpecForPath` keeps the Spec row selected across Spec, Start Session, Session target/release/view paths, while the All Sessions utility is current only for `status=all`. Sidebar Spec groups live in the `Spec inbox` navigation landmark. `renderSpecsUnavailable` warns for mixed `never`/`partial`/`unavailable` Specs refresh states without replacing cached rows or showing a false empty state. `public/app.js` restores focus, `<details>` state, and scroll after a successful poll swap. Direct visit returns the full page.
 
 **Login.** `src/app.ts#createApp` GET `/login` → `src/auth.ts#createAuth.issueCsrf` → `src/views/shell.ts#renderLoginPage`. POST `/login` → `validateLogin` / `matchesSharedToken` → `createSession`. Unauthenticated start POSTs go through `preserveUnauthenticatedStart`.
 
@@ -205,7 +207,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 | `bun run verify:issue29` | Session viewer hydrate, SSE (no transcript leak). |
 | `bun run verify:inbox` | Inbox Spec projection, latest Session, group/state ordering, Settled cap, terminal unread time, and landing selection. |
 | `bun run verify:landing` | GET `/` landing redirects, per-browser `atlas_visit` / `atlas_inbox`, and canonical `/inbox` filter URL. |
-| `bun run verify:inbox-shell` | Desktop sidebar, canonical/filter cookie behavior, selected Spec identity, `/inbox/list` fragment contract, access semantics, and global `/sessions?status=all`. |
+| `bun run verify:inbox-shell` (`scripts/verify-inbox-shell.ts`) | Desktop sidebar and navigation landmarks, canonical/filter cookie behavior, selected Spec identity, `/inbox/list` fragment contract, access semantics, and exact `status=all` utility state. |
 | `bun run verify:inbox-page` | `/inbox` full/fragment pages, phone Inbox link, mixed refresh warnings, access badges, and empty/error states. |
 | `bun scripts/verify-clone-scope.ts` | Clone git env + credential helper isolation. |
 | `bun scripts/verify-repository-filter.ts` | `repositoryMatchesQuery` + add-repo UI. |
@@ -213,4 +215,4 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 | `bash deploy/verify-assets.sh` | Deploy file set + syntax. Does not enable services. |
 | `bash deploy/verify-sqlite-wal.sh` | Bun/OpenCode SQLite WAL pin. |
 
-<!-- repo-map-synced: 7d9e6454ba65aeef70d1ec7bf877807bb3e23a28 -->
+<!-- repo-map-synced: 1546f2d1ed3c9c58dca279e24a0b66d1de784525 -->
