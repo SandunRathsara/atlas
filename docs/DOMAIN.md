@@ -4,9 +4,9 @@ Answers: why does this system exist? Populated and kept current by `/refresh-rep
 
 ## Problem and Outcomes
 
-Atlas is an internal control plane for a team that already writes work as GitHub issues. It lets that team browse onboarded GitHub Repositories and start autonomous OpenCode Sessions from team-authored Specs, then observe those Sessions without Atlas itself publishing GitHub Pull requests or stacks.
+Atlas is an internal control plane for a team that already writes work as GitHub issues. It lets that team triage Specs across onboarded GitHub Repositories and start autonomous OpenCode Sessions from team-authored Specs, then observe those Sessions without Atlas itself publishing GitHub Pull requests or stacks.
 
-Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; read-only Pull request and native-stack browsing; authenticated Session directory preparation; a guarded OpenCode handoff; Session viewing; Atlas-side stack reservation hold and release.
+Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; an inbox of current Specs with landing on `/`; read-only Pull request and native-stack browsing; authenticated Session directory preparation; a guarded OpenCode handoff; Session viewing; Atlas-side stack reservation hold and release.
 
 ## Actors
 
@@ -22,6 +22,7 @@ Shipped outcomes: private sign-in; durable Repository, Spec, and Session records
 
 - Sign in with the shared team credential (browser cookie or `Authorization: Bearer`).
 - Enroll a Repository from the GitHub App installation inventory (org-filtered). Soft-remove it without deleting history.
+- Land on `/` per visit rules; browse the inbox of current Specs (Repository as a filter).
 - Browse current Specs for an enrolled Repository.
 - Browse Pull requests and native GitHub stacks (read-only).
 - Start at most one unfinished Session per Spec, choosing a default-branch, native-stack, or standalone-parent target.
@@ -39,6 +40,19 @@ Operator-issued `ATLAS_SHARED_TOKEN`. Browser session cookie is `Secure`, `HttpO
 ### Enroll Repository
 
 Team picks a candidate from the configured organization's App inventory. Atlas persists the Repository and refreshes access plus Specs. Atlas does not auto-enroll every Repository the App can see. Soft-remove keeps history; re-add is the same enroll path.
+
+### Land and inbox
+
+GET `/` reads cookies `atlas_visit` and `atlas_inbox` (`Secure; HttpOnly; SameSite=Strict`, per browser):
+
+1. Any Session that reached a terminal state (Succeeded, Failed, Interrupted, Failed setup) after `lastVisitAt` → 303 to that Session, earliest terminal time first.
+2. Else any unfinished Session → 303 to that Session; Waiting first, then earliest `submittedAt`.
+3. Else `lastRepositoryId` still enrolled → 303 to its Spec list `/repositories/:id/specs`.
+4. Else no enrolled Repository → 303 to `/repositories/new`. Repositories enrolled but no Sessions ever → `/inbox`.
+
+Cases 1–3 set `atlas_inbox` to that Repository. Every `/` redirect updates `lastVisitAt` and `lastRepositoryId`. Terminal time comes from `session_history`; fall back to `updatedAt`.
+
+The inbox lists current Specs with their latest Session. Filter lives in `/inbox?repository=` and `atlas_inbox`. Removed Repositories are excluded from the filter and list; direct Session links still work. **Settled** is a UI group (collapsed shelf, newest 10 Specs whose latest Session is terminal), not a Session state.
 
 ### Browse Specs and PRs
 
@@ -123,6 +137,8 @@ _Avoid_: Stall, timeout, hang
 - Target reconfirmation keeps the Session, prompt, and queue order. Atlas does not infer a replacement target.
 - Partial Session resources are retained on proven setup failure or uncertainty.
 - Funnel may expose only the webhook listener. The UI listener stays private.
+- GET `/` landing follows rules 1–4 above. Cookies `atlas_visit` (`lastVisitAt`, `lastRepositoryId`) and `atlas_inbox` (Repository filter) are `Secure; HttpOnly; SameSite=Strict`.
+- **Settled** is inbox UI grouping for Specs whose latest Session is terminal, not a Session state. Idle is never Settled.
 
 ## Boundaries and Non-Goals
 
@@ -135,4 +151,4 @@ _Avoid_: Stall, timeout, hang
 - Design guidelines do not introduce features or change business rules.
 - Phase 1 has no off-site backup. Snapshots cannot undo GitHub effects. Shared host identity `omega` is not hostile-agent isolation.
 
-<!-- repo-map-synced: e64cae76bc7bc138c532617bac116b08c4c4b5d0 -->
+<!-- repo-map-synced: 4b188a3fa180e349011dd02434ec69bf7792b02f -->
