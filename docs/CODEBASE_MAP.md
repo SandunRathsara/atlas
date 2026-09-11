@@ -8,10 +8,10 @@ Answers: where is today's shipped implementation? Organized by capability and co
 |---|---|
 | `src/server.ts` | UI process entry. Loads env/release identity, configures independent credential/updater clients, restores an activation-owned safe pause when needed, starts SQLite, Repository refresh and Release discovery, serves UI + webhook listeners, and shuts down without owning either surviving socket. |
 | `src/credential-server.ts` | Independent credential supplier process entry. Owns the existing authenticated Unix-socket boundary and survives Atlas UI restarts. |
-| `src/updater-server.ts` | Independent staging/activation/recovery process entry. Reports installed host runtimes, owns the authenticated updater socket, controls only `atlas.service`, invokes stable Atlas-only health validation, and resumes durable host work after its own restart. |
+| `src/updater-server.ts` | Independent staging/activation/recovery/retention process entry. Reports installed host runtimes, owns the authenticated updater socket, reads canonical Session helper references, controls only `atlas.service`, invokes stable Atlas-only health validation, and resumes durable host work after its own restart. |
 | `package.json` `dev` / `start` | Development builds CSS then watches `src/server.ts`; release start runs the prebuilt tree without installing or building. |
 | `package.json` `credentials` | Runs the credential supplier process directly for local development. |
-| `package.json` `updater` | Runs the staging/activation/recovery updater process directly. |
+| `package.json` `updater` | Runs the staging/activation/recovery/retention updater process directly. |
 | `justfile#dev` | Local bootstrap then `bun run dev`. `justfile#checklist` opens the bearings previewer. |
 | `src/app.ts#createApp` | Private UI Hono app; returned `AtlasApp.updatePause` coordinates preparation/handoff for approval-driven activation and can start held while surviving host work completes. |
 | `src/webhook.ts#createWebhookApp` | Webhook-only Hono app. |
@@ -56,7 +56,7 @@ Returns `AtlasApp`. Options: `AppOptions`.
 | GET/POST | `/sessions/:sessionId/target` | Target reconfirmation. |
 | GET/POST | `/sessions/:sessionId/reservation/release` | Explicit reservation release. |
 | GET | `/sessions/:sessionId/view` | Viewer fragment or page. |
-| GET | `/updates` | Global Updates page: installed/available Release identities, discovery truth, host requirements, staging/activation/recovery progress/result, Install/Retry, and fixed approval-required policy. |
+| GET | `/updates` | Global Updates page: installed/available Release identities, discovery truth, host requirements, staging/activation/recovery/cleanup progress and results, Install/Retry, and fixed approval-required policy. |
 | GET | `/updates/status` | Updates status fragment when `HX-Request`; full page otherwise. Active checks/staging/activation poll every two seconds without history. |
 | POST | `/updates/check` | Existing bearer or browser same-origin/CSRF-protected public Release check; coalesces with an in-flight check and redirects to `/updates`. |
 | POST | `/updates/install` | Existing bearer or browser same-origin/CSRF-protected Install/Retry approval; durably records the exact staged candidate, invokes the safe pause, and redirects while host activation continues independently. |
@@ -101,7 +101,7 @@ Returns `RefreshCoordinator`: `{ refresh, request, wake, start, stop }`. Also `s
 
 Returns `CredentialBoundary`: `{ credentialsPath, registryPath, socketPath, keyPath, start, close, registerScope, resolveScope, listHelperReferences, requestToken, assertReady, installationToken, helperEnvironment }`. Also `CredentialError`, `CredentialScope`, `readGithubEnvFile`, `loadGithubEnv`, `requestCredential`.
 
-`src/credential-server.ts` runs the Unix-socket supplier independently. Atlas creates a non-serving client boundary, so client `start`/`close` cannot own or unlink the socket. Repository-scoped App tokens and the version-1 Session scope registry are unchanged; scope records may include canonical helper paths for later release retention. `src/config.ts#loadGitHubEnv` loads browse keys from `~/.config/atlas/github.env` when unset (mode `0600`).
+`src/credential-server.ts` runs the Unix-socket supplier independently. Atlas creates a non-serving client boundary, so client `start`/`close` cannot own or unlink the socket. Repository-scoped App tokens and the version-1 Session scope registry are unchanged; scope records may include canonical helper paths consumed by Release retention. `src/config.ts#loadGitHubEnv` loads browse keys from `~/.config/atlas/github.env` when unset (mode `0600`).
 
 ### Preparation — `src/preparation.ts#createPreparationService`
 
@@ -167,21 +167,27 @@ published identity. Startup/manual/scheduled checks share one coalesced promise.
 approval through the updater, then converts the coordinated safe pause into one
 durable activation or timeout abandonment; lost responses reconcile by status.
 
-### Release staging, activation, and recovery — `src/updater.ts#createUpdaterService`
+### Release staging, activation, recovery, and retention — `src/updater.ts#createUpdaterService`
 
 Returns `{ start, close, status, requestStage, prepareActivation, beginActivation, abandonActivation }`; `createUpdaterClient` returns
 the UI-side authenticated Unix-socket `UpdaterClient`. Types: `UpdaterStatus`,
-`UpdaterResult`, `RuntimeRequirements`, `HostRuntime`. The independent service
+`UpdaterResult`, `CleanupStatus`, `RuntimeRequirements`, `HostRuntime`. The independent service
 atomically writes `/var/lib/atlas/update-state.json`, serializes one request,
 downloads the named archive/checksum, validates SHA-256 and embedded metadata,
 atomically renames one complete tree under `/opt/atlas/releases`, makes it
 read-only, reuses matching staged trees, and resumes an active durable request
 after restart. The same additive schema-1 state stores activation target,
-previous Release, progress/result, health deadline, and failed-tag suppression.
+previous Release, progress/result, health deadline, failed-tag suppression, and
+cleanup targets/outcomes.
 After a confirmed safe checkpoint it stops only Atlas, atomically selects the
 complete candidate, restarts Atlas, and requires exact Atlas identity plus
 healthy persistence within 60 seconds; failure selects/restarts/verifies the
-previous Release. It has no OpenCode operation and deletes no Release trees.
+previous Release. It then removes only managed Release trees older than current
+after protecting current, previous-working, staged/in-flight, and every tree
+containing a canonical Session helper reference. Cleanup targets/outcomes are
+durable, partial cleanup is re-evaluated after restart, and failure remains
+separate from healthy activation. It has no OpenCode operation and never targets
+stable service trees, Session/data paths, credentials, or host tools.
 
 ## Critical Flows
 
@@ -224,7 +230,11 @@ Candidate failure suppresses that tag, atomically reselects/restarts the
 previous Release, and reports recovery only after the same Atlas-only check.
 Atlas processes started during active host work restore the process-local pause
 until the durable updater state is terminal; normal OpenCode reconciliation is
-independent and never replays creation or the initial prompt.
+independent and never replays creation or the initial prompt. Before publishing
+successful activation or recovered rollback, the updater applies retention from
+the resulting selection and Session helper registry; a cleanup failure is shown
+separately without changing the activation result. Startup and completed staging
+also reconcile the same durable cleanup rules.
 
 **All Sessions.** GET `/sessions` → `persistence.listRepositories()` → `listSessions(repositoryId, filter)` for every enrolled, non-removed Repository → flatten and sort by submission order → `renderSessionsPage` in global mode. `?status=all` includes terminal history; default `active` includes every unfinished state.
 
@@ -254,7 +264,7 @@ extraction/startup with no OpenCode → `gh release create` without overwrite.
 - `src/recovery-status.ts` — read-only host status.
 - `src/release.ts` — tag parsing/order, metadata validation, and runtime identity.
 - `src/update-discovery.ts` — public Release discovery, scheduling, candidate retention, approval/safe-pause orchestration, and updater requests.
-- `src/updater.ts` — durable independent staging/activation/recovery service and authenticated socket client.
+- `src/updater.ts` — durable independent staging/activation/recovery/retention service and authenticated socket client.
 - `src/config.ts#loadGitHubEnv` and `src/credentials.ts#loadGithubEnv` — two github.env loaders (browse keys vs App key path).
 
 ## Interfaces and State
@@ -269,7 +279,7 @@ extraction/startup with no OpenCode → `gh release create` without overwrite.
 
 **OpenCode:** release-installed `@opencode-ai/client` `0.0.0-beta-19135` against an independently running server with no version gate. Service file default `$XDG_STATE_HOME/opencode/service.json` or `OPENCODE_SERVICE_FILE`.
 
-**Filesystem:** Session directories under `ATLAS_SESSION_ROOT`; credential scopes and canonical helper references in `session-scopes.json`; supplier socket `0600`, owned by `atlas-credentials.service`; updater socket `0660`, owned by `atlas-updater.service`; stable service sources under `/opt/atlas/services/atlas-credentials` and `/opt/atlas/services/atlas-updater`; durable updater state at `/var/lib/atlas/update-state.json`; read-only Release trees under `/opt/atlas/releases`; atomically selected `/opt/atlas/current` symlink. No Release cleanup ships in this slice.
+**Filesystem:** Session directories under `ATLAS_SESSION_ROOT`; credential scopes and canonical helper references in `session-scopes.json`; supplier socket `0600`, owned by `atlas-credentials.service`; updater socket `0660`, owned by `atlas-updater.service`; stable service sources under `/opt/atlas/services/atlas-credentials` and `/opt/atlas/services/atlas-updater`; durable updater staging/activation/cleanup state at `/var/lib/atlas/update-state.json`; read-only Release trees under `/opt/atlas/releases`; atomically selected `/opt/atlas/current` symlink. Cleanup is confined to older managed Release directories and retains actual selected/staged/in-flight/helper-referenced trees.
 
 **Update pause:** process-local generation and service hold flags only. Session identity, prompt, target, ordering, preparation/handoff uncertainty, execution-slot ownership, and reservations remain in existing SQLite rows/checkpoints. A restarting Atlas restores the hold from durable updater activation state; terminal host status releases it.
 
@@ -313,6 +323,12 @@ file and reports `published: false`.
   Atlas Release, never shell-execute `atlas.env`, atomically replace only the
   `current` symlink, and never report rollback before previous identity/storage
   health succeeds. Failed tags require explicit Retry; later tags remain eligible.
+- **Release retention authority.** Keep current, previous-working, staged,
+  in-flight, and canonical Session-helper-referenced Release trees. Never infer
+  disposability from age counts or Session state. Persist cleanup targets before
+  removal, re-evaluate them after restart, and keep cleanup failure separate
+  from activation/recovery truth. Stable services and non-Release host/data
+  paths are outside the deletion boundary.
 
 ## Verification Map
 
@@ -333,6 +349,7 @@ file and reports `published: false`.
 | `bun run verify:issue57` | Tag/order/global-sequence rules, generated metadata and authenticated health identity, plus isolated archive contents/checksum/startup with no install, CSS build, or OpenCode. |
 | `bun run verify:issue58` | Authenticated Updates HTTP/CSRF/direct-fragment behavior, startup/four-hour/manual discovery, candidate retention/failures/ordering, runtime/maintenance presentation, updater socket/archive failure/coalescing, durable restart status, and unchanged active selection/admission. |
 | `bun run verify:issue59` | Authenticated Install/Retry HTTP, durable approval/lost-response coalescing, safe-pause timeout, atomic activation, Atlas-only identity/storage health, rollback/failure, failed-tag suppression, updater restart reconciliation, and unchanged shared data/OpenCode ownership. |
+| `bun run verify:issue61` | Public updater status, current/previous/staged/in-flight/helper-reference retention, unused old-tree removal, successful/recovered cleanup, partial-failure restart, visible independent outcomes, and callable older credential helper continuity. |
 | `bun run verify:inbox` | Inbox Spec projection, latest Session, group/state ordering, Settled cap, terminal unread time, and landing selection. |
 | `bun run verify:landing` | GET `/` landing redirects, per-browser `atlas_visit` / `atlas_inbox`, and canonical `/inbox` filter URL. |
 | `bun run verify:inbox-shell` (`scripts/verify-inbox-shell.ts`) | Desktop sidebar and navigation landmarks, canonical/filter cookie behavior, selected Spec identity, `/inbox/list` fragment contract, access semantics, and exact `status=all` utility state. |
@@ -344,4 +361,4 @@ file and reports `published: false`.
 | `bash deploy/verify-opencode-commands.sh` | Isolated server-only staging/integrity, `current` preflight selection, no-activation, and observed-version WAL command regressions. |
 | `bash deploy/verify-sqlite-wal.sh` | Pinned Bun and selected OpenCode embedded-SQLite WAL safeguards. |
 
-<!-- repo-map-synced: beb8cc194167a5e203714a7d5e2b3b58069761cb -->
+<!-- repo-map-synced: 7e89a703fe9233aa648886450b98c1051e5d2035 -->

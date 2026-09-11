@@ -6,7 +6,7 @@ Answers: why does this system exist? Populated and kept current by `/refresh-rep
 
 Atlas is an internal control plane for a team that already writes work as GitHub issues. It lets that team triage Specs across onboarded GitHub Repositories and start autonomous OpenCode Sessions from team-authored Specs, then observe those Sessions without Atlas itself publishing GitHub Pull requests or stacks.
 
-Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; an inbox of current Specs with landing on `/`; read-only Pull request and native-stack browsing; authenticated Session directory preparation backed by credential serving that survives Atlas UI restarts; a guarded OpenCode handoff; an awaitable safe update pause for preparation/handoff; Session viewing; Atlas-side stack reservation hold and release; immutable numbered Linux x64 Releases built from authoritative tags; public Release discovery, durable host staging, approval-driven activation, and automatic code rollback.
+Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; an inbox of current Specs with landing on `/`; read-only Pull request and native-stack browsing; authenticated Session directory preparation backed by credential serving that survives Atlas UI restarts; a guarded OpenCode handoff; an awaitable safe update pause for preparation/handoff; Session viewing; Atlas-side stack reservation hold and release; immutable numbered Linux x64 Releases built from authoritative tags; public Release discovery, durable host staging, approval-driven activation, automatic code rollback, and helper-aware old-Release cleanup.
 
 ## Actors
 
@@ -35,6 +35,7 @@ Shipped outcomes: private sign-in; durable Repository, Spec, and Session records
 - Publish a numbered ready-to-run Linux x64 Release from a reviewed tag without changing dependencies during publishing.
 - Check public Releases and observe durable staging without changing the active Release or Session admission.
 - Approve a fully staged Release, observe activation/recovery through a brief Atlas outage, and explicitly Retry a failed candidate.
+- Inspect Release retention outcomes while current, previous-working, staged, in-flight, and Session-helper-referenced Releases remain protected.
 
 ## Workflows
 
@@ -149,7 +150,17 @@ and verifies the previous working Release against unchanged shared data. Atlas
 reports **Recovered** only after previous identity/storage health succeeds;
 otherwise it reports **Recovery failed**. Explicit **Retry** permits the failed
 tag again, while a later eligible Release is unaffected. Manual-maintenance
-Releases cannot use this path. No old Release trees are deleted in this slice.
+Releases cannot use this path.
+
+The updater removes only managed Release trees older than the selected Release
+and not protected as current, previous working, staged, in-flight, or referenced
+by an absolute Session helper path. Session state labels do not release helper
+references. Cleanup shares durable updater serialization, runs after successful
+activation/recovered rollback and on updater lifecycle reconciliation, and
+rechecks helper references before removal. A cleanup failure is a separate
+visible result: it neither changes a healthy selected Release nor starts another
+activation. A restart resumes only durable pending cleanup still allowed by the
+same current/previous/reference rules.
 
 ## Ubiquitous Language
 
@@ -240,6 +251,10 @@ _Avoid_: moving build, source snapshot
   durably serializes target/progress/result, checks exact Atlas identity and
   healthy persistence within 60 seconds, and never gates on or controls OpenCode.
   Failed tags require Retry; rollback success requires verified previous health.
+- Release cleanup removes only managed trees older than current after protecting
+  current, previous-working, staged, in-flight, and every helper-referenced
+  Release. Cleanup outcomes and partial work are durable; failure does not alter
+  activation truth, Session data, credentials, service trees, or host tools.
 
 ## Boundaries and Non-Goals
 
@@ -248,8 +263,8 @@ _Avoid_: moving build, source snapshot
 - Does not automatically provision the host, move OpenCode data, or change Tailscale/firewall. The operator-run bootstrap is limited to the independent credential/updater services and updated unit files.
 - Does not own OpenCode lifecycle, configuration, or transcripts.
 - Release discovery/staging alone does not invoke the safe update pause or
-  activate a Release. Automatic policy selection and old-Release cleanup remain
-  later work; Install/Retry are approval-driven only.
+  activate a Release. Automatic policy selection remains later work;
+  Install/Retry are approval-driven only.
 - Viewer does not reply to, cancel, or resume OpenCode permissions, forms, or inbox items.
 - Does not create GitHub labels.
 - Design guidelines do not introduce features or change business rules.
@@ -257,4 +272,4 @@ _Avoid_: moving build, source snapshot
   and automatic selection/upgrading of Bun, Git, gh, OS packages, or OpenCode.
 - Phase 1 has no off-site backup. Snapshots cannot undo GitHub effects. Shared host identity `omega` is not hostile-agent isolation.
 
-<!-- repo-map-synced: beb8cc194167a5e203714a7d5e2b3b58069761cb -->
+<!-- repo-map-synced: 7e89a703fe9233aa648886450b98c1051e5d2035 -->
