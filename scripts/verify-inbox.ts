@@ -139,7 +139,12 @@ for (let index = 0; index < 11; index++) {
   const atlasId = `ses_cap_${index}`;
   queue(atlasId, "2", String(30 + index), `2026-05-01T01:00:${String(index).padStart(2, "0")}.000Z`);
   const terminalAt = `2026-06-01T00:00:${String(index).padStart(2, "0")}.000Z`;
-  setState(atlasId, "succeeded", terminalAt, { terminalAt });
+  const updatedAt = index === 0
+    ? "2026-07-01T00:00:00.000Z"
+    : index === 10
+      ? "2026-01-01T00:00:00.000Z"
+      : terminalAt;
+  setState(atlasId, "succeeded", updatedAt, { terminalAt });
 }
 
 const bySpec = (rows: ReturnType<typeof persistence.listInbox>["rows"]) =>
@@ -177,7 +182,7 @@ assert.equal(rows["spec-many"].session?.atlasId, "ses_many_new");
 assert.equal(rows["spec-many"].session?.state, "running");
 
 const inProgress = alpha.rows.filter((row) => row.group === "in_progress").map((row) => row.specGithubId);
-assert.deepEqual(inProgress, ["spec-many", "spec-running", "spec-idle", "spec-preparing", "spec-queued"]);
+assert.deepEqual(inProgress, ["spec-many", "spec-running", "spec-queued", "spec-preparing", "spec-idle"]);
 assert.equal(alpha.settledTotal, 4);
 assert.equal(alpha.settledNew, 4);
 
@@ -190,7 +195,8 @@ assert.equal(inbox.settledTotal, 15);
 assert.equal(inbox.rows.filter((row) => row.group === "settled").length, 10);
 assert.equal(inbox.settledNew, 15);
 const settledIds = inbox.rows.filter((row) => row.group === "settled").map((row) => row.specGithubId);
-assert.equal(settledIds.includes("spec-cap-10"), true);
+assert.equal(settledIds.includes("spec-cap-0"), true);
+assert.equal(settledIds.includes("spec-cap-10"), false);
 assert.equal(settledIds.includes("spec-succeeded"), false);
 
 const afterVisit = persistence.listInbox({ lastVisitAt: "2026-07-01T00:00:00.000Z" });

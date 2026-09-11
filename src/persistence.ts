@@ -3718,15 +3718,22 @@ export const createPersistence = (options: PersistenceOptions) => {
 
     const settled = mapped
       .filter((row) => row.group === "settled")
-      .sort((a, b) => (a.session!.terminalAt! < b.session!.terminalAt! ? 1 : a.session!.terminalAt! > b.session!.terminalAt! ? -1 : 0));
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const keptSettled = new Set(settled.slice(0, 10).map((row) => row.specGithubId));
     const groupRank = { needs_you: 0, in_progress: 1, not_started: 2, settled: 3 } as const;
+    const inProgressRank = { running: 0, queued: 1, preparing: 2, idle: 3 } as const;
     const rows = mapped
       .filter((row) => row.group !== "settled" || keptSettled.has(row.specGithubId))
       .sort((a, b) => {
         const byGroup = groupRank[a.group] - groupRank[b.group];
         if (byGroup !== 0) return byGroup;
-        return a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0;
+        if (a.group === "in_progress" && b.group === "in_progress") {
+          const byState = inProgressRank[a.session!.state as keyof typeof inProgressRank] -
+            inProgressRank[b.session!.state as keyof typeof inProgressRank];
+          if (byState !== 0) return byState;
+        }
+        const byUpdated = b.updatedAt.localeCompare(a.updatedAt);
+        return byUpdated || a.repositoryId.localeCompare(b.repositoryId) || a.issueNumber.localeCompare(b.issueNumber);
       });
 
     return {
