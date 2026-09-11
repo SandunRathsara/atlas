@@ -1,6 +1,6 @@
 import type { Inbox, InboxRow, RefreshState, Repository } from "../persistence.ts";
 import { escapeHtml, safeExternalUrl } from "./html.ts";
-import { icon } from "./icons.ts";
+import { icon, type IconName } from "./icons.ts";
 import {
   emptyState,
   pageHeader,
@@ -62,9 +62,9 @@ const renderInboxRow = (row: InboxRow, inbox: InboxContext, unfiltered: boolean)
   const selected = inbox.currentPath === href;
   const waiting = row.group === "needs_you";
   const card = selected
-    ? "rounded-box border border-edge bg-brand-tint p-3 border-l-2 border-brand-readable"
+    ? "rounded-box border border-edge bg-brand-tint p-3 border-l-2 border-l-brand-readable"
     : waiting
-      ? "rounded-box border border-edge bg-base-100 p-3 border-l-2 border-warning"
+      ? "rounded-box border border-edge bg-base-100 p-3 border-l-2 border-l-warning"
       : "rounded-box border border-edge bg-base-100 p-3";
   return `<div class="${card}">
     <div class="flex items-start gap-2">
@@ -84,14 +84,14 @@ const renderInboxPageRecords = (rows: InboxRow[], inbox: InboxContext, unfiltere
     label,
     headers: unfiltered ? ["Spec", "Repository", "State"] : ["Spec", "State"],
     rows: rows.map((row) =>
-      `<tr${row.group === "needs_you" ? ' class="border-l-2 border-warning"' : ""}>
+      `<tr${row.group === "needs_you" ? ' class="border-l-2 border-l-warning"' : ""}>
         <td>${recordIdentity(icon("document-text", 20), `${unreadDot(row)}${specIdentity(row)}`)}</td>
         ${unfiltered ? `<td class="text-muted">${escapeHtml(row.repositoryName)}</td>` : ""}
         <td class="whitespace-nowrap"><span class="flex flex-wrap items-center gap-1">${rowBadges(row, inbox)}</span></td>
       </tr>`
     ),
     stacked: rows.map((row) =>
-      `<li class="p-3${row.group === "needs_you" ? " border-l-2 border-warning" : ""}">
+      `<li class="p-3${row.group === "needs_you" ? " border-l-2 border-l-warning" : ""}">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0">${unreadDot(row)}${specIdentity(row)}</div>
           <span class="flex flex-wrap items-center gap-1">${rowBadges(row, inbox)}</span>
@@ -101,12 +101,17 @@ const renderInboxPageRecords = (rows: InboxRow[], inbox: InboxContext, unfiltere
     ),
   });
 
-const renderInboxUtility = (repository: Repository) => {
+const utilityLink = (href: string, current: boolean, glyph: IconName, label: string, extra = "") =>
+  `<a class="flex h-8 items-center gap-2 rounded-field border-l-2 ${current ? "border-l-brand-readable bg-brand-tint" : "border-transparent"} px-3 text-sm font-medium text-muted" href="${href}"${current ? ' aria-current="page"' : ""}${extra}>${icon(glyph, 20)}<span>${label}</span></a>`;
+
+const renderInboxUtility = (repository: Repository, currentPath: string) => {
   const github = safeExternalUrl(repository.htmlUrl);
+  const prs = pullRequestsLink(repository);
+  const sessions = sessionsLink(repository);
   return `<nav class="border-t border-edge p-2" aria-label="Filtered Repository">
-    <a class="flex h-8 items-center gap-2 rounded-field border-l-2 border-transparent px-3 text-sm font-medium text-muted" href="${pullRequestsLink(repository)}">${icon("code-bracket", 20)}<span>Pull requests</span></a>
-    <div class="mt-1"><a class="flex h-8 items-center gap-2 rounded-field border-l-2 border-transparent px-3 text-sm font-medium text-muted" href="${sessionsLink(repository)}">${icon("command-line", 20)}<span>All Sessions</span></a></div>
-    ${github ? `<div class="mt-1"><a class="flex h-8 items-center gap-2 rounded-field border-l-2 border-transparent px-3 text-sm font-medium text-muted" href="${escapeHtml(github)}" target="_blank" rel="noopener noreferrer">${icon("arrow-top-right-on-square", 20)}<span>Open on GitHub</span></a></div>` : ""}
+    ${utilityLink(prs, currentPath === prs, "code-bracket", "Pull requests")}
+    <div class="mt-1">${utilityLink(sessions, currentPath === sessions, "command-line", "All Sessions")}</div>
+    ${github ? `<div class="mt-1">${utilityLink(escapeHtml(github), false, "arrow-top-right-on-square", "Open on GitHub", ' target="_blank" rel="noopener noreferrer"')}</div>` : ""}
   </nav>`;
 };
 
@@ -157,9 +162,9 @@ export const renderInboxFilter = (inbox: InboxContext, layout: "sidebar" | "page
     ),
     `<option value="manage">Manage Repositories…</option>`,
   ].join("");
-  const attrs = page
+  const attrs = page || inbox.currentPath === "/inbox"
     ? `action="/inbox" method="get"`
-    : `action="/inbox" method="get" hx-get="/inbox/list" hx-target="#inbox-list" hx-swap="outerHTML" hx-push-url="false" hx-trigger="change"`;
+    : `action="/inbox" method="get" hx-get="/inbox/list" hx-target="#inbox-list-body" hx-select="#inbox-list-body" hx-swap="innerHTML" hx-push-url="false" hx-trigger="change"`;
   return `<form class="${page ? "mt-6 max-w-2xl" : "p-2"}" ${attrs}>
     <div class="flex items-center gap-1">
       <label class="sr-only" for="${selectId}">Repository</label>
@@ -187,27 +192,31 @@ export const renderInboxGroups = (inbox: InboxContext, layout: "sidebar" | "page
     const body = layout === "page"
       ? renderInboxPageRecords(rows, inbox, unfiltered, GROUP_LABEL[group])
       : `<div class="${group === "settled" ? "mt-2 " : ""}grid gap-2">${rows.map((row) => renderInboxRow(row, inbox, unfiltered)).join("")}</div>`;
+    const heading = layout === "page" ? "text-base font-semibold" : "px-3 py-2 text-xs font-medium uppercase tracking-wide text-faint";
     if (group === "settled") {
       return `<details class="${layout === "page" ? "mt-6" : "mt-4"}">
-        <summary class="cursor-pointer ${layout === "page" ? "text-base font-semibold" : "px-3 py-2 text-xs font-medium text-faint"}">${escapeHtml(label)}</summary>
+        <summary class="cursor-pointer ${heading}">${escapeHtml(label)}</summary>
         ${body}
         ${allSessions}
       </details>`;
     }
     return `<section class="${layout === "page" ? "mt-6" : "mt-4"}">
-      <h2 class="${layout === "page" ? "text-base font-semibold" : "px-3 py-2 text-xs font-medium text-faint"}">${GROUP_LABEL[group]}</h2>
+      <h2 class="${heading}">${GROUP_LABEL[group]}</h2>
       ${body}
     </section>`;
   }).join("");
 };
 
 export const renderInboxList = (inbox: InboxContext) =>
-  `<div id="inbox-list" class="flex min-h-0 flex-1 flex-col" hx-get="/inbox/list" hx-trigger="every 30s" hx-swap="outerHTML" hx-push-url="false">
-    <div class="min-h-0 flex-1 overflow-y-auto p-2">${renderInboxGroups(inbox)}</div>
-    ${inbox.filtered ? renderInboxUtility(inbox.filtered) : ""}
+  `<div id="inbox-list" class="flex min-h-0 flex-1 flex-col" hx-get="/inbox/list" hx-trigger="every 30s" hx-target="#inbox-list-body" hx-select="#inbox-list-body" hx-swap="innerHTML" hx-push-url="false">
+    <div id="inbox-list-body" class="flex min-h-0 flex-1 flex-col">
+      <div class="min-h-0 flex-1 overflow-y-auto p-2">${renderInboxGroups(inbox)}</div>
+      ${inbox.filtered ? renderInboxUtility(inbox.filtered, inbox.currentPath) : ""}
+    </div>
   </div>`;
 
 export const renderInboxPage = (inbox: InboxContext) =>
   `${pageHeader({ title: "Inbox" })}
   ${renderInboxFilter(inbox, "page")}
-  ${renderInboxGroups(inbox, "page")}`;
+  ${renderInboxGroups(inbox, "page")}
+  ${inbox.filtered ? renderInboxUtility(inbox.filtered, inbox.currentPath) : ""}`;

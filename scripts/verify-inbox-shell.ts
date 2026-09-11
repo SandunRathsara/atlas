@@ -153,9 +153,13 @@ const assertShell = (body: string) => {
   assert(body.includes(">Manage Repositories…</option>"));
   assert(body.includes('aria-label="Add a Repository"'));
   assert(body.includes('id="inbox-list"'));
+  assert(body.includes('id="inbox-list-body"'));
   assert(body.includes('hx-trigger="every 30s"'));
   assert(body.includes('hx-push-url="false"'));
   assert(body.includes('hx-get="/inbox/list"'));
+  assert(body.includes('hx-target="#inbox-list-body"'));
+  assert(body.includes('hx-select="#inbox-list-body"'));
+  assert(body.includes('hx-swap="innerHTML"'));
   assert(!body.includes("data-focus-on-swap"));
   assert(!body.includes("No Repository selected"));
   assert(!body.includes('uppercase tracking-wide text-faint">Atlas</p>'));
@@ -191,12 +195,14 @@ const assertShell = (body: string) => {
   assert.equal(page.status, 200);
   const body = await page.text();
   assertShell(body);
+  assert(!body.includes('hx-trigger="change"'));
+  assert(body.includes("uppercase tracking-wide text-faint"));
   assert(body.includes("Needs you"));
   assert(body.includes("In progress"));
   assert(body.includes("Not started"));
   assert(body.includes("Settled"));
   assert(body.includes("Waiting spec"));
-  assert(body.includes("border-l-2 border-warning"));
+  assert(body.includes("border-l-2 border-l-warning"));
   assert(body.includes(">Stale</span>"));
   assert(body.includes(">No Session</span>"));
   assert(body.includes(">alpha</p>"));
@@ -222,7 +228,7 @@ const assertShell = (body: string) => {
   assert(body.includes("Waiting spec"));
   assert(!body.includes(">alpha</p>"));
   assert(!body.includes("Beta spec"));
-  assert(body.includes("Pull requests"));
+  assert.equal(body.split("Pull requests").length - 1, 2);
   assert(body.includes("All Sessions"));
   assert(body.includes("Open on GitHub"));
   assert(body.includes("View all Sessions"));
@@ -254,7 +260,11 @@ const assertShell = (body: string) => {
   assert.equal(fragment.status, 200);
   const body = await fragment.text();
   assert(body.includes('id="inbox-list"'));
+  assert(body.includes('id="inbox-list-body"'));
   assert(body.includes('hx-trigger="every 30s"'));
+  assert(body.includes('hx-target="#inbox-list-body"'));
+  assert(body.includes('hx-select="#inbox-list-body"'));
+  assert(body.includes('hx-swap="innerHTML"'));
   assert(body.includes('hx-push-url="false"'));
   assert(!body.includes("<!doctype html>"));
   assert(body.includes("Needs you"));
@@ -275,7 +285,7 @@ const assertShell = (body: string) => {
   const body = await selected.text();
   assert(body.includes('aria-current="page"'));
   assert(body.includes("bg-brand-tint"));
-  assert(body.includes("border-brand-readable"));
+  assert(body.includes("border-l-brand-readable"));
   db.close();
 }
 
@@ -303,8 +313,24 @@ const assertShell = (body: string) => {
   });
   const body = await specs.text();
   assertShell(body);
+  assert(body.includes('hx-trigger="change"'));
   assert(body.includes(">Org/alpha</p>"));
   assert(body.includes("Needs you"));
+  db.close();
+}
+
+{
+  const db = persistence();
+  seed(db);
+  const app = mount(db);
+  const prs = await request(app, "/repositories/1/pull-requests", {
+    ...auth,
+    Cookie: cookieJson("atlas_inbox", { repositoryId: "1" }),
+  });
+  const body = await prs.text();
+  assert(body.includes('aria-current="page"'));
+  assert(body.includes("/repositories/1/pull-requests"));
+  assert(body.includes("bg-brand-tint"));
   db.close();
 }
 

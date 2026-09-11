@@ -147,6 +147,9 @@ const assertInboxPageChrome = (body: string) => {
   assert(body.includes("No matches"));
   assert(body.includes("Show all Repositories"));
   assert(body.includes('href="/inbox?repository="'));
+  assert(body.includes("Pull requests"));
+  assert(body.includes("All Sessions"));
+  assert(body.includes("Open on GitHub"));
   assert(!body.includes("No work yet"));
   db.close();
 }
