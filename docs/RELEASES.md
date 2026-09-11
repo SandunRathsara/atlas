@@ -127,12 +127,34 @@ route and never queries or gates on OpenCode. Failure selects and verifies the
 previous working release without restoring older data. The failed tag remains
 suppressed across restarts until **Retry**; a later Release is independently
 eligible. A checkpoint timeout is a durable abandonment and leaves the current
-release selected. Release deletion remains outside this slice.
+release selected.
 
 Updater schema 1 keeps its original staging fields and adds activation state,
-previous-release identity, progress/result, and failed-tag suppression. This is
-deliberately additive so the previous Atlas release can still read staging
-status after rollback.
+previous-release identity, progress/result, failed-tag suppression, and cleanup
+outcomes. This is deliberately additive so the previous Atlas release can still
+read staging status after rollback.
+
+## Release retention
+
+The updater cleans only managed Release directories older than the selected
+Release. It protects the selected Release, the previous working Release, the
+staged candidate, every in-flight activation/recovery path, and every Release
+containing an absolute helper path in the durable Session scope registry. A
+failed candidate is not promoted to previous-working status merely because it
+was briefly selected; it remains protected while staged for Retry.
+
+Cleanup shares the updater's serialized lifecycle. It runs on updater startup
+and after staging, abandonment, successful activation, or recovered rollback.
+During activation/recovery it completes before the updater publishes a terminal
+result, so a restarting Atlas remains paused until selection and retention are
+settled. Each cleanup target is recorded in schema-1 updater state before
+removal. A restart re-evaluates current selections and helper references before
+resuming partial cleanup.
+
+Cleanup failure is reported separately from activation. It never changes the
+healthy selected Release or starts another activation. Session directories,
+SQLite data, credentials, stable service trees, and operator-managed tools are
+outside `/opt/atlas/releases` and are never cleanup targets.
 
 Authenticated health reports the same identity under `atlas.release`, existing
 `persistence` health, and independent OpenCode diagnostics. Candidate success

@@ -14,8 +14,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { connect, createServer, type Server } from "node:net";
-import { dirname, join, resolve } from "node:path";
-import { assertReleaseMetadata, type ReleaseMetadata } from "./release.ts";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { assertReleaseMetadata, compareReleaseTags, parseReleaseTag, type ReleaseMetadata } from "./release.ts";
 
 const DEFAULT_STATE_PATH = "/var/lib/atlas/update-state.json";
 const DEFAULT_SOCKET_PATH = "/run/atlas-updater/updater.sock";
@@ -95,6 +95,14 @@ export type UpdaterResult = {
   at: string;
 };
 
+export type CleanupStatus = {
+  state: "idle" | "cleaning" | "succeeded" | "failed";
+  message: string;
+  updatedAt: string | null;
+  pendingTags: string[];
+  removedTags: string[];
+};
+
 export type UpdaterStatus = {
   schemaVersion: 1;
   state: "idle" | "requested" | "downloading" | "verifying" | "extracting" | "staged" | "failed";
@@ -106,6 +114,7 @@ export type UpdaterStatus = {
   requirements: RuntimeRequirements | null;
   lastResult: UpdaterResult | null;
   activation: ActivationStatus;
+  cleanup: CleanupStatus;
 };
 
 export type UpdaterClient = {
@@ -142,6 +151,14 @@ const initialActivation = (): ActivationStatus => ({
   lastResult: null,
 });
 
+const initialCleanup = (): CleanupStatus => ({
+  state: "idle",
+  message: "Release cleanup has not run yet.",
+  updatedAt: null,
+  pendingTags: [],
+  removedTags: [],
+});
+
 const initialStatus = (): UpdaterStatus => ({
   schemaVersion: 1,
   state: "idle",
@@ -153,6 +170,7 @@ const initialStatus = (): UpdaterStatus => ({
   requirements: null,
   lastResult: null,
   activation: initialActivation(),
+  cleanup: initialCleanup(),
 });
 
 const readKey = (path: string) => {
@@ -207,6 +225,27 @@ const parseActivation = (value: unknown): ActivationStatus => {
   return activation as ActivationStatus;
 };
 
+const validReleaseTags = (value: unknown): value is string[] => Array.isArray(value) && value.every((tag) => {
+  if (typeof tag !== "string") return false;
+  try {
+    return parseReleaseTag(tag).tag === tag;
+  } catch {
+    return false;
+  }
+});
+
+const parseCleanup = (value: unknown): CleanupStatus => {
+  if (value === undefined) return initialCleanup();
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Updater cleanup state is invalid");
+  const cleanup = value as Partial<CleanupStatus>;
+  if (typeof cleanup.state !== "string" || !["idle", "cleaning", "succeeded", "failed"].includes(cleanup.state) ||
+      typeof cleanup.message !== "string" || (cleanup.updatedAt !== null && typeof cleanup.updatedAt !== "string") ||
+      !validReleaseTags(cleanup.pendingTags) || !validReleaseTags(cleanup.removedTags)) {
+    throw new Error("Updater cleanup state is invalid");
+  }
+  return cleanup as CleanupStatus;
+};
+
 const parseStatus = (value: unknown): UpdaterStatus => {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Updater state is invalid");
   const status = value as Partial<UpdaterStatus>;
@@ -226,7 +265,7 @@ const parseStatus = (value: unknown): UpdaterStatus => {
     throw new Error("Updater state is invalid");
   }
   if (status.state !== "idle" && status.metadata === null) throw new Error("Updater state is invalid");
-  return { ...status, activation: parseActivation(status.activation) } as UpdaterStatus;
+  return { ...status, activation: parseActivation(status.activation), cleanup: parseCleanup(status.cleanup) } as UpdaterStatus;
 };
 
 const readStatusFile = (path: string) => {
@@ -320,6 +359,7 @@ export type UpdaterServiceOptions = {
   controlAtlas?: (operation: "stop" | "start") => boolean | Promise<boolean>;
   checkAtlasHealth?: (metadata: ReleaseMetadata) => boolean | Promise<boolean>;
   sleep?: (milliseconds: number) => Promise<void>;
+  listHelperReferences?: () => string[];
 };
 
 export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
@@ -337,6 +377,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
   const controlAtlas = options.controlAtlas ?? (() => false);
   const checkAtlasHealth = options.checkAtlasHealth ?? (() => false);
   const sleep = options.sleep ?? Bun.sleep;
+  const listHelperReferences = options.listHelperReferences ?? (() => []);
   if (!Number.isSafeInteger(activationTimeoutMs) || activationTimeoutMs < 1 ||
       !Number.isSafeInteger(activationPollMs) || activationPollMs < 1) {
     throw new Error("Updater activation timing must use positive safe integers");
@@ -364,9 +405,14 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
     writeStatusFile(statePath, status);
   };
   const timestamp = () => new Date(now()).toISOString();
-  const candidatePath = (metadata: ReleaseMetadata) => join(releasesRoot, `atlas-${metadata.identity.tag}`);
+  const releasePath = (tag: string) => join(releasesRoot, `atlas-${tag}`);
+  const candidatePath = (metadata: ReleaseMetadata) => releasePath(metadata.identity.tag);
   const sameMetadata = (left: ReleaseMetadata | null, right: ReleaseMetadata) =>
     left !== null && metadataRecord(left) === metadataRecord(right);
+  const within = (root: string, path: string) => {
+    const remainder = relative(root, path);
+    return remainder === "" || (remainder !== ".." && !remainder.startsWith(`..${"/"}`) && !isAbsolute(remainder));
+  };
 
   const saveActivation = (next: ActivationStatus) => save({ ...status, activation: next });
   const activationProgress = (state: ActivationState, message: string, deadlineAt: string | null = null) => {
@@ -398,6 +444,95 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
       renameSync(temporary, currentPath);
     } finally {
       if (existsSync(temporary)) unlinkSync(temporary);
+    }
+  };
+
+  const cleanupReleases = () => {
+    let pendingTags = [...status.cleanup.pendingTags];
+    let removedTags: string[] = [];
+    try {
+      const current = selectedRelease();
+      if (current.path !== candidatePath(current.metadata)) throw new Error("The active Atlas release path is not cleanup-safe.");
+      const references = listHelperReferences();
+      if (!references.every((path) => typeof path === "string" && isAbsolute(path))) {
+        throw new Error("Session helper references are invalid.");
+      }
+      const protectedPaths = new Set([
+        current.path,
+        ...(status.stagedPath ? [resolve(status.stagedPath)] : []),
+        ...(status.activation.previousPath ? [resolve(status.activation.previousPath)] : []),
+        ...(activationInProgress(status) && status.activation.metadata ? [candidatePath(status.activation.metadata)] : []),
+      ]);
+      const pending = new Set(pendingTags);
+      for (const entry of readdirSync(releasesRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !entry.name.startsWith("atlas-")) continue;
+        const tag = entry.name.slice("atlas-".length);
+        try {
+          parseReleaseTag(tag);
+          if (!pending.has(tag) && releaseMetadataAt(join(releasesRoot, entry.name)).identity.tag !== tag) continue;
+          pending.add(tag);
+        } catch {
+          // Unknown or incomplete trees are retained unless a prior durable cleanup already owned them.
+        }
+      }
+      pendingTags = [...pending]
+        .filter((tag) => compareReleaseTags(tag, current.metadata.identity.tag) < 0)
+        .filter((tag) => {
+          const path = releasePath(tag);
+          return !protectedPaths.has(path) && !references.some((reference) => within(path, reference));
+        })
+        .sort(compareReleaseTags);
+      save({
+        ...status,
+        cleanup: {
+          state: "cleaning",
+          message: "Removing older unreferenced Atlas releases.",
+          updatedAt: timestamp(),
+          pendingTags,
+          removedTags,
+        },
+      });
+      while (pendingTags.length > 0) {
+        const tag = pendingTags[0]!;
+        const path = releasePath(tag);
+        const currentReferences = listHelperReferences();
+        if (!currentReferences.every((reference) => typeof reference === "string" && isAbsolute(reference))) {
+          throw new Error("Session helper references are invalid.");
+        }
+        if (!currentReferences.some((reference) => within(path, reference))) {
+          if (existsSync(path) && (!lstatSync(path).isDirectory() || lstatSync(path).isSymbolicLink())) {
+            throw new Error(`Atlas release ${tag} is not a cleanup-safe directory.`);
+          }
+          removeTree(path);
+          removedTags.push(tag);
+        }
+        pendingTags = pendingTags.slice(1);
+        save({ ...status, cleanup: { ...status.cleanup, pendingTags, removedTags, updatedAt: timestamp() } });
+      }
+      save({
+        ...status,
+        cleanup: {
+          state: "succeeded",
+          message: removedTags.length === 0
+            ? "No older unreferenced Atlas releases needed cleanup."
+            : `Removed ${removedTags.length} older unreferenced Atlas release${removedTags.length === 1 ? "" : "s"}.`,
+          updatedAt: timestamp(),
+          pendingTags: [],
+          removedTags,
+        },
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Release cleanup could not be completed.";
+      save({
+        ...status,
+        cleanup: {
+          state: "failed",
+          message: `Release cleanup failed: ${reason} The active Atlas release remains selected and protected releases were retained.`,
+          updatedAt: timestamp(),
+          pendingTags,
+          removedTags,
+        },
+      });
     }
   };
 
@@ -459,6 +594,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
           terminalActivation("rollback_failed", `${status.activation.failureMessage ?? "Atlas activation failed"} The previous release did not report its expected identity and healthy storage before the recovery deadline.`);
           return;
         }
+        cleanupReleases();
         terminalActivation("rolled_back", `${status.activation.failureMessage ?? "Atlas activation failed"} The previous release recovered successfully.`);
       }
     } catch {
@@ -523,6 +659,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
             await failAndRollback("The candidate did not report its expected identity and healthy Atlas storage within 60 seconds.");
             return;
           }
+          cleanupReleases();
           terminalActivation("succeeded", `Atlas ${metadata.identity.tag} was activated and verified.`);
         }
       } catch {
@@ -609,7 +746,9 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
 
   const runStage = () => {
     if (staging) return staging;
-    staging = stageCurrent().finally(() => {
+    staging = stageCurrent().then(() => {
+      if (!activationInProgress(status)) cleanupReleases();
+    }).finally(() => {
       staging = undefined;
     });
     return staging;
@@ -630,6 +769,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
       requirements: requirementsFor(metadata, hostRuntime(metadata)),
       lastResult: status.lastResult,
       activation: status.activation,
+      cleanup: status.cleanup,
     });
     void runStage();
     return status;
@@ -700,6 +840,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
       throw new Error("Activation cannot be abandoned from its current state.");
     }
     terminalActivation("abandoned", messageValue);
+    cleanupReleases();
     return status;
   };
 
@@ -775,6 +916,8 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
       abandonActivation(status.activation.metadata, "Activation was abandoned because the updater restarted before Atlas confirmed a safe checkpoint.");
     } else if (activationInProgress(status)) {
       void activateCurrent();
+    } else if (!activeStates.has(status.state)) {
+      cleanupReleases();
     }
   };
 

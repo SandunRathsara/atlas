@@ -129,9 +129,31 @@ const activationMarkup = (status: UpdateStatus) => {
   </section>`;
 };
 
+const cleanupMarkup = (status: UpdateStatus) => {
+  if (status.updaterError || !status.updater) return "";
+  const cleanup = status.updater.cleanup;
+  const badge = cleanup.state === "failed"
+    ? statusBadge("badge-error", "Cleanup failed")
+    : cleanup.state === "cleaning"
+      ? statusBadge("badge-info", "Cleaning up")
+      : cleanup.state === "succeeded"
+        ? statusBadge("badge-success", "Cleanup complete")
+        : statusBadge("badge-neutral", "Not run");
+  const removed = cleanup.removedTags.length > 0
+    ? `<p class="mt-2 text-sm text-muted">Removed: ${cleanup.removedTags.map((tag) => `<span class="font-mono">${escapeHtml(tag)}</span>`).join(", ")}</p>`
+    : "";
+  return `<section class="mt-6" aria-labelledby="cleanup-title">
+    <div class="flex flex-wrap items-center justify-between gap-3"><h2 id="cleanup-title" class="text-base font-semibold">Release retention</h2>${badge}</div>
+    <div class="mt-3 rounded-box border border-edge bg-base-100 p-4">
+      <p>${escapeHtml(cleanup.message)}</p>${removed}
+      <p class="mt-2 text-sm text-muted">Current, previous working, staged, in-flight, and Session-helper-referenced releases are retained.</p>
+    </div>
+  </section>`;
+};
+
 export const renderUpdatesStatus = (status: UpdateStatus, csrfToken = "") => {
   const available = status.available;
-  const polling = status.checking || Boolean(status.updater && (activeStage.has(status.updater.state) || activeActivation.has(status.updater.activation.state)));
+  const polling = status.checking || Boolean(status.updater && (activeStage.has(status.updater.state) || activeActivation.has(status.updater.activation.state) || status.updater.cleanup.state === "cleaning"));
   const availableBody = available
     ? `${candidateIdentity(available)}<p class="mt-2 text-sm text-muted">${status.candidates.length} published release${status.candidates.length === 1 ? "" : "s"} retained for update-policy evaluation.</p>${activationAction(status, available, csrfToken)}`
     : !status.installed.published
@@ -157,6 +179,7 @@ export const renderUpdatesStatus = (status: UpdateStatus, csrfToken = "") => {
     ${available ? maintenanceMarkup(available) + runtimeMarkup(available, status.updater) : ""}
     ${stageMarkup(status)}
     ${activationMarkup(status)}
+    ${cleanupMarkup(status)}
     <section class="mt-6 rounded-box border border-edge bg-base-100 p-4" aria-labelledby="update-policy-title">
       <div class="flex flex-wrap items-center justify-between gap-3"><h2 id="update-policy-title" class="text-base font-semibold">Update policy</h2>${statusBadge("badge-neutral", "Approval required")}</div>
       <p class="mt-3 max-w-prose text-sm leading-normal text-muted">Published artifacts are staged automatically. Install requires explicit approval; a failed candidate requires explicit Retry.</p>

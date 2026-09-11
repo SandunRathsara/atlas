@@ -38,6 +38,7 @@ required=(
   "$root/../src/release.ts"
   "$root/../src/updater.ts"
   "$root/../src/updater-server.ts"
+  "$root/../src/credentials.ts"
   "$root/../docs/RELEASES.md"
   "$root/../.github/workflows/release.yml"
   "$root/logrotate/atlas-opencode"
@@ -55,6 +56,8 @@ grep -Fq 'ExecStart=/opt/atlas/tools/bun/1.3.14/bin/bun /opt/atlas/services/atla
 grep -Fq 'ReadWritePaths=/opt/atlas /var/lib/atlas /run/atlas-updater' "$updater_unit"
 grep -Fq 'ReadOnlyPaths=/opt/atlas/services /opt/atlas/tools' "$updater_unit"
 grep -Fq 'ExecStartPre=/usr/bin/test -x /opt/atlas/services/atlas-updater/check-health.sh' "$updater_unit"
+grep -Fq 'ATLAS_CREDENTIAL_REGISTRY_PATH=/var/lib/atlas/session-scopes.json' "$updater_unit"
+grep -Fq 'ExecStartPre=/usr/bin/test -f /opt/atlas/services/atlas-updater/credentials.ts' "$updater_unit"
 grep -Fq 'health?activation=1' "$root/../src/updater-server.ts"
 grep -Fq '["systemctl", operation === "start" ? "restart" : "stop", "atlas.service"]' "$root/../src/updater-server.ts"
 grep -Fq 'NoNewPrivileges=true' "$updater_unit"
@@ -65,6 +68,7 @@ if grep -Eiq 'opencode|EnvironmentFile=' "$updater_unit"; then
 fi
 test -x "$root/bootstrap.sh" || { echo "bootstrap command is not executable" >&2; exit 1; }
 grep -Fq '"$source_root/deploy/check-health.sh" "$updater_root/check-health.sh"' "$root/bootstrap.sh"
+grep -Fq '"$source_root/src/credentials.ts" "$updater_root/credentials.ts"' "$root/bootstrap.sh"
 
 for script in "$root/bin/gh" "$root/bin/git" "$root/bin/git-credential-atlas" "$root/bootstrap.sh" "$root/capture-recovery-config.sh" "$root/check-health.sh" "$root/check-opencode.sh" "$root/check-space.sh" "$root/atlas-snapshot.sh" "$root/lib/recovery-status.sh" "$root/restore-rehearsal.sh" "$root/verify-opencode-commands.sh" "$root/verify-sqlite-wal.sh" "$root/stage-opencode.sh" "$root/stage-release.sh" "$root/../scripts/build-release.sh" "$root/../scripts/verify-release-artifact.sh"; do
   bash -n "$script"
