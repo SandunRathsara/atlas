@@ -8,8 +8,8 @@ fi
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source_root=$(realpath "$root/..")
-service_root=/opt/atlas/services/atlas-credentials
-updater_root=/opt/atlas/services/atlas-updater
+services_root=/opt/atlas/services
+support_releases=$services_root/releases
 config_root=/etc/atlas
 data_root=/var/lib/atlas
 unit_root=/etc/systemd/system
@@ -20,7 +20,7 @@ service_group=omega
   echo "credential supplier assets are incomplete" >&2
   exit 1
 }
-[[ -f "$source_root/src/updater-server.ts" && -f "$source_root/src/updater.ts" && -f "$source_root/src/release.ts" && -f "$source_root/src/credentials.ts" && -f "$source_root/deploy/check-health.sh" ]] || {
+[[ -f "$source_root/src/updater-server.ts" && -f "$source_root/src/updater.ts" && -f "$source_root/src/release.ts" && -f "$source_root/src/credentials.ts" && -f "$source_root/deploy/check-activation-health.sh" ]] || {
   echo "updater assets are incomplete" >&2
   exit 1
 }
@@ -29,6 +29,11 @@ service_group=omega
   exit 1
 }
 
+install -d -m 0755 -o root -g root "$services_root" "$support_releases"
+support_stage=$(mktemp -d "$services_root/.support.XXXXXX")
+trap 'chmod -R u+w "$support_stage" 2>/dev/null || true; rm -rf -- "$support_stage"' EXIT
+service_root=$support_stage/atlas-credentials
+updater_root=$support_stage/atlas-updater
 install -d -m 0755 -o root -g root "$service_root"
 install -m 0444 -o root -g root "$source_root/src/credential-server.ts" "$service_root/credential-server.ts"
 install -m 0444 -o root -g root "$source_root/src/credentials.ts" "$service_root/credentials.ts"
@@ -37,7 +42,14 @@ install -m 0444 -o root -g root "$source_root/src/updater-server.ts" "$updater_r
 install -m 0444 -o root -g root "$source_root/src/updater.ts" "$updater_root/updater.ts"
 install -m 0444 -o root -g root "$source_root/src/release.ts" "$updater_root/release.ts"
 install -m 0444 -o root -g root "$source_root/src/credentials.ts" "$updater_root/credentials.ts"
-install -m 0555 -o root -g root "$source_root/deploy/check-health.sh" "$updater_root/check-health.sh"
+install -m 0555 -o root -g root "$source_root/deploy/check-activation-health.sh" "$updater_root/check-activation-health.sh"
+support_bundle="$support_releases/bootstrap-$(date +%s)-$$"
+chmod -R a-w "$support_stage"
+mv -- "$support_stage" "$support_bundle"
+trap - EXIT
+support_link="$services_root/.current.$$"
+ln -s "$support_bundle" "$support_link"
+mv -Tf -- "$support_link" "$services_root/current"
 install -d -m 0750 -o root -g "$service_group" "$config_root"
 install -d -m 0700 -o "$service_user" -g "$service_group" "$data_root"
 install -d -m 0755 -o root -g root /opt/atlas/releases

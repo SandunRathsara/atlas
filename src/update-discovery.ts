@@ -3,8 +3,10 @@ import type { UpdatePauseOutcome } from "./update-pause.ts";
 import {
   assertReleaseMetadata,
   compareReleaseTags,
+  parseReleaseTag,
   type ReleaseIdentity,
   type ReleaseMetadata,
+  type ReleaseTag,
 } from "./release.ts";
 import { activationInProgress, type UpdatePolicy, type UpdaterClient, type UpdaterStatus } from "./updater.ts";
 
@@ -30,7 +32,7 @@ export type UpdateService = {
   check: (pause?: () => Promise<UpdatePauseOutcome>) => Promise<void>;
   status: () => Promise<UpdateStatus>;
   setPolicy: (policy: UpdatePolicy, pause?: () => Promise<UpdatePauseOutcome>) => Promise<void>;
-  install: (tag: string, retry: boolean, pause: () => Promise<UpdatePauseOutcome>) => Promise<void>;
+  install: (tag: ReleaseTag, retry: boolean, pause: () => Promise<UpdatePauseOutcome>) => Promise<void>;
 };
 
 type GitHubRelease = { tag_name: string; draft: boolean; prerelease: boolean };
@@ -84,8 +86,8 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
   let checking = false;
   let currentCheck: Promise<void> | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
-  let activationRequest: { tag: string; task: Promise<void> } | undefined;
-  let activationWork: { tag: string; task: Promise<void> } | undefined;
+  let activationRequest: { tag: ReleaseTag; task: Promise<void> } | undefined;
+  let activationWork: { tag: ReleaseTag; task: Promise<void> } | undefined;
   let automaticTarget: { candidate: ReleaseMetadata; pause: () => Promise<UpdatePauseOutcome> } | undefined;
   let automaticWork: Promise<void> | undefined;
 
@@ -119,13 +121,14 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
     }
 
     const candidates: ReleaseMetadata[] = [];
-    const seen = new Set<string>();
+    const seen = new Set<ReleaseTag>();
     for (const release of releases) {
-      if (seen.has(release.tag_name)) throw new Error("GitHub release discovery returned a duplicate identity");
-      seen.add(release.tag_name);
-      const response = await fetcher(metadataUrl(downloadBaseUrl, release.tag_name), { headers: { "User-Agent": "Atlas" } });
-      const metadata = assertReleaseMetadata(await responseJson(response, `Release ${release.tag_name} metadata`));
-      if (metadata.identity.tag !== release.tag_name) throw new Error("Published release metadata does not match its GitHub Release");
+      const tag = parseReleaseTag(release.tag_name).tag;
+      if (seen.has(tag)) throw new Error("GitHub release discovery returned a duplicate identity");
+      seen.add(tag);
+      const response = await fetcher(metadataUrl(downloadBaseUrl, tag), { headers: { "User-Agent": "Atlas" } });
+      const metadata = assertReleaseMetadata(await responseJson(response, `Release ${tag} metadata`));
+      if (metadata.identity.tag !== tag) throw new Error("Published release metadata does not match its GitHub Release");
       candidates.push(metadata);
     }
     return candidates.sort((left, right) => compareReleaseTags(right.identity.tag, left.identity.tag));
@@ -312,10 +315,7 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
     while (true) {
       try {
         const durable = await options.updater.status();
-        if (matchingActivation(durable, candidate) && ![
-          "awaiting_checkpoint", "requested", "stopping", "selecting", "starting", "validating",
-          "selecting_previous", "restarting_previous", "validating_previous",
-        ].includes(durable.activation.state)) {
+        if (matchingActivation(durable, candidate) && !activationInProgress(durable)) {
           outcome.resume();
           return;
         }
@@ -349,8 +349,7 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
       if (automatic && (updaterStatus.policy !== "automatic" || !isAutomaticCandidate(candidate))) {
         throw new Error("The requested release requires explicit approval.");
       }
-      if (matchingActivation(updaterStatus, candidate) &&
-          ["awaiting_checkpoint", "requested", "stopping", "selecting", "starting", "validating", "selecting_previous", "restarting_previous", "validating_previous"].includes(updaterStatus.activation.state)) {
+      if (matchingActivation(updaterStatus, candidate) && activationInProgress(updaterStatus)) {
         return;
       }
       if (updaterStatus.state !== "staged" || updaterStatus.metadata?.identity.tag !== tag || !updaterStatus.stagedPath ||
@@ -389,7 +388,7 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
     }
   }
 
-  const install = async (tag: string, retry: boolean, pause: () => Promise<UpdatePauseOutcome>) => {
+  const install = async (tag: ReleaseTag, retry: boolean, pause: () => Promise<UpdatePauseOutcome>) => {
     const current = await status();
     if (!current.available || current.available.identity.tag !== tag) {
       throw new Error("The requested release is not the available Atlas release.");

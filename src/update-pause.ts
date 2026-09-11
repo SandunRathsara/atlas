@@ -1,5 +1,6 @@
 import type { OpenCodeHandoffService } from "./opencode.ts";
 import type { PreparationService } from "./preparation.ts";
+import { activationInProgress, type UpdaterStatus } from "./updater.ts";
 
 export const UPDATE_PAUSE_TIMEOUT_MS = 5 * 60 * 1_000;
 
@@ -28,23 +29,25 @@ export const createUpdatePauseCoordinator = (options: UpdatePauseOptions) => {
     return true;
   };
 
-  const pause = () => {
+  const beginPause = (deadline: boolean) => {
     if (current) return current.result;
 
     const pauseGeneration = ++generation;
     const preparation = options.preparation.pauseForUpdate();
     const handoff = options.openCode.pauseForUpdate();
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const result = new Promise<UpdatePauseOutcome>((resolve) => {
-      timer = setTimeout(() => {
-        resume(pauseGeneration);
-        resolve({ status: "timed_out", reason: "safe_checkpoint_timeout" });
-      }, timeoutMs);
-      timer.unref?.();
+      if (deadline) {
+        timer = setTimeout(() => {
+          resume(pauseGeneration);
+          resolve({ status: "timed_out", reason: "safe_checkpoint_timeout" });
+        }, timeoutMs);
+        timer.unref?.();
+      }
 
       void Promise.all([preparation, handoff]).then(() => {
         if (current?.generation !== pauseGeneration) return;
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         current.state = "paused";
         resolve({ status: "paused", resume: () => resume(pauseGeneration) });
       });
@@ -53,10 +56,34 @@ export const createUpdatePauseCoordinator = (options: UpdatePauseOptions) => {
     return result;
   };
 
+  const pause = () => beginPause(true);
+  const hold = () => beginPause(false);
+
   return {
     pause,
+    hold,
     state: () => current?.state ?? "active" as const,
   };
 };
 
 export type UpdatePauseCoordinator = ReturnType<typeof createUpdatePauseCoordinator>;
+
+export const restoreUpdatePauseUntilUpdaterSettles = async (
+  coordinator: Pick<UpdatePauseCoordinator, "hold">,
+  updaterStatus: () => Promise<UpdaterStatus>,
+  sleep: (milliseconds: number) => Promise<void> = Bun.sleep,
+) => {
+  const outcome = await coordinator.hold();
+  if (outcome.status !== "paused") return;
+  while (true) {
+    try {
+      if (!activationInProgress(await updaterStatus())) {
+        outcome.resume();
+        return;
+      }
+    } catch {
+      // Status uncertainty keeps preparation and handoff conservatively paused.
+    }
+    await sleep(250);
+  }
+};

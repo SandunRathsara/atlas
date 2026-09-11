@@ -18,6 +18,7 @@ import type {
   SessionTarget,
 } from "./persistence.ts";
 import { readRecoveryStatus } from "./recovery-status.ts";
+import { createActivityGate } from "./activity-gate.ts";
 
 const DEFAULT_SESSION_ROOT = "/var/lib/atlas/sessions";
 const DEFAULT_CAPACITY = 1;
@@ -255,16 +256,11 @@ export const createPreparationService = (options: PreparationOptions) => {
   let stopped = false;
   let pendingWake = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let updatePaused = false;
-  let activeCycles = 0;
-  const updatePauseWaiters = new Set<() => void>();
+  const activity = createActivityGate();
 
   const finishCycle = () => {
-    activeCycles -= 1;
-    if (activeCycles !== 0) return;
-    for (const resolvePause of updatePauseWaiters) resolvePause();
-    updatePauseWaiters.clear();
-    if (!updatePaused && pendingWake && !running && !stopped) {
+    if (!activity.leave()) return;
+    if (!activity.paused() && pendingWake && !running && !stopped) {
       pendingWake = false;
       queueMicrotask(wake);
     }
@@ -696,7 +692,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       }
       await ensureLocalBranch(session.directory, trunkBranch, trunkSha, env);
 
-      if (updatePaused) return;
+      if (activity.paused()) return;
       if (!checkpoint(session.atlasId, "branch_started", "Unique local working branch creation is starting.", "Full clone verified; creating the unique local branch.")) return;
       const branchResult = await run(options.gitBinary ?? gitBinary, ["-C", session.directory, "checkout", "--no-track", "-b", session.workingBranch, session.baseSha], { env });
       if (branchResult.exitCode !== 0) throw new PreparationError("The unique local working branch could not be created.");
@@ -736,7 +732,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       requeueBeforeClone(session, "Waiting for the GitHub credential supplier or required Repository-scoped credentials; preparation is paused.");
       return;
     }
-    if (updatePaused) return;
+    if (activity.paused()) return;
 
     try {
       ensureStorageReady();
@@ -750,7 +746,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       return;
     }
 
-    if (updatePaused) return;
+    if (activity.paused()) return;
     if (!checkpoint(session.atlasId, "clone_started", "Authenticated full clone is starting; no remote write is performed.", "Preparing an authenticated full clone.")) return;
     try {
       const ownerName = safeRepositoryName(candidate);
@@ -784,7 +780,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       if (shallow !== "false") throw new PreparationError("Git returned a shallow clone; Atlas requires a full clone.");
       await verifyExactRemoteRefs(session, session.directory, env);
       if (!checkpoint(session.atlasId, "clone_complete", "Full clone completed and matches the verified preparation SHA.", "Full clone ready; local branch creation is next.")) return;
-      if (updatePaused) return;
+      if (activity.paused()) return;
       await finishBranch(session = options.persistence.getSession(session.atlasId)!, repository);
     } catch (error) {
       const reason = error instanceof StorageError ? error.message : storageIssue();
@@ -814,12 +810,12 @@ export const createPreparationService = (options: PreparationOptions) => {
           pauseHeld(session, "Waiting for GitHub access to the registered Repository before resuming preparation.");
           return true;
         }
-        if (updatePaused) return true;
+        if (activity.paused()) return true;
         await prepareClaimed(session, repository, candidate);
         return true;
       }
       if (session.preparationCheckpoint === "clone_complete") {
-        if (updatePaused) return true;
+        if (activity.paused()) return true;
         await finishBranch(session, repository);
         return true;
       }
@@ -864,7 +860,7 @@ export const createPreparationService = (options: PreparationOptions) => {
         if (!setReason(session, error instanceof PreparationError ? error.message : "Waiting for safe GitHub verification.", true)) return;
         continue;
       }
-      if (updatePaused) return;
+      if (activity.paused()) return;
       const intent = intentFor(session, target);
       let claimed: Session | undefined;
       try {
@@ -880,8 +876,7 @@ export const createPreparationService = (options: PreparationOptions) => {
   };
 
   const prepareNext = async () => {
-    if (updatePaused) return;
-    activeCycles += 1;
+    if (!activity.enter()) return;
     try {
       await runCycle();
     } finally {
@@ -890,8 +885,8 @@ export const createPreparationService = (options: PreparationOptions) => {
   };
 
   const wake = () => {
-    if (stopped || running || activeCycles > 0) {
-      if (activeCycles > 0) pendingWake = true;
+    if (stopped || running || activity.active() > 0) {
+      if (activity.active() > 0) pendingWake = true;
       return;
     }
     running = true;
@@ -925,21 +920,15 @@ export const createPreparationService = (options: PreparationOptions) => {
     credentials.close();
   };
 
-  const pauseForUpdate = () => {
-    updatePaused = true;
-    return activeCycles === 0
-      ? Promise.resolve()
-      : new Promise<void>((resolvePause) => updatePauseWaiters.add(resolvePause));
-  };
+  const pauseForUpdate = activity.pause;
 
   const resumeFromUpdate = () => {
-    if (!updatePaused) return;
-    updatePaused = false;
+    if (!activity.resume()) return;
     enqueue();
   };
 
   const enqueue = () => {
-    if (running || activeCycles > 0) {
+    if (running || activity.active() > 0) {
       pendingWake = true;
       return;
     }

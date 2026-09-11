@@ -65,7 +65,7 @@ import {
 } from "./views.ts";
 import { renderInboxList, renderInboxPage } from "./views/inbox.ts";
 import { renderShell } from "./views/shell.ts";
-import { DEVELOPMENT_RELEASE_IDENTITY, type ReleaseIdentity } from "./release.ts";
+import { DEVELOPMENT_RELEASE_IDENTITY, parseReleaseTag, type ReleaseIdentity } from "./release.ts";
 import { createUnavailableUpdateService, type UpdateService } from "./update-discovery.ts";
 
 const MAX_FORM_BYTES = 512 * 1024;
@@ -494,7 +494,7 @@ export const createApp = (options: AppOptions) => {
   });
   openCode = openCodeService;
   const updatePause = createUpdatePauseCoordinator({ preparation, openCode: openCodeService });
-  if (options.startPausedForUpdate) void updatePause.pause();
+  if (options.startPausedForUpdate) void updatePause.hold();
   const sessionViewer = createSessionViewerService(openCodeService);
   openCodeService.onTransport((state) => {
     if (state === "connected") preparation.enqueue();
@@ -940,6 +940,26 @@ export const createApp = (options: AppOptions) => {
     }));
   };
 
+  const updateFailure = async (
+    c: Context,
+    message: string,
+    statusCode: 400 | 403 | 409 | 413 | 422,
+    policy?: "approval_required" | "automatic",
+  ) => {
+    const identity = c.get("auth");
+    const status = await updates.status();
+    const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
+    const content = renderUpdatesPage(status, csrfToken, { message, policy });
+    setPrivateHtmlHeaders(c);
+    if (isHtmx(c)) return c.html(content, statusCode);
+    return c.html(renderShell({
+      title: "Updates",
+      csrfToken,
+      inbox: inboxFromRequest(c),
+      content,
+    }), statusCode);
+  };
+
   app.get("/updates", (c) => updatesPage(c));
   app.get("/updates/status", (c) => updatesPage(c, true));
   app.post("/updates/check", async (c) => {
@@ -948,11 +968,10 @@ export const createApp = (options: AppOptions) => {
     try {
       form = await parseForm(c.req.raw);
     } catch (error) {
-      if (error instanceof FormBodyTooLarge) return c.text("Request body is too large", 413);
-      return c.text("Malformed update request", 400);
+      return updateFailure(c, error instanceof FormBodyTooLarge ? "The request body was too large." : "The update request was malformed.", error instanceof FormBodyTooLarge ? 413 : 400);
     }
     const identity = c.get("auth");
-    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return c.text("Request rejected", 403);
+    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return updateFailure(c, "Refresh this page before trying the check again.", 403);
     void updates.check(updatePause.pause).catch(() => undefined);
     if (isHtmx(c)) {
       c.header("HX-Redirect", "/updates");
@@ -966,18 +985,22 @@ export const createApp = (options: AppOptions) => {
     try {
       form = await parseForm(c.req.raw);
     } catch (error) {
-      if (error instanceof FormBodyTooLarge) return c.text("Request body is too large", 413);
-      return c.text("Malformed update request", 400);
+      return updateFailure(c, error instanceof FormBodyTooLarge ? "The request body was too large." : "The activation request was malformed.", error instanceof FormBodyTooLarge ? 413 : 400);
     }
     const identity = c.get("auth");
-    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return c.text("Request rejected", 403);
-    const tag = stringField(form.tag);
+    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return updateFailure(c, "Refresh this page before trying the activation again.", 403);
+    const tagValue = stringField(form.tag);
     const retry = stringField(form.retry) === "1";
-    if (!tag) return c.text("A release tag is required", 400);
+    let tag;
+    try {
+      tag = parseReleaseTag(tagValue ?? "").tag;
+    } catch {
+      return updateFailure(c, "Choose the available Release again before activating it.", 422);
+    }
     try {
       await updates.install(tag, retry, updatePause.pause);
     } catch (error) {
-      return c.text(error instanceof Error ? error.message : "The activation request was rejected.", 409);
+      return updateFailure(c, error instanceof Error ? error.message : "The activation request was rejected.", 409);
     }
     if (isHtmx(c)) {
       c.header("HX-Redirect", "/updates");
@@ -991,17 +1014,16 @@ export const createApp = (options: AppOptions) => {
     try {
       form = await parseForm(c.req.raw);
     } catch (error) {
-      if (error instanceof FormBodyTooLarge) return c.text("Request body is too large", 413);
-      return c.text("Malformed update request", 400);
+      return updateFailure(c, error instanceof FormBodyTooLarge ? "The request body was too large." : "The policy request was malformed.", error instanceof FormBodyTooLarge ? 413 : 400);
     }
     const identity = c.get("auth");
-    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return c.text("Request rejected", 403);
+    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return updateFailure(c, "Refresh this page before saving the policy again.", 403);
     const policy = stringField(form.policy);
-    if (policy !== "approval_required" && policy !== "automatic") return c.text("A valid update policy is required", 400);
+    if (policy !== "approval_required" && policy !== "automatic") return updateFailure(c, "Choose one of the available update policies.", 422);
     try {
       await updates.setPolicy(policy, updatePause.pause);
     } catch (error) {
-      return c.text(error instanceof Error ? error.message : "The update policy could not be saved.", 409);
+      return updateFailure(c, error instanceof Error ? error.message : "The update policy could not be saved.", 409, policy);
     }
     void updates.check(updatePause.pause).catch(() => undefined);
     if (isHtmx(c)) {

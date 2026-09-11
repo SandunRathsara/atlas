@@ -55,6 +55,7 @@ test -f "$release_root/src/updater-server.ts"
 test -f "$release_root/src/updater.ts"
 test -x "$release_root/deploy/bootstrap.sh"
 test -x "$release_root/deploy/check-health.sh"
+test -x "$release_root/deploy/check-activation-health.sh"
 test -f "$release_root/deploy/systemd/atlas-updater.service"
 bash "$release_root/deploy/verify-assets.sh"
 
@@ -90,7 +91,7 @@ for _ in $(seq 1 100); do
       ATLAS_HEALTH_URL="http://127.0.0.1:$port/health" \
       ATLAS_EXPECTED_RELEASE_TAG="$tag" \
       ATLAS_EXPECTED_RELEASE_SHA="$commit" \
-      bash "$release_root/deploy/check-health.sh" >/dev/null 2>&1; then
+      bash "$release_root/deploy/check-activation-health.sh" >/dev/null 2>&1; then
     healthy=1
     break
   fi
@@ -118,7 +119,7 @@ if ATLAS_SHARED_TOKEN=fixture-secret \
     ATLAS_HEALTH_URL="http://127.0.0.1:$port/health" \
     ATLAS_EXPECTED_RELEASE_TAG="$tag" \
     ATLAS_EXPECTED_RELEASE_SHA="$(printf '0%.0s' {1..40})" \
-    bash "$release_root/deploy/check-health.sh" >/dev/null 2>&1; then
+    bash "$release_root/deploy/check-activation-health.sh" >/dev/null 2>&1; then
   echo "candidate health accepted the wrong release SHA" >&2
   exit 1
 fi

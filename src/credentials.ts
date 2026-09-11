@@ -83,7 +83,7 @@ type CachedToken = {
 
 const normalizedRepository = (value: string) => value.trim().toLocaleLowerCase("en-US");
 
-const assertRestrictedFile = (path: string, label: string) => {
+const assertRestrictedFile = (path: string, label: string, expectedOwnerUid?: number, exactMode?: number) => {
   let stat;
   try {
     stat = lstatSync(path);
@@ -91,8 +91,9 @@ const assertRestrictedFile = (path: string, label: string) => {
     throw new CredentialError(`${label} is unavailable`);
   }
 
-  const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
-  if (!stat.isFile() || (stat.mode & 0o077) !== 0 || (uid !== undefined && stat.uid !== uid)) {
+  const uid = expectedOwnerUid ?? (typeof process.getuid === "function" ? process.getuid() : undefined);
+  if (!stat.isFile() || (exactMode === undefined ? (stat.mode & 0o077) !== 0 : (stat.mode & 0o777) !== exactMode) ||
+      (uid !== undefined && stat.uid !== uid)) {
     throw new CredentialError(`${label} must be a private regular file`);
   }
   return stat;
@@ -173,9 +174,9 @@ const isWithin = (root: string, candidate: string) => {
   return remainder === "" || (remainder !== ".." && !remainder.startsWith(`..${"/"}`) && !isAbsolute(remainder));
 };
 
-const readRegistry = (path: string): Registry => {
+const readRegistry = (path: string, expectedOwnerUid?: number, exactMode?: number): Registry => {
   if (!existsSync(path)) return { version: 1, scopes: [] };
-  assertRestrictedFile(path, "Session scope registry");
+  assertRestrictedFile(path, "Session scope registry", expectedOwnerUid, exactMode);
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<Registry>;
     if (parsed.version !== 1 || !Array.isArray(parsed.scopes)) throw new Error();
@@ -191,6 +192,14 @@ const readRegistry = (path: string): Registry => {
   } catch {
     throw new CredentialError("Session scope registry is invalid");
   }
+};
+
+export const readSessionHelperReferences = (options: { registryPath: string; expectedOwnerUid: number }) => {
+  if (!isAbsolute(options.registryPath) || resolve(options.registryPath) !== options.registryPath ||
+      !Number.isSafeInteger(options.expectedOwnerUid) || options.expectedOwnerUid < 0 || !existsSync(options.registryPath)) {
+    throw new CredentialError("Session scope registry read contract is invalid");
+  }
+  return [...new Set(readRegistry(options.registryPath, options.expectedOwnerUid, 0o600).scopes.flatMap((scope) => scope.helperPaths ?? []))];
 };
 
 const writeRegistry = (path: string, registry: Registry) => {

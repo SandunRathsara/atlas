@@ -142,6 +142,7 @@ export const renderShell = ({
   inbox?: InboxContext;
 }) => {
   const headerName = inbox.filtered?.fullName ?? "All Repositories";
+  const updatesCurrent = inbox.currentPath === "/updates" || inbox.currentPath === "/updates/status";
   const recoveryNotices = renderRecoveryNotices(readRecoveryStatus());
 
   return renderDocument(
@@ -157,10 +158,10 @@ export const renderShell = ({
       <div class="min-w-0 flex-1">
         <header class="atlas-glass sticky top-0 z-20">
           <div class="relative flex h-12 items-center justify-between gap-3 px-4 sm:px-6">
-            <p class="hidden min-w-0 truncate text-sm text-muted sm:block" title="${escapeHtml(headerName)}">${escapeHtml(headerName)}</p>
+            <p class="min-w-0 flex-1 truncate text-sm text-muted" title="${escapeHtml(headerName)}">${escapeHtml(headerName)}</p>
             <div class="flex shrink-0 flex-wrap items-center gap-2">
               <a class="btn btn-ghost lg:hidden" href="/inbox" aria-label="Inbox">${icon("rectangle-stack", 16)} <span class="hidden sm:inline">Inbox</span></a>
-              <a class="btn btn-ghost lg:hidden" href="/updates"${inbox.currentPath === "/updates" || inbox.currentPath === "/updates/status" ? ' aria-current="page"' : ""}>${icon("arrow-path", 16)} Updates</a>
+              <a class="btn btn-ghost border-l-2 ${updatesCurrent ? "border-l-brand-readable bg-brand-tint" : "border-l-transparent"} lg:hidden" href="/updates" aria-label="Updates"${updatesCurrent ? ' aria-current="page"' : ""}>${icon("arrow-path", 16)} <span class="hidden sm:inline">Updates</span></a>
               ${renderLogoutForm(csrfToken)}
             </div>
           </div>

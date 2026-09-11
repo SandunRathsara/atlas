@@ -1,22 +1,12 @@
 import type { UpdateStatus } from "../update-discovery.ts";
 import type { ReleaseIdentity, ReleaseMetadata } from "../release.ts";
-import type { UpdaterStatus } from "../updater.ts";
+import { activationInProgress, type UpdatePolicy, type UpdaterStatus } from "../updater.ts";
 import { escapeHtml, formatTime } from "./html.ts";
 import { icon } from "./icons.ts";
 import { alertSoft, pageHeader, statusBadge } from "./shared.ts";
 
 const activeStage = new Set<UpdaterStatus["state"]>(["requested", "downloading", "verifying", "extracting"]);
-const activeActivation = new Set<UpdaterStatus["activation"]["state"]>([
-  "awaiting_checkpoint",
-  "requested",
-  "stopping",
-  "selecting",
-  "starting",
-  "validating",
-  "selecting_previous",
-  "restarting_previous",
-  "validating_previous",
-]);
+export type UpdateFeedback = { message: string; policy?: UpdatePolicy };
 
 const identity = (release: ReleaseIdentity) => release.published
   ? `<p class="font-mono text-base">${escapeHtml(release.tag)}</p>
@@ -55,27 +45,30 @@ const maintenanceMarkup = (candidate: ReleaseMetadata) => !candidate.rollback.co
   ? alertSoft("warning", "alert", `<div><strong>Manual maintenance required.</strong> This release cannot use normal code-only rollback. ${escapeHtml(candidate.rollback.manualMaintenanceInstructions ?? "Follow the published release instructions.")}</div>`)
   : "";
 
-const activationBadge = (state: UpdaterStatus["activation"]["state"]) => {
+const activationBadge = (updater: UpdaterStatus) => {
+  const state = updater.activation.state;
   if (state === "succeeded") return statusBadge("badge-success", "Activated");
   if (state === "rolled_back") return statusBadge("badge-warning", "Recovered");
   if (state === "rollback_failed") return statusBadge("badge-error", "Recovery failed");
   if (state === "abandoned") return statusBadge("badge-warning", "Abandoned");
   if (["selecting_previous", "restarting_previous", "validating_previous"].includes(state)) return statusBadge("badge-warning", "Recovering");
-  if (activeActivation.has(state)) return statusBadge("badge-info", state === "awaiting_checkpoint" ? "Waiting for safe checkpoint" : "Activating");
+  if (activationInProgress(updater)) return statusBadge("badge-info", state === "awaiting_checkpoint" ? "Waiting for safe checkpoint" : "Activating");
   return statusBadge("badge-neutral", "No activation");
 };
 
 const activationAction = (status: UpdateStatus, candidate: ReleaseMetadata, csrfToken: string) => {
   const updater = status.updater;
-  if (!csrfToken || !updater || activeActivation.has(updater.activation.state) || updater.state !== "staged" ||
+  if (!csrfToken || !updater || activationInProgress(updater) || updater.state !== "staged" ||
       updater.metadata?.identity.tag !== candidate.identity.tag || !updater.stagedPath ||
       updater.requirements === null || updater.requirements.unmet.length > 0 || !candidate.rollback.codeOnlyCompatible) return "";
   const retry = updater.activation.failedTags.includes(candidate.identity.tag);
-  return `<form class="mt-4" action="/updates/install" method="post">
+  return `<form id="update-install-form" class="mt-4" action="/updates/install" method="post" hx-post="/updates/install" hx-target="#updates-content" hx-swap="outerHTML" hx-indicator="#update-install-progress" hx-disabled-elt="button[type='submit']">
     <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
     <input type="hidden" name="tag" value="${escapeHtml(candidate.identity.tag)}">
     ${retry ? '<input type="hidden" name="retry" value="1">' : ""}
     <button class="btn btn-primary" type="submit">${icon(retry ? "arrow-path" : "play", 16)} ${retry ? "Retry" : "Install"}</button>
+    <span id="update-install-progress" class="htmx-indicator ml-3 text-sm text-muted" role="status" aria-live="polite">${retry ? "Retrying activation…" : "Requesting activation…"}</span>
+    <p data-form-status class="sr-only" role="status" aria-live="polite"></p>
   </form>`;
 };
 
@@ -120,7 +113,7 @@ const activationMarkup = (status: UpdateStatus) => {
     ? `<div class="mt-4 border-t border-edge pt-4"><p class="text-sm font-medium text-muted">Latest activation result</p><p class="mt-2"><span class="font-mono">${escapeHtml(activation.lastResult.tag)}</span> · ${escapeHtml(activation.lastResult.message)}</p><p class="mt-1 text-sm text-muted">${escapeHtml(formatTime(activation.lastResult.at))}</p></div>`
     : `<p class="mt-4 border-t border-edge pt-4 text-sm text-muted">No activation result yet.</p>`;
   return `<section class="mt-6" aria-labelledby="activation-title">
-    <div class="flex flex-wrap items-center justify-between gap-3"><h2 id="activation-title" class="text-base font-semibold">Activation and recovery</h2>${activationBadge(activation.state)}</div>
+    <div class="flex flex-wrap items-center justify-between gap-3"><h2 id="activation-title" class="text-base font-semibold">Activation and recovery</h2>${activationBadge(status.updater)}</div>
     <div class="mt-3 rounded-box border border-edge bg-base-100 p-4">
       <p>${escapeHtml(activation.message)}</p>${target}
       <p class="mt-2 text-sm text-muted">Atlas identity and storage health are checked independently of OpenCode.</p>
@@ -151,24 +144,27 @@ const cleanupMarkup = (status: UpdateStatus) => {
   </section>`;
 };
 
-const policyMarkup = (status: UpdateStatus, csrfToken: string) => {
+const policyMarkup = (status: UpdateStatus, csrfToken: string, selectedPolicy?: UpdatePolicy) => {
   const policy = status.updater?.policy;
+  const selected = selectedPolicy ?? policy;
   const badge = policy === "automatic"
     ? statusBadge("badge-info", "Automatic")
     : policy === "approval_required"
       ? statusBadge("badge-neutral", "Approval required")
       : statusBadge("badge-error", "Unavailable");
   const form = policy && csrfToken
-    ? `<form class="mt-4 flex max-w-2xl flex-wrap items-end gap-3" action="/updates/policy" method="post">
+    ? `<form id="update-policy-form" class="mt-4 flex max-w-2xl flex-wrap items-end gap-3" action="/updates/policy" method="post" hx-post="/updates/policy" hx-target="#updates-content" hx-swap="outerHTML" hx-indicator="#update-policy-progress" hx-disabled-elt="button[type='submit']">
         <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
         <label class="flex min-w-56 flex-1 flex-col" for="update-policy">
           <span class="mb-2 text-sm font-medium text-muted">Policy</span>
           <select class="select w-full" id="update-policy" name="policy">
-            <option value="approval_required"${policy === "approval_required" ? " selected" : ""}>Approval required</option>
-            <option value="automatic"${policy === "automatic" ? " selected" : ""}>Automatic for current SemVer builds</option>
+            <option value="approval_required"${selected === "approval_required" ? " selected" : ""}>Approval required</option>
+            <option value="automatic"${selected === "automatic" ? " selected" : ""}>Automatic for current SemVer builds</option>
           </select>
         </label>
         <button class="btn" type="submit">Save policy</button>
+        <span id="update-policy-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Saving policy…</span>
+        <p data-form-status class="sr-only" role="status" aria-live="polite"></p>
       </form>`
     : "";
   return `<section class="mt-6 rounded-box border border-edge bg-base-100 p-4" aria-labelledby="update-policy-title">
@@ -182,7 +178,7 @@ const policyMarkup = (status: UpdateStatus, csrfToken: string) => {
 
 export const renderUpdatesStatus = (status: UpdateStatus, csrfToken = "") => {
   const available = status.available;
-  const polling = status.checking || Boolean(status.updater && (activeStage.has(status.updater.state) || activeActivation.has(status.updater.activation.state) || status.updater.cleanup.state === "cleaning"));
+  const polling = status.checking || Boolean(status.updater && (activeStage.has(status.updater.state) || activationInProgress(status.updater) || status.updater.cleanup.state === "cleaning"));
   const availableBody = available
     ? `${candidateIdentity(available)}<p class="mt-2 text-sm text-muted">${status.candidates.length} published release${status.candidates.length === 1 ? "" : "s"} retained for update-policy evaluation.</p>${activationAction(status, available, csrfToken)}`
     : !status.installed.published
@@ -192,7 +188,7 @@ export const renderUpdatesStatus = (status: UpdateStatus, csrfToken = "") => {
         : status.discovery.lastSuccessAt
           ? `<p class="text-base">No newer release found</p><p class="mt-2 text-sm text-muted">This is up to date only as of the last successful check shown below.</p>`
           : `<p class="text-base">Not checked yet</p><p class="mt-2 text-sm text-muted">Check published releases before assessing availability.</p>`;
-  return `<div id="updates-status"${polling ? ' hx-get="/updates/status" hx-trigger="every 2s" hx-swap="outerHTML" hx-push-url="false"' : ""}>
+  return `<div id="updates-live-status"${polling ? ' hx-get="/updates/status" hx-trigger="every 2s" hx-swap="outerHTML" hx-push-url="false"' : ""}>
     <div class="mt-6 grid gap-4 md:grid-cols-2">
       <section class="rounded-box border border-edge bg-base-100 p-4" aria-labelledby="installed-release-title">
         <div class="flex flex-wrap items-center justify-between gap-2"><h2 id="installed-release-title" class="text-base font-semibold">Installed release</h2>${status.installed.published ? statusBadge("badge-neutral", `Build ${status.installed.build}`) : statusBadge("badge-warning", "Development")}</div>
@@ -209,15 +205,21 @@ export const renderUpdatesStatus = (status: UpdateStatus, csrfToken = "") => {
     ${stageMarkup(status)}
     ${activationMarkup(status)}
     ${cleanupMarkup(status)}
-    ${policyMarkup(status, csrfToken)}
   </div>`;
 };
 
-export const renderUpdatesPage = (status: UpdateStatus, csrfToken: string) => `${pageHeader({
+export const renderUpdatesPage = (status: UpdateStatus, csrfToken: string, feedback?: UpdateFeedback) => `<div id="updates-content">
+  ${feedback ? `<div class="alert alert-error alert-soft leading-normal" role="alert" tabindex="-1" data-focus-on-swap><div><strong>The update change was not completed.</strong> ${escapeHtml(feedback.message)} Review the preserved choice and try again, or <a class="link text-brand-readable" href="/inbox">return to Inbox</a>.</div></div>` : ""}
+  ${pageHeader({
   title: "Updates",
   description: "Check, approve, and recover Atlas Releases without stopping Agent work.",
-  actions: `<form action="/updates/check" method="post">
+  actions: `<form action="/updates/check" id="update-check-form" method="post" hx-post="/updates/check" hx-target="#updates-content" hx-swap="outerHTML" hx-indicator="#update-check-progress" hx-disabled-elt="button[type='submit']">
     <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
     <button class="btn btn-primary" type="submit">${icon("arrow-path", 16)} Check now</button>
+    <span id="update-check-progress" class="htmx-indicator ml-3 text-sm text-muted" role="status" aria-live="polite">Checking releases…</span>
+    <p data-form-status class="sr-only" role="status" aria-live="polite"></p>
   </form>`,
-})}${renderUpdatesStatus(status, csrfToken)}`;
+})}
+  ${renderUpdatesStatus(status, csrfToken)}
+  ${policyMarkup(status, csrfToken, feedback?.policy)}
+</div>`;

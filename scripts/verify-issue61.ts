@@ -1,8 +1,10 @@
 import { strict as assert } from "node:assert";
 import {
   chmodSync,
+  chownSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -12,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { createCredentialBoundary } from "../src/credentials.ts";
+import { createCredentialBoundary, readSessionHelperReferences } from "../src/credentials.ts";
 import { createReleaseMetadata, type ReleaseMetadata } from "../src/release.ts";
 import { createUpdaterClient, createUpdaterService } from "../src/updater.ts";
 import { renderUpdatesStatus } from "../src/views/updates.ts";
@@ -99,6 +101,18 @@ try {
     fullName: "Acme/repo",
     helperPaths: [referencedPath, helper],
   });
+  const registryOwnerUid = lstatSync(registryPath).uid;
+  assert.deepEqual(new Set(readSessionHelperReferences({ registryPath, expectedOwnerUid: registryOwnerUid })), new Set([referencedPath, helper]), "the updater-safe registry reader must accept the expected owner, mode, and path");
+  assert.throws(() => readSessionHelperReferences({ registryPath, expectedOwnerUid: registryOwnerUid + 1 }), /private regular file/, "the updater-safe reader must reject an unexpected owner");
+  chmodSync(registryPath, 0o640);
+  assert.throws(() => readSessionHelperReferences({ registryPath, expectedOwnerUid: registryOwnerUid }), /private regular file/, "the updater-safe reader must reject a group-readable registry");
+  chmodSync(registryPath, 0o600);
+  if (typeof process.getuid === "function" && process.getuid() === 0) {
+    chownSync(registryPath, 65534, 65534);
+    assert.equal(readSessionHelperReferences({ registryPath, expectedOwnerUid: 65534 }).includes(helper), true, "a root updater must safely read a registry owned by the expected service account");
+    assert.throws(() => readSessionHelperReferences({ registryPath, expectedOwnerUid: 0 }), /private regular file/);
+    chownSync(registryPath, 0, 0);
+  }
   await credentials.start();
 
   const healthy = new Map<string, boolean>([[candidate.identity.tag, false], [installed.identity.tag, true]]);
@@ -113,7 +127,7 @@ try {
     activationTimeoutMs: 80,
     activationPollMs: 2,
     hostRuntime: () => ({ bun: "1.3.14", git: "2.55.0", gh: "2.100.0" }),
-    listHelperReferences: credentials.listHelperReferences,
+    listHelperReferences: () => readSessionHelperReferences({ registryPath, expectedOwnerUid: registryOwnerUid }),
     controlAtlas: (operation: "stop" | "start") => {
       controls.push(operation);
       return true;
@@ -245,6 +259,22 @@ try {
   assert.equal(existsSync(sessionDirectory), true, "release cleanup removed Session data");
   assert.equal(controls.filter((operation) => operation === "stop").length, 3, "cleanup launched an activation or replayed process control");
   assert.match(readFileSync(statePath, "utf8"), /"cleanup":\{"state":"succeeded"/, "cleanup outcome was not durable");
+
+  const validState = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, any>;
+  const corruptions = [
+    (state: Record<string, any>) => { state.lastResult.tag = "not-a-release"; },
+    (state: Record<string, any>) => { state.activation.failedTags = ["not-a-release"]; },
+    (state: Record<string, any>) => { state.activation.lastResult.tag = "not-a-release"; },
+    (state: Record<string, any>) => { state.cleanup.pendingTags = ["not-a-release"]; },
+    (state: Record<string, any>) => { state.cleanup.removedTags = ["not-a-release"]; },
+  ];
+  for (const [index, corrupt] of corruptions.entries()) {
+    const invalid = structuredClone(validState);
+    corrupt(invalid);
+    const invalidStatePath = join(root, `invalid-update-state-${index}.json`);
+    writeFileSync(invalidStatePath, JSON.stringify(invalid));
+    assert.throws(() => createUpdaterService({ statePath: invalidStatePath }), /Updater .*state is invalid/, "all persisted updater result, suppression, and cleanup tags must cross the validated ReleaseTag boundary");
+  }
 
   console.log("Issue #61 release retention and helper continuity checks passed");
 } finally {

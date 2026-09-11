@@ -13,8 +13,8 @@ fi
 response=$(printf 'Authorization: Bearer %s\nAccept: application/json\n' "$token" |
   curl --silent --show-error --max-time 10 --header @- "$url")
 
-if ! jq -e '.atlas.process == true and .persistence.healthy == true' >/dev/null <<<"$response"; then
-  echo "Atlas process or persistence health check failed" >&2
+if ! jq -e '.atlas.process == true and .persistence.healthy == true and .openCode.ready == true' >/dev/null <<<"$response"; then
+  echo "Atlas process, persistence, or OpenCode readiness check failed" >&2
   exit 1
 fi
 
@@ -30,4 +30,5 @@ if [[ -n "$expected_tag" || -n "$expected_sha" ]]; then
 fi
 
 identity=$(jq -r 'if .atlas.release.published == true then .atlas.release.tag + " (" + .atlas.release.gitSha + ")" else "development checkout" end' <<<"$response")
-echo "Atlas process and persistence are healthy: $identity"
+opencode_version=$(jq -r '.openCode.version // "version unavailable"' <<<"$response")
+echo "Atlas process and persistence are healthy; OpenCode is ready ($opencode_version): $identity"

@@ -126,6 +126,10 @@ the unchanged database; **Recovered** is success, while **Recovery failed**
 requires operator intervention. Inspect the durable result before using
 **Retry**. Do not restore a snapshot for this ordinary path.
 
+After candidate health succeeds, the updater atomically selects the candidate's
+immutable credential/updater support bundle for future service starts. It does
+not restart either already-running support service.
+
 Use the stopped-writer procedure below only for a Release marked Manual
 maintenance required or for recovery outside the normal web contract.
 
@@ -143,8 +147,8 @@ maintenance required or for recovery outside the normal web contract.
    `rollback.codeOnlyCompatible` for ordinary code-only rollback; otherwise
    follow its non-empty manual-maintenance instructions. Run migrations by
    selecting the immutable versioned release and starting Atlas while admission
-   remains paused. The independently installed credential supplier and
-   updater and their stable support trees remain running; do
+    remains paused. The independently installed credential supplier and
+    updater and their currently selected immutable support bundle remain running; do
    not restart them as part of release selection. Never overwrite a release or
    restart OpenCode.
 5. Validate authenticated Atlas identity and storage health first; this startup
