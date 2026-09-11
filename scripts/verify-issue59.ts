@@ -1,7 +1,9 @@
 import { strict as assert } from "node:assert";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -10,15 +12,17 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createApp } from "../src/app.ts";
 import { createPersistence } from "../src/persistence.ts";
 import { createReleaseMetadata, type ReleaseMetadata } from "../src/release.ts";
 import { createUpdateService } from "../src/update-discovery.ts";
+import { createUpdatePauseCoordinator, restoreUpdatePauseUntilUpdaterSettles } from "../src/update-pause.ts";
 import {
   ACTIVATION_HEALTH_TIMEOUT_MS,
   createUpdaterClient,
   createUpdaterService,
+  installShippedSupportServices,
   type UpdaterClient,
 } from "../src/updater.ts";
 
@@ -45,6 +49,7 @@ type HostOptions = {
   candidateHealthy?: () => boolean;
   previousHealthy?: () => boolean;
   timeoutMs?: number;
+  hostRuntime?: () => { bun: string | null; git: string | null; gh: string | null };
 };
 
 const releaseTree = (releasesRoot: string, release: ReleaseMetadata) => {
@@ -52,6 +57,18 @@ const releaseTree = (releasesRoot: string, release: ReleaseMetadata) => {
   mkdirSync(path, { recursive: true, mode: 0o755 });
   writeFileSync(join(path, "RELEASE_METADATA.json"), `${JSON.stringify(release)}\n`);
   writeFileSync(join(path, "complete.txt"), `${release.identity.tag}\n`);
+  for (const asset of [
+    "src/credential-server.ts",
+    "src/credentials.ts",
+    "src/updater-server.ts",
+    "src/updater.ts",
+    "src/release.ts",
+    "deploy/check-activation-health.sh",
+  ]) {
+    const target = join(path, asset);
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(join(import.meta.dir, "..", asset), target);
+  }
   return path;
 };
 
@@ -62,6 +79,7 @@ const createHost = async (name: string, candidate: ReleaseMetadata, options: Hos
   const socketPath = join(hostRoot, "run", "updater.sock");
   const keyPath = join(hostRoot, "config", "updater.key");
   const currentPath = join(hostRoot, "current");
+  const supportRoot = join(hostRoot, "services");
   mkdirSync(join(hostRoot, "config"), { recursive: true, mode: 0o700 });
   writeFileSync(keyPath, `${key}\n`, { mode: 0o600 });
   chmodSync(keyPath, 0o600);
@@ -81,7 +99,7 @@ const createHost = async (name: string, candidate: ReleaseMetadata, options: Hos
     currentPath,
     activationTimeoutMs: options.timeoutMs ?? 25,
     activationPollMs: 2,
-    hostRuntime: () => ({ bun: "1.3.14", git: "2.55.0", gh: "2.100.0" }),
+    hostRuntime: options.hostRuntime ?? (() => ({ bun: "1.3.14", git: "2.55.0", gh: "2.100.0" })),
     controlAtlas: async (operation: "stop" | "start") => {
       controls.push(operation);
       if (operation === "stop") {
@@ -102,6 +120,9 @@ const createHost = async (name: string, candidate: ReleaseMetadata, options: Hos
       }
       return selected === previousPath && expected.identity.tag === installed.identity.tag && (options.previousHealthy?.() ?? true);
     },
+    updateSupportServices: (releasePath: string, release: ReleaseMetadata) => {
+      installShippedSupportServices(releasePath, release, supportRoot);
+    },
   };
   let service = createUpdaterService(serviceOptions);
   await service.start();
@@ -115,6 +136,7 @@ const createHost = async (name: string, candidate: ReleaseMetadata, options: Hos
     previousPath,
     currentPath,
     statePath,
+    supportRoot,
     controls,
     dataPath,
     client: () => client,
@@ -171,6 +193,36 @@ const github = {
 try {
   assert.equal(ACTIVATION_HEALTH_TIMEOUT_MS, 60_000, "production candidate health deadline must be 60 seconds");
 
+  {
+    let calls = 0;
+    let preparationPaused = false;
+    let handoffPaused = false;
+    const coordinator = createUpdatePauseCoordinator({
+      preparation: {
+        pauseForUpdate: async () => { preparationPaused = true; },
+        resumeFromUpdate: () => { preparationPaused = false; },
+      },
+      openCode: {
+        pauseForUpdate: async () => { handoffPaused = true; },
+        resumeFromUpdate: () => { handoffPaused = false; },
+      },
+      timeoutMs: 5,
+    });
+    await restoreUpdatePauseUntilUpdaterSettles(
+      coordinator,
+      async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("controlled startup socket race");
+        return { activation: { state: calls === 2 ? "validating" : "succeeded" } } as never;
+      },
+      async () => {
+        assert.equal(preparationPaused && handoffPaused, true, "status uncertainty must not start preparation or handoff");
+      },
+    );
+    assert.equal(calls, 3, "startup pause must reconcile unavailable, active, then terminal updater status");
+    assert.equal(preparationPaused || handoffPaused, false, "terminal updater status must release the conservative startup pause");
+  }
+
   const startupOpenCode = fakeOpenCode();
   const startupPersistence = createPersistence({ path: ":memory:" });
   const startupApp = createApp({
@@ -225,6 +277,8 @@ try {
   let html = await response.text();
   assert.match(html, /action="\/updates\/install"/);
   assert.match(html, /> Install<\/button>/);
+  assert.match(html, /id="update-install-form"[^>]*hx-post="\/updates\/install"[^>]*hx-indicator="#update-install-progress"[^>]*hx-disabled-elt=/, "Install must expose labelled pending and repeat prevention");
+  assert.match(html, /Requesting activation…/);
   response = await app.fetch(new Request("http://atlas.test/updates/install", { method: "POST" }));
   assert.equal(response.status, 401, "activation requires existing Atlas access");
   const loginPage = await app.fetch(new Request("http://atlas.test/login"));
@@ -264,6 +318,10 @@ try {
   await waitFor(async () => (await realClient.status()).activation.state === "succeeded", "approved release did not activate");
   await waitFor(() => app.updatePause.state() === "active", "successful activation did not release the update pause");
   assert.equal(realpathSync(webHost.currentPath), webHost.candidatePath);
+  assert.equal(realpathSync(join(webHost.supportRoot, "current")), join(webHost.supportRoot, "releases", `atlas-${webCandidate.identity.tag}`), "successful activation must atomically select the candidate's shipped support services");
+  assert.equal(existsSync(join(webHost.supportRoot, "current", "atlas-updater", "updater-server.ts")), true);
+  assert.equal(existsSync(join(webHost.supportRoot, "current", "atlas-credentials", "credential-server.ts")), true);
+  assert.equal(lstatSync(join(webHost.supportRoot, "releases", `atlas-${webCandidate.identity.tag}`)).mode & 0o222, 0, "the selected support bundle must be immutable");
   assert.equal(readFileSync(webHost.dataPath, "utf8"), "preserve me\n");
   assert.deepEqual(openCode.counts(), { pauseCount: 1, resumeCount: 1, readinessQueries: 0 }, "activation must pause handoff without querying or operating OpenCode readiness");
   const activationHealth = await app.fetch(new Request("http://atlas.test/health?activation=1", { headers: { Authorization: "Bearer secret" } }));
@@ -292,6 +350,18 @@ try {
   timeoutPersistence.close();
   timeoutHost.service().close();
 
+  let runtimesAvailable = true;
+  const runtimeCandidate = metadata("v0.1.3+build.12", "c");
+  const runtimeHost = await createHost("runtime-revalidation", runtimeCandidate, {
+    hostRuntime: () => ({ bun: runtimesAvailable ? "1.3.14" : "1.4.0", git: "2.55.0", gh: "2.100.0" }),
+  });
+  runtimesAvailable = false;
+  await assert.rejects(runtimeHost.client().prepareActivation(runtimeCandidate, false), /rejected/, "activation must revalidate host runtimes after staging and immediately before the pause");
+  const runtimeStatus = await runtimeHost.client().status();
+  assert.match(runtimeStatus.requirements?.unmet[0] ?? "", /Bun 1\.3\.14 is required; this host reports 1\.4\.0/);
+  assert.deepEqual(runtimeHost.controls, [], "runtime drift must be recorded before Atlas is paused or stopped");
+  runtimeHost.service().close();
+
   for (const scenario of ["failed-boot", "wrong-identity", "unhealthy-storage", "deadline"] as const) {
     const candidate = metadata(`v0.2.${scenario === "failed-boot" ? 0 : scenario === "wrong-identity" ? 1 : scenario === "unhealthy-storage" ? 2 : 3}+build.${scenario === "failed-boot" ? 4 : scenario === "wrong-identity" ? 5 : scenario === "unhealthy-storage" ? 6 : 7}`, scenario === "failed-boot" ? "4" : scenario === "wrong-identity" ? "5" : scenario === "unhealthy-storage" ? "6" : "7");
     const host = await createHost(scenario, candidate, {
@@ -304,6 +374,7 @@ try {
     assert.equal(realpathSync(host.currentPath), host.previousPath);
     assert.equal(result.failedTags.includes(candidate.identity.tag), true, `${scenario} must suppress the failed build`);
     assert.equal(readFileSync(host.dataPath, "utf8"), "preserve me\n", `${scenario} must preserve shared data`);
+    assert.equal(existsSync(join(host.supportRoot, "current")), false, `${scenario} must not select candidate support services before candidate health succeeds`);
     host.service().close();
   }
 
@@ -324,6 +395,10 @@ try {
     body: new URLSearchParams({ tag: failedCandidate.identity.tag }),
   }));
   assert.equal(response.status, 409, "Install must not bypass failed-build suppression");
+  html = await response.text();
+  assert.match(html, /The update change was not completed/);
+  assert.match(html, /Review the preserved choice and try again/);
+  assert.match(html, /> Retry<\/button>/, "a rejected activation must preserve the safe Retry action");
   failedUiPersistence.close();
   failedHost.service().close();
   await Bun.sleep(5);
@@ -376,16 +451,15 @@ try {
       return Response.json({
         atlas: { process: true, release: healthMode === "wrong" ? installed.identity : webCandidate.identity },
         persistence: { healthy: healthMode !== "unhealthy" },
-        openCode: { ready: false, version: "unrelated" },
       });
     },
   });
   const runHealth = async () => {
-    const child = Bun.spawn(["bash", join(import.meta.dir, "../deploy/check-health.sh")], {
+    const child = Bun.spawn(["bash", join(import.meta.dir, "../deploy/check-activation-health.sh")], {
       env: {
         ...process.env,
         ATLAS_SHARED_TOKEN: "secret",
-        ATLAS_HEALTH_URL: `http://127.0.0.1:${healthServer.port}/health`,
+        ATLAS_HEALTH_URL: `http://127.0.0.1:${healthServer.port}/health?activation=1`,
         ATLAS_EXPECTED_RELEASE_TAG: webCandidate.identity.tag,
         ATLAS_EXPECTED_RELEASE_SHA: webCandidate.identity.gitSha,
       },

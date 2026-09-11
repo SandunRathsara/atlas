@@ -48,17 +48,18 @@ OpenCode service untouched.
 ## Units and listeners
 
 - `systemd/atlas-credentials.service` owns `/run/atlas`, serves the existing
-  Repository-scoped credential protocol from a stable support tree, and keeps
+  Repository-scoped credential protocol from the atomically selected immutable
+  support bundle, and keeps
   running while Atlas is stopped or restarted. It loads only the GitHub App
   credential file, registry, and supplier key—not Atlas UI/webhook secrets.
-- `systemd/atlas-updater.service` runs as the surviving host authority from the stable
-  `/opt/atlas/services/atlas-updater` tree, owns its authenticated Unix socket,
+- `systemd/atlas-updater.service` runs as the surviving host authority from
+  `/opt/atlas/services/current/atlas-updater`, owns its authenticated Unix socket,
   downloads and verifies public Atlas artifacts, records durable policy,
   staging, activation, and cleanup state under `/var/lib/atlas`, atomically selects
   `/opt/atlas/current`, and stops/restarts only `atlas.service`. Its unit does
   not import or execute Atlas's environment. For candidate validation, it reads
   only the shared token and UI port as data from the restricted `atlas.env`,
-  passes them to its stable `check-health.sh` child, and requests the Atlas-only
+  passes them to its stable `check-activation-health.sh` child, and requests the Atlas-only
   health response. It never controls or inspects OpenCode.
 - `systemd/atlas.service` runs Atlas as `omega` with explicit Bun, pinned Git,
   `HOME`, `PATH`, working directory, crash restart, bounded journal rate, and
@@ -72,11 +73,11 @@ OpenCode service untouched.
   Atlas's secret environment file.
 - Atlas's private app listener and loopback webhook listener remain separate;
   their ports come from `atlas.env`. Funnel must target only the webhook port.
-- `check-health.sh` checks the private, authenticated `/health` route. It
-  requires a healthy Atlas process/database and can require an exact candidate
-  release tag/SHA through `ATLAS_EXPECTED_RELEASE_TAG` and
-  `ATLAS_EXPECTED_RELEASE_SHA`. OpenCode readiness/version remain independent
-  diagnostics and never gate Atlas startup or release activation.
+- `check-health.sh` is the normal operator diagnostic for the private,
+  authenticated `/health` route and requires healthy Atlas persistence plus
+  OpenCode readiness. `check-activation-health.sh` is the updater-only check: it
+  requires exact candidate tag/SHA and healthy Atlas persistence from
+  `/health?activation=1`, where OpenCode is not evaluated or reported.
 
 The private health route is authenticated and exists only on the private app.
 The webhook app has no health, login, Session, event, or OpenCode routes.
@@ -87,8 +88,8 @@ The webhook app has no health, login, Session, event, or OpenCode routes.
 | --- | --- |
 | `/opt/atlas/releases/<release>` | Read-only versioned Atlas release |
 | `/opt/atlas/current` | Operator-selected release symlink |
-| `/opt/atlas/services/atlas-credentials` | Stable credential supplier source, independent of release selection |
-| `/opt/atlas/services/atlas-updater` | Stable updater source and Atlas-only health check, independent of release selection |
+| `/opt/atlas/services/releases/<bundle>` | Immutable credential/updater support bundle, independent of Atlas release selection |
+| `/opt/atlas/services/current` | Atomically selected support-bundle symlink used when either surviving service next starts |
 | `<release>/RELEASE_METADATA.json` | Tag-derived SemVer, global build, Git SHA, artifact/runtime, and rollback contract |
 | `/opt/atlas/tools/<tool>/<version>` | Pinned Bun, Git, and GitHub CLI binaries; installed OpenCode server versions |
 | `/opt/atlas/tools/opencode/current` | Operator-selected OpenCode server symlink used by the independent service |
@@ -127,8 +128,8 @@ sudo /opt/atlas/current/deploy/bootstrap.sh
 ```
 
 The command installs the credential and updater services plus the Atlas-only
-health check in stable support
-trees, installs the service-aware Atlas/OpenCode units, creates or preserves
+health check in one immutable support bundle, atomically selects it through
+`/opt/atlas/services/current`, installs the service-aware Atlas/OpenCode units, creates or preserves
 their private keys, reloads systemd, and enables both services. On an existing
 install it briefly stops and restarts Atlas only when needed to transfer
 `/run/atlas` ownership; it never stops, restarts, selects, or inspects OpenCode.
@@ -142,8 +143,9 @@ The independent service persists the Session-to-Repository registry under
 `/var/lib/atlas`, serves only `/run/atlas/supplier.sock`, and keeps its key in
 `/etc/atlas/supplier.key`. New scope records include canonical helper paths so a
 release cleanup can protect every referenced Release regardless of Session
-state. Atlas client shutdown does not unlink the socket or remove its runtime
-directory.
+state. The root updater accepts this owner-controlled registry only as the
+expected service-account-owned `0600` regular file. Atlas client shutdown does
+not unlink the socket or remove its runtime directory.
 The `gh` launcher and Git helper are in the release, before real gh on the
 OpenCode service `PATH`. The launcher resolves the current Session directory,
 requests one-Repository App credentials, clears inherited auth/config/debug
@@ -176,7 +178,8 @@ updater and safety path for only a higher numeric build of the installed SemVer;
 patch, minor, and major changes always wait for **Install**. **Check now** keeps
 `/opt/atlas/current` unchanged until an applicable automatic or explicit
 activation reaches its safe checkpoint. **Install** appears only for the fully
-staged, identified, host-runtime-eligible, code-only-compatible candidate. A
+   staged, identified, host-runtime-eligible, code-only-compatible candidate;
+   host runtimes are checked again immediately before the safe pause. A
 failed candidate is automatically rolled back and exposes **Retry**; it is not
 retried automatically after restart, while a later eligible build may proceed.
 Diagnose before retrying; neither policy bypasses Manual maintenance required.

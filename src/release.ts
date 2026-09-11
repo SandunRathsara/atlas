@@ -1,9 +1,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+declare const releaseTagBrand: unique symbol;
+export type ReleaseTag = string & { readonly [releaseTagBrand]: true };
+
 export type PublishedReleaseIdentity = {
   published: true;
-  tag: string;
+  tag: ReleaseTag;
   semver: string;
   build: number;
   gitSha: string;
@@ -52,7 +55,7 @@ export const parseReleaseTag = (tag: string) => {
   if (![major, minor, patch, build].every(Number.isSafeInteger)) {
     throw new Error(`Atlas release tag contains an unsafe integer: ${tag}`);
   }
-  return { tag, semver: `${major}.${minor}.${patch}`, major, minor, patch, build };
+  return { tag: tag as ReleaseTag, semver: `${major}.${minor}.${patch}`, major, minor, patch, build };
 };
 
 export const compareReleaseTags = (leftTag: string, rightTag: string) => {
@@ -95,7 +98,7 @@ export const createReleaseMetadata = (
   const name = `atlas-linux-x64-${tag}.tar.gz`;
   return {
     schemaVersion: 1,
-    identity: { published: true, tag, semver: parsed.semver, build: parsed.build, gitSha },
+    identity: { published: true, tag: parsed.tag, semver: parsed.semver, build: parsed.build, gitSha },
     artifact: { name, checksum: `${name}.sha256`, os: "linux", architecture: "x64", format: "tar.gz" },
     runtime,
     rollback: { codeOnlyCompatible: true, manualMaintenanceInstructions: null },

@@ -1,16 +1,18 @@
 import { lstatSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { createCredentialBoundary } from "./credentials.ts";
+import { dirname, join, resolve } from "node:path";
+import { readSessionHelperReferences } from "./credentials.ts";
 import type { ReleaseMetadata } from "./release.ts";
-import { createUpdaterService } from "./updater.ts";
+import { createUpdaterService, installShippedSupportServices } from "./updater.ts";
 
 const toolsRoot = Bun.env.ATLAS_TOOLS_ROOT ?? "/opt/atlas/tools";
-const supportRoot = Bun.env.ATLAS_UPDATER_SUPPORT_ROOT ?? "/opt/atlas/services/atlas-updater";
+const supportRoot = Bun.env.ATLAS_UPDATER_SUPPORT_ROOT ?? "/opt/atlas/services/current/atlas-updater";
+const servicesRoot = Bun.env.ATLAS_SUPPORT_ROOT ?? "/opt/atlas/services";
 const atlasEnvironmentPath = Bun.env.ATLAS_ENV_PATH ?? "/etc/atlas/atlas.env";
-const credentials = createCredentialBoundary({
-  registryPath: Bun.env.ATLAS_CREDENTIAL_REGISTRY_PATH ?? "/var/lib/atlas/session-scopes.json",
-  serve: false,
-});
+const registryPath = resolve(Bun.env.ATLAS_CREDENTIAL_REGISTRY_PATH ?? "/var/lib/atlas/session-scopes.json");
+const registryDirectory = lstatSync(dirname(registryPath));
+if (!registryDirectory.isDirectory() || registryDirectory.isSymbolicLink() || (registryDirectory.mode & 0o077) !== 0) {
+  throw new Error("Session scope registry directory must be private");
+}
 const readAtlasHealthEnvironment = () => {
   const stat = lstatSync(atlasEnvironmentPath);
   if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) throw new Error("Atlas environment must be a private regular file");
@@ -37,7 +39,7 @@ const runSystemctl = async (operation: "stop" | "start") => {
 const checkAtlasHealth = async (candidate: ReleaseMetadata) => {
   try {
     const environment = readAtlasHealthEnvironment();
-    const child = Bun.spawn([join(supportRoot, "check-health.sh")], {
+    const child = Bun.spawn([join(supportRoot, "check-activation-health.sh")], {
       env: {
         ...process.env,
         ATLAS_SHARED_TOKEN: environment.token,
@@ -71,7 +73,10 @@ const updater = createUpdaterService({
   downloadBaseUrl: Bun.env.ATLAS_RELEASE_DOWNLOAD_BASE_URL,
   controlAtlas: runSystemctl,
   checkAtlasHealth,
-  listHelperReferences: credentials.listHelperReferences,
+  listHelperReferences: () => readSessionHelperReferences({ registryPath, expectedOwnerUid: registryDirectory.uid }),
+  updateSupportServices: (releasePath, metadata) => {
+    installShippedSupportServices(releasePath, metadata, servicesRoot);
+  },
   hostRuntime: (candidate) => {
     return {
       bun: Bun.version,

@@ -125,7 +125,9 @@ updater restarts, activation, and rollback. An approval or applicable automatic
 decision is durable before Atlas waits up to five minutes for
 preparation/handoff to reach a safe checkpoint. Repeated checks, submissions,
 and policy changes reconcile against the one updater status boundary rather
-than starting a second activation.
+than starting a second activation. Host runtime requirements are re-read
+immediately before this pause so staging-time observations cannot authorize a
+machine that has since drifted.
 
 The surviving updater stops only Atlas, atomically changes `/opt/atlas/current`,
 restarts Atlas, and allows 60 seconds for the candidate's exact identity and
@@ -134,7 +136,11 @@ route and never queries or gates on OpenCode. Failure selects and verifies the
 previous working release without restoring older data. The failed tag remains
 suppressed from automatic activation across restarts until **Retry**; a later
 eligible build of the current SemVer can proceed normally. A checkpoint timeout
-is a durable abandonment and leaves the current release selected.
+is a durable abandonment and leaves the current release selected. After candidate
+health succeeds, the updater copies the candidate's shipped credential/updater
+support into a read-only per-Release bundle and atomically selects it through
+`/opt/atlas/services/current`; already-running support services are not
+restarted.
 
 Updater schema 1 keeps its original staging fields and additively stores the
 installation policy, activation state, previous-release identity,
@@ -162,7 +168,7 @@ resuming partial cleanup.
 
 Cleanup failure is reported separately from activation. It never changes the
 healthy selected Release or starts another activation. Session directories,
-SQLite data, credentials, stable service trees, and operator-managed tools are
+SQLite data, credentials, immutable support bundles, and operator-managed tools are
 outside `/opt/atlas/releases` and are never cleanup targets.
 
 Authenticated health reports the same identity under `atlas.release`, existing

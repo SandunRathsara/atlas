@@ -13,7 +13,7 @@
           "id": "scope",
           "title": "This smoke test stages only",
           "instruction": "The expected endpoint is a complete inactive release tree. Do not change /opt/atlas/current, restart Atlas manually, or use any unpublished activation procedure.",
-          "expectedResult": "The operator understands that issue #58 has no Install, Retry, automatic activation, or OpenCode lifecycle action."
+          "expectedResult": "The operator understands that Check now stages first; shipped Install, Retry, and automatic-policy controls may activate afterward, but this smoke test does not use them. No update action controls OpenCode."
         }
       ]
     },
@@ -45,7 +45,7 @@
               "content": "sudo /opt/atlas/current/deploy/bootstrap.sh"
             }
           ],
-          "warning": "This privileged command installs or updates systemd units, stable updater/credential service files, and restricted keys. It may briefly restart Atlas only when credential runtime ownership must be transferred; it must not restart OpenCode.",
+          "warning": "This privileged command installs or updates systemd units, the atomically selected immutable updater/credential support bundle, and restricted keys. It may briefly restart Atlas only when credential runtime ownership must be transferred; it must not restart OpenCode.",
           "expectedResult": "The command exits 0 and prints that the Atlas credential supplier and updater bootstrap completed and OpenCode was not restarted.",
           "failureGuidance": "Do not proceed. Inspect systemctl status and the Atlas journal namespace without printing /etc/atlas key or credential contents. Correct the bootstrap failure, then rerun the command."
         },
@@ -99,7 +99,7 @@
               "content": "readlink -f /opt/atlas/current"
             }
           ],
-          "expectedResult": "The selected release path exactly matches the value recorded before Check now. The existing Session retains its state/identity, and the page offers no Install, Retry, or automatic-activation control.",
+          "expectedResult": "The selected release path exactly matches the value recorded before Check now. The existing Session retains its state/identity. Install or Retry may be visible for an eligible staged release and automatic policy may be configurable, but no activation is requested during this staging-only check.",
           "failureGuidance": "Stop and preserve the selected path, Updates page, Session page, and Atlas journal evidence if selection or Session admission changed."
         },
         {

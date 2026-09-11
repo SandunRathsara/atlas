@@ -130,6 +130,7 @@ try {
   let updaterStatus = idleUpdater();
   const stageRequests: string[] = [];
   let loseStageResponse = false;
+  let rejectPolicy = false;
   const updates = createUpdateService({
     persistence,
     installed: installedMetadata.identity,
@@ -139,6 +140,7 @@ try {
     updater: {
       status: async () => updaterStatus,
       setPolicy: async (policy) => {
+        if (rejectPolicy) throw new Error("controlled policy failure");
         updaterStatus = { ...updaterStatus, policy };
         return updaterStatus;
       },
@@ -188,6 +190,10 @@ try {
   let html = await response.text();
   assert.match(html, /Not checked yet/);
   assert.doesNotMatch(html, /No newer release found/, "initial state must not claim a successful no-update check");
+  assert.match(html, /id="update-check-form"[^>]*hx-post="\/updates\/check"[^>]*hx-indicator="#update-check-progress"[^>]*hx-disabled-elt=/, "Check now must expose labelled pending and repeat prevention");
+  assert.match(html, /Checking releases…/);
+  assert.match(html, />All Repositories<\/p>/, "Repository context must remain visible in the mobile header");
+  assert.match(html, /border-l-brand-readable bg-brand-tint[^>]*lg:hidden[^>]*href="\/updates"[^>]*aria-label="Updates" aria-current="page"/, "the current mobile Updates link must use the shared selected-navigation contract");
 
   updates.start();
   await updates.check();
@@ -210,6 +216,8 @@ try {
   assert.match(html, /v0\.2\.0\+build\.11/);
   assert.match(html, /Approval required/);
   assert.match(html, /Downloading/);
+  assert.match(html, /id="update-policy-form"[^>]*hx-post="\/updates\/policy"[^>]*hx-indicator="#update-policy-progress"[^>]*hx-disabled-elt=/, "policy changes must expose labelled pending and repeat prevention");
+  assert.match(html, /Saving policy…/);
   assert.doesNotMatch(html, /<button[^>]*>[^<]*Install/u, "activation controls must not be exposed by this slice");
 
   updaterStatus = idleUpdater();
@@ -223,7 +231,10 @@ try {
   response = await app.fetch(new Request("http://atlas.test/updates/status", { headers: { Authorization: "Bearer secret" } }));
   assert.match(await response.text(), /<!doctype html>/, "direct status navigation must return a complete page");
   response = await app.fetch(new Request("http://atlas.test/updates/status", { headers: { Authorization: "Bearer secret", "HX-Request": "true" } }));
-  assert.doesNotMatch(await response.text(), /<!doctype html>/, "HTMX status polling must return only its fragment");
+  const statusFragment = await response.text();
+  assert.doesNotMatch(statusFragment, /<!doctype html>/, "HTMX status polling must return only its fragment");
+  assert.match(statusFragment, /id="updates-live-status"[^>]*hx-get="\/updates\/status"/);
+  assert.doesNotMatch(statusFragment, /update-policy-form|action="\/updates\/policy"/, "status polling must not replace the policy form while it is being edited");
 
   const loginPage = await app.fetch(new Request("http://atlas.test/login"));
   const loginCsrf = (await loginPage.text()).match(/name="csrf" value="([^"]+)"/)?.[1];
@@ -245,6 +256,7 @@ try {
     body: new URLSearchParams({ csrf: updateCsrf! }),
   }));
   assert.equal(response.status, 403, "browser update mutations require same-origin CSRF");
+  assert.match(await response.text(), /Refresh this page before trying the check again/);
   response = await app.fetch(new Request("http://atlas.test/updates/check", {
     method: "POST",
     headers: { Cookie: cookie!, Origin: "http://atlas.test", "Content-Type": "application/x-www-form-urlencoded" },
@@ -252,6 +264,20 @@ try {
   }));
   assert.equal(response.status, 303);
   await updates.check();
+
+  rejectPolicy = true;
+  response = await app.fetch(new Request("http://atlas.test/updates/policy", {
+    method: "POST",
+    headers: { Authorization: "Bearer secret", "HX-Request": "true", "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ policy: "automatic" }),
+  }));
+  assert.equal(response.status, 409);
+  html = await response.text();
+  assert.match(html, /The update change was not completed/);
+  assert.match(html, /Review the preserved choice and try again/);
+  assert.match(html, /<option value="automatic" selected>/, "a failed policy save must preserve the submitted choice");
+  assert.match(html, /href="\/inbox">return to Inbox<\/a>/);
+  rejectPolicy = false;
 
   const beforeSchedule = listRequests;
   scheduled?.();

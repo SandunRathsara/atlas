@@ -6,6 +6,7 @@ import type { OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client";
 import { Service } from "@opencode-ai/client/service";
 import type { Endpoint } from "@opencode-ai/client/service";
 import type { Persistence, Session } from "./persistence.ts";
+import { createActivityGate } from "./activity-gate.ts";
 
 const DEFAULT_POLL_MS = 2_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -182,26 +183,16 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   let transportState: "connected" | "stale" = "stale";
   let readinessReason: string | undefined = "OpenCode connection is not established.";
   let observedVersion: string | undefined;
-  let updatePaused = false;
-  let activeHandoffs = 0;
-  const updatePauseWaiters = new Set<() => void>();
+  const activity = createActivityGate();
   const eventListeners = new Set<(event: OpenCodeEvent) => void>();
   const transportListeners = new Set<(state: "connected" | "stale", reason?: string) => void>();
   const evidence = new Map<string, EventEvidence>();
 
-  const beginHandoff = () => {
-    if (updatePaused) return false;
-    activeHandoffs += 1;
-    return true;
-  };
+  const beginHandoff = activity.enter;
 
   const finishHandoff = () => {
-    if (activeHandoffs === 0) return;
-    activeHandoffs -= 1;
-    if (activeHandoffs !== 0) return;
-    for (const resolvePause of updatePauseWaiters) resolvePause();
-    updatePauseWaiters.clear();
-    if (!updatePaused && pendingWake && !running && !stopped) {
+    if (!activity.leave()) return;
+    if (!activity.paused() && pendingWake && !running && !stopped) {
       pendingWake = false;
       queueMicrotask(wake);
     }
@@ -575,7 +566,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     let session = options.persistence.getSession(initial.atlasId) ?? initial;
     if (session.preparationCheckpoint !== "prepared" && session.handoffCheckpoint === "not_started") return;
     if (process.env.ATLAS_ADMISSION_PAUSED === "1" && ["not_started", "intent_saved", "events_consuming"].includes(session.handoffCheckpoint)) return;
-    if (updatePaused && !["prompt_sent", "prompt_accepted"].includes(session.handoffCheckpoint)) return;
+    if (activity.paused() && !["prompt_sent", "prompt_accepted"].includes(session.handoffCheckpoint)) return;
 
     if (session.handoffCheckpoint === "not_started") {
       session = saveIntent(session) ?? session;
@@ -622,7 +613,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
         finishHandoff();
       }
     }
-    if (updatePaused && session.handoffCheckpoint === "create_confirmed") return;
+    if (activity.paused() && session.handoffCheckpoint === "create_confirmed") return;
 
     if (session.handoffCheckpoint === "create_sent" || session.handoffCheckpoint === "create_confirmed") {
       if (!beginHandoff()) return;
@@ -667,7 +658,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
         finishHandoff();
       }
     }
-    if (updatePaused && session.handoffCheckpoint === "associated") return;
+    if (activity.paused() && session.handoffCheckpoint === "associated") return;
 
     if (session.handoffCheckpoint === "associated") {
       if (process.env.ATLAS_ADMISSION_PAUSED === "1" || !beginHandoff()) return;
@@ -774,8 +765,8 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   };
 
   const wake = () => {
-    if (stopped || running || activeHandoffs > 0) {
-      if (running || activeHandoffs > 0) pendingWake = true;
+    if (stopped || running || activity.active() > 0) {
+      if (running || activity.active() > 0) pendingWake = true;
       return;
     }
     running = true;
@@ -817,21 +808,15 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     transportState = "stale";
   };
 
-  const pauseForUpdate = () => {
-    updatePaused = true;
-    return activeHandoffs === 0
-      ? Promise.resolve()
-      : new Promise<void>((resolvePause) => updatePauseWaiters.add(resolvePause));
-  };
+  const pauseForUpdate = activity.pause;
 
   const resumeFromUpdate = () => {
-    if (!updatePaused) return;
-    updatePaused = false;
+    if (!activity.resume()) return;
     enqueue();
   };
 
   const enqueue = () => {
-    if (running || activeHandoffs > 0) {
+    if (running || activity.active() > 0) {
       pendingWake = true;
       return;
     }

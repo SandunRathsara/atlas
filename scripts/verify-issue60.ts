@@ -157,7 +157,11 @@ try {
     headers: { Authorization: "Bearer secret", "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ policy: "invalid" }),
   }));
-  assert.equal(response.status, 400, "unknown policy values must be rejected");
+  assert.equal(response.status, 422, "unknown policy values must return a value-preserving validation response");
+  html = await response.text();
+  assert.match(html, /The update change was not completed/);
+  assert.match(html, /Review the preserved choice and try again/);
+  assert.match(html, /id="update-policy-form"[^>]*hx-disabled-elt=/);
 
   const loginPage = await app.fetch(new Request("http://atlas.test/login"));
   const loginCsrf = (await loginPage.text()).match(/name="csrf" value="([^"]+)"/)?.[1];

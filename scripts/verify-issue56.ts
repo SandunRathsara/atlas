@@ -301,6 +301,20 @@ const verifyPreparationTimeout = async () => {
   persistence.close();
 };
 
+const verifyDurableRestartHold = async () => {
+  const preparation = quietBoundary();
+  const openCode = quietBoundary();
+  const coordinator = createUpdatePauseCoordinator({ preparation, openCode, timeoutMs: 20 });
+  const outcome = await coordinator.hold();
+  assert.equal(outcome.status, "paused");
+  await Bun.sleep(40);
+  assert.equal(coordinator.state(), "paused", "a restart safety hold must survive the ordinary activation pause deadline while updater status is unavailable");
+  assert.equal(preparation.paused(), true);
+  assert.equal(openCode.paused(), true);
+  assert.equal(outcome.status === "paused" && outcome.resume(), true);
+  assert.equal(coordinator.state(), "active", "a terminal updater reconciliation must release the restart safety hold");
+};
+
 type RecordedRequest = { method: string; path: string; body?: Record<string, unknown> };
 
 const sessionInfo = (id: string, directory: string) => ({
@@ -509,6 +523,7 @@ try {
   assert.equal(UPDATE_PAUSE_TIMEOUT_MS, 5 * 60 * 1_000);
   await verifyPreparationDrain();
   await verifyPreparationTimeout();
+  await verifyDurableRestartHold();
   await verifyHandoffDrain();
   console.log("Issue #56 safe preparation/handoff pause checks passed");
 } finally {

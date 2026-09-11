@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -15,7 +16,7 @@ import {
 } from "node:fs";
 import { connect, createServer, type Server } from "node:net";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { assertReleaseMetadata, compareReleaseTags, parseReleaseTag, type ReleaseMetadata } from "./release.ts";
+import { assertReleaseMetadata, compareReleaseTags, parseReleaseTag, type ReleaseMetadata, type ReleaseTag } from "./release.ts";
 
 const DEFAULT_STATE_PATH = "/var/lib/atlas/update-state.json";
 const DEFAULT_SOCKET_PATH = "/run/atlas-updater/updater.sock";
@@ -56,7 +57,7 @@ const activeActivationStates = new Set<ActivationState>([
 ]);
 
 export type ActivationResult = {
-  tag: string;
+  tag: ReleaseTag;
   state: "succeeded" | "rolled_back" | "rollback_failed" | "abandoned";
   message: string;
   at: string;
@@ -73,7 +74,7 @@ export type ActivationStatus = {
   message: string;
   failureMessage: string | null;
   retry: boolean;
-  failedTags: string[];
+  failedTags: ReleaseTag[];
   lastResult: ActivationResult | null;
 };
 
@@ -89,7 +90,7 @@ export type RuntimeRequirements = {
 };
 
 export type UpdaterResult = {
-  tag: string;
+  tag: ReleaseTag;
   state: "staged" | "failed";
   message: string;
   at: string;
@@ -101,8 +102,8 @@ export type CleanupStatus = {
   state: "idle" | "cleaning" | "succeeded" | "failed";
   message: string;
   updatedAt: string | null;
-  pendingTags: string[];
-  removedTags: string[];
+  pendingTags: ReleaseTag[];
+  removedTags: ReleaseTag[];
 };
 
 export type UpdaterStatus = {
@@ -210,6 +211,18 @@ const activationStates: ActivationState[] = [
   "abandoned",
 ];
 
+const validReleaseTag = (value: unknown): value is ReleaseTag => {
+  if (typeof value !== "string") return false;
+  try {
+    return parseReleaseTag(value).tag === value;
+  } catch {
+    return false;
+  }
+};
+
+const validReleaseTags = (value: unknown): value is ReleaseTag[] =>
+  Array.isArray(value) && value.every(validReleaseTag);
+
 const parseActivation = (value: unknown): ActivationStatus => {
   if (value === undefined) return initialActivation();
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Updater activation state is invalid");
@@ -221,8 +234,8 @@ const parseActivation = (value: unknown): ActivationStatus => {
       ![activation.previousPath, activation.requestedAt, activation.updatedAt, activation.deadlineAt, activation.failureMessage]
         .every((item) => item === null || typeof item === "string") ||
       typeof activation.message !== "string" || typeof activation.retry !== "boolean" ||
-      !Array.isArray(activation.failedTags) || !activation.failedTags.every((tag) => typeof tag === "string") ||
-      lastResult === undefined || (lastResult !== null && (typeof lastResult.tag !== "string" ||
+      !validReleaseTags(activation.failedTags) ||
+      lastResult === undefined || (lastResult !== null && (!validReleaseTag(lastResult.tag) ||
         !["succeeded", "rolled_back", "rollback_failed", "abandoned"].includes(lastResult.state ?? "") ||
         typeof lastResult.message !== "string" || typeof lastResult.at !== "string"))) {
     throw new Error("Updater activation state is invalid");
@@ -230,15 +243,6 @@ const parseActivation = (value: unknown): ActivationStatus => {
   if (activation.state !== "idle" && activation.metadata === null) throw new Error("Updater activation state is invalid");
   return activation as ActivationStatus;
 };
-
-const validReleaseTags = (value: unknown): value is string[] => Array.isArray(value) && value.every((tag) => {
-  if (typeof tag !== "string") return false;
-  try {
-    return parseReleaseTag(tag).tag === tag;
-  } catch {
-    return false;
-  }
-});
 
 const parseCleanup = (value: unknown): CleanupStatus => {
   if (value === undefined) return initialCleanup();
@@ -267,7 +271,7 @@ const parseStatus = (value: unknown): UpdaterStatus => {
       (requirements !== null && (!requirements.required || typeof requirements.required !== "object" || !available ||
         ![available.bun, available.git, available.gh].every((item) => item === null || typeof item === "string") ||
         !Array.isArray(requirements.unmet) || !requirements.unmet.every((item) => typeof item === "string"))) ||
-      lastResult === undefined || (lastResult !== null && (typeof lastResult.tag !== "string" ||
+      lastResult === undefined || (lastResult !== null && (!validReleaseTag(lastResult.tag) ||
         !["staged", "failed"].includes(lastResult.state ?? "") || typeof lastResult.message !== "string" || typeof lastResult.at !== "string"))) {
     throw new Error("Updater state is invalid");
   }
@@ -351,6 +355,90 @@ const removeTree = (path: string) => {
   rmSync(path, { recursive: true, force: true });
 };
 
+const supportAssets = {
+  "atlas-credentials": [
+    ["src/credential-server.ts", "credential-server.ts", 0o444],
+    ["src/credentials.ts", "credentials.ts", 0o444],
+  ],
+  "atlas-updater": [
+    ["src/updater-server.ts", "updater-server.ts", 0o444],
+    ["src/updater.ts", "updater.ts", 0o444],
+    ["src/release.ts", "release.ts", 0o444],
+    ["src/credentials.ts", "credentials.ts", 0o444],
+    ["deploy/check-activation-health.sh", "check-activation-health.sh", 0o555],
+  ],
+} as const;
+
+export const installShippedSupportServices = (
+  releasePathValue: string,
+  metadata: ReleaseMetadata,
+  supportRootValue = "/opt/atlas/services",
+) => {
+  const releasePath = resolve(releasePathValue);
+  const supportRoot = resolve(supportRootValue);
+  if (releasePath === "/" || supportRoot === "/" || !existsSync(releasePath) ||
+      realpathSync(releasePath) !== releasePath || !lstatSync(releasePath).isDirectory() || lstatSync(releasePath).isSymbolicLink()) {
+    throw new Error("The shipped support-service source is unsafe.");
+  }
+  const embedded = assertReleaseMetadata(JSON.parse(readFileSync(join(releasePath, "RELEASE_METADATA.json"), "utf8")));
+  if (metadataRecord(embedded) !== metadataRecord(metadata)) throw new Error("The shipped support-service source does not match the candidate release.");
+
+  const bundlesRoot = join(supportRoot, "releases");
+  const bundlePath = join(bundlesRoot, `atlas-${metadata.identity.tag}`);
+  const verifyBundle = () => {
+    const bundleMetadata = assertReleaseMetadata(JSON.parse(readFileSync(join(bundlePath, "RELEASE_METADATA.json"), "utf8")));
+    if (metadataRecord(bundleMetadata) !== metadataRecord(metadata)) throw new Error("The existing support-service bundle has a different release identity.");
+    for (const [service, assets] of Object.entries(supportAssets)) {
+      for (const [, target] of assets) {
+        const path = join(bundlePath, service, target);
+        if (!lstatSync(path).isFile() || lstatSync(path).isSymbolicLink()) throw new Error("The support-service bundle is incomplete.");
+      }
+    }
+  };
+
+  mkdirSync(bundlesRoot, { recursive: true, mode: 0o755 });
+  if (!existsSync(bundlePath)) {
+    const stagingPath = join(supportRoot, `.support-${metadata.identity.tag}-${process.pid}-${randomBytes(8).toString("hex")}`);
+    try {
+      mkdirSync(stagingPath, { mode: 0o755 });
+      for (const [service, assets] of Object.entries(supportAssets)) {
+        const servicePath = join(stagingPath, service);
+        mkdirSync(servicePath, { mode: 0o755 });
+        for (const [source, target, mode] of assets) {
+          const sourcePath = join(releasePath, source);
+          if (!lstatSync(sourcePath).isFile() || lstatSync(sourcePath).isSymbolicLink()) throw new Error("The candidate support-service assets are incomplete.");
+          copyFileSync(sourcePath, join(servicePath, target));
+          chmodSync(join(servicePath, target), mode);
+        }
+      }
+      copyFileSync(join(releasePath, "RELEASE_METADATA.json"), join(stagingPath, "RELEASE_METADATA.json"));
+      renameSync(stagingPath, bundlePath);
+      try {
+        makeReadOnly(bundlePath);
+      } catch (error) {
+        removeTree(bundlePath);
+        throw error;
+      }
+    } finally {
+      if (existsSync(stagingPath)) removeTree(stagingPath);
+    }
+  }
+  verifyBundle();
+
+  const currentPath = join(supportRoot, "current");
+  if (existsSync(currentPath) && !lstatSync(currentPath).isSymbolicLink()) {
+    throw new Error("The stable support-service selection is unsafe.");
+  }
+  const temporary = join(supportRoot, `.current-${process.pid}-${randomBytes(8).toString("hex")}`);
+  try {
+    symlinkSync(bundlePath, temporary, "dir");
+    renameSync(temporary, currentPath);
+  } finally {
+    if (existsSync(temporary)) unlinkSync(temporary);
+  }
+  return bundlePath;
+};
+
 export type UpdaterServiceOptions = {
   statePath?: string;
   socketPath?: string;
@@ -365,6 +453,7 @@ export type UpdaterServiceOptions = {
   activationPollMs?: number;
   controlAtlas?: (operation: "stop" | "start") => boolean | Promise<boolean>;
   checkAtlasHealth?: (metadata: ReleaseMetadata) => boolean | Promise<boolean>;
+  updateSupportServices?: (releasePath: string, metadata: ReleaseMetadata) => void | Promise<void>;
   sleep?: (milliseconds: number) => Promise<void>;
   listHelperReferences?: () => string[];
 };
@@ -383,6 +472,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
   const activationPollMs = options.activationPollMs ?? 1_000;
   const controlAtlas = options.controlAtlas ?? (() => false);
   const checkAtlasHealth = options.checkAtlasHealth ?? (() => false);
+  const updateSupportServices = options.updateSupportServices ?? (() => undefined);
   const sleep = options.sleep ?? Bun.sleep;
   const listHelperReferences = options.listHelperReferences ?? (() => []);
   if (!Number.isSafeInteger(activationTimeoutMs) || activationTimeoutMs < 1 ||
@@ -412,7 +502,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
     writeStatusFile(statePath, status);
   };
   const timestamp = () => new Date(now()).toISOString();
-  const releasePath = (tag: string) => join(releasesRoot, `atlas-${tag}`);
+  const releasePath = (tag: ReleaseTag) => join(releasesRoot, `atlas-${tag}`);
   const candidatePath = (metadata: ReleaseMetadata) => releasePath(metadata.identity.tag);
   const sameMetadata = (left: ReleaseMetadata | null, right: ReleaseMetadata) =>
     left !== null && metadataRecord(left) === metadataRecord(right);
@@ -456,7 +546,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
 
   const cleanupReleases = () => {
     let pendingTags = [...status.cleanup.pendingTags];
-    let removedTags: string[] = [];
+    let removedTags: ReleaseTag[] = [];
     try {
       const current = selectedRelease();
       if (current.path !== candidatePath(current.metadata)) throw new Error("The active Atlas release path is not cleanup-safe.");
@@ -473,9 +563,8 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
       const pending = new Set(pendingTags);
       for (const entry of readdirSync(releasesRoot, { withFileTypes: true })) {
         if (!entry.isDirectory() || !entry.name.startsWith("atlas-")) continue;
-        const tag = entry.name.slice("atlas-".length);
         try {
-          parseReleaseTag(tag);
+          const tag = parseReleaseTag(entry.name.slice("atlas-".length)).tag;
           if (!pending.has(tag) && releaseMetadataAt(join(releasesRoot, entry.name)).identity.tag !== tag) continue;
           pending.add(tag);
         } catch {
@@ -666,6 +755,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
             await failAndRollback("The candidate did not report its expected identity and healthy Atlas storage within 60 seconds.");
             return;
           }
+          await updateSupportServices(candidatePath(metadata), metadata);
           cleanupReleases();
           terminalActivation("succeeded", `Atlas ${metadata.identity.tag} was activated and verified.`);
         }
@@ -799,10 +889,12 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
       throw new Error("Another Atlas activation is already in progress.");
     }
     const finalPath = candidatePath(metadata);
-    if (status.state !== "staged" || status.stagedPath !== finalPath || !sameMetadata(status.metadata, metadata) ||
-        status.requirements === null || status.requirements.unmet.length > 0) {
+    if (status.state !== "staged" || status.stagedPath !== finalPath || !sameMetadata(status.metadata, metadata)) {
       throw new Error("The requested release is not fully staged and host-runtime eligible.");
     }
+    const requirements = requirementsFor(metadata, hostRuntime(metadata));
+    if (JSON.stringify(status.requirements) !== JSON.stringify(requirements)) save({ ...status, requirements });
+    if (requirements.unmet.length > 0) throw new Error("The requested release is not fully staged and host-runtime eligible.");
     if (!metadata.rollback.codeOnlyCompatible) throw new Error("The requested release requires manual maintenance.");
     if (!existsSync(finalPath) || realpathSync(finalPath) !== finalPath || !lstatSync(finalPath).isDirectory() ||
         !sameMetadata(releaseMetadataAt(finalPath), metadata)) {
@@ -832,8 +924,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
 
   const beginActivation = (metadataValue: unknown) => {
     const metadata = assertReleaseMetadata(metadataValue);
-    if (sameMetadata(status.activation.metadata, metadata) &&
-        ["requested", "stopping", "selecting", "starting", "validating", "selecting_previous", "restarting_previous", "validating_previous"].includes(status.activation.state)) {
+    if (sameMetadata(status.activation.metadata, metadata) && activationInProgress(status) && status.activation.state !== "awaiting_checkpoint") {
       return status;
     }
     if (status.activation.state !== "awaiting_checkpoint" || !sameMetadata(status.activation.metadata, metadata)) {
