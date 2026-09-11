@@ -64,6 +64,11 @@
     outline: 2px solid var(--color-brand-readable);
     outline-offset: 2px;
   }
+
+  [data-page-heading]:focus,
+  [data-page-heading]:focus-visible {
+    outline: none;
+  }
 }
 
 @layer components {

@@ -37,7 +37,7 @@ export const pageHeader = ({
 }) => `<div class="flex flex-wrap items-start justify-between gap-4">
   <div class="min-w-0">
     ${eyebrow ? `<p class="text-xs font-medium uppercase tracking-wide text-accent">${escapeHtml(eyebrow)}</p>` : ""}
-    <h1 id="page-title" class="${eyebrow ? "mt-2" : ""} break-words text-xl font-semibold leading-normal" tabindex="-1" data-page-heading>${title}</h1>
+    <h1 id="page-title" class="${eyebrow ? "mt-2" : ""} w-fit max-w-full break-words text-xl font-semibold leading-normal" tabindex="-1" data-page-heading>${title}</h1>
     ${description ? `<p class="mt-2 max-w-prose text-base leading-normal text-muted">${description}</p>` : ""}
   </div>
   ${actions ? `<div class="flex flex-wrap items-center gap-2">${actions}</div>` : ""}

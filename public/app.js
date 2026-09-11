@@ -25,7 +25,7 @@
       const target = document.querySelector("[data-focus-on-swap]");
       if (!target) return;
       target.removeAttribute("data-focus-on-swap");
-      target.focus();
+      target.focus({ preventScroll: true });
     });
     startSessionViewer();
   });
@@ -40,7 +40,14 @@
   });
 
   window.addEventListener("DOMContentLoaded", () => {
-    document.querySelector("[data-focus-on-swap], [data-page-heading]")?.focus();
+    const swap = document.querySelector("[data-focus-on-swap]");
+    if (swap instanceof HTMLElement) {
+      swap.removeAttribute("data-focus-on-swap");
+      swap.focus({ preventScroll: true });
+    } else {
+      const heading = document.querySelector("[data-page-heading]");
+      if (heading instanceof HTMLElement) heading.focus({ preventScroll: true, focusVisible: false });
+    }
     startSessionViewer();
   });
 
