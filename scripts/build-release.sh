@@ -33,7 +33,10 @@ for path in "$output_dir/$artifact" "$output_dir/$checksum" "$output_dir/$metada
 done
 
 temporary=$(mktemp -d "${TMPDIR:-/tmp}/atlas-release.XXXXXX")
-cleanup() { rm -rf -- "$temporary"; }
+cleanup() {
+  chmod -R u+w "$temporary" 2>/dev/null || true
+  rm -rf -- "$temporary"
+}
 trap cleanup EXIT
 release_name="atlas-${tag}"
 release_root="$temporary/$release_name"

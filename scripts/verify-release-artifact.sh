@@ -26,6 +26,7 @@ cleanup() {
     kill -TERM "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   fi
+  chmod -R u+w "$temporary" 2>/dev/null || true
   rm -rf -- "$temporary"
   if [[ $remove_output -eq 1 ]]; then rm -rf -- "$output"; fi
 }
