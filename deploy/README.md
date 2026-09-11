@@ -54,7 +54,7 @@ OpenCode service untouched.
 - `systemd/atlas-updater.service` runs as the surviving host authority from the stable
   `/opt/atlas/services/atlas-updater` tree, owns its authenticated Unix socket,
   downloads and verifies public Atlas artifacts, records durable staging and
-  activation state under `/var/lib/atlas`, atomically selects
+  activation/cleanup state under `/var/lib/atlas`, atomically selects
   `/opt/atlas/current`, and stops/restarts only `atlas.service`. Its unit does
   not import or execute Atlas's environment. For candidate validation, it reads
   only the shared token and UI port as data from the restricted `atlas.env`,
@@ -94,7 +94,7 @@ The webhook app has no health, login, Session, event, or OpenCode routes.
 | `/opt/atlas/tools/opencode/current` | Operator-selected OpenCode server symlink used by the independent service |
 | `/var/lib/atlas` | One ordinary-directory Btrfs subvolume |
 | `/var/lib/atlas/atlas.sqlite` | Atlas SQLite database and matching WAL/journal |
-| `/var/lib/atlas/update-state.json` | Durable staging/activation target, progress, result, previous release, and failed-tag suppression |
+| `/var/lib/atlas/update-state.json` | Durable staging/activation/cleanup target, progress, result, previous release, and failed-tag suppression |
 | `/var/lib/atlas/sessions/<atlas-id>` | Full private clone per Session |
 | `/var/lib/atlas/opencode-data/opencode` | OpenCode data, database, logs, shells, snapshots, tool output |
 | `/var/lib/atlas/opencode-data/opencode/log` | OpenCode file logs; human-installed size/retention bound |
@@ -141,9 +141,9 @@ enabling Atlas/OpenCode in the normal cutover order.
 The independent service persists the Session-to-Repository registry under
 `/var/lib/atlas`, serves only `/run/atlas/supplier.sock`, and keeps its key in
 `/etc/atlas/supplier.key`. New scope records include canonical helper paths so a
-later release-retention pass can protect every referenced release; this slice
-does not delete release trees. Atlas client shutdown does not unlink the socket
-or remove its runtime directory.
+release cleanup can protect every referenced Release regardless of Session
+state. Atlas client shutdown does not unlink the socket or remove its runtime
+directory.
 The `gh` launcher and Git helper are in the release, before real gh on the
 OpenCode service `PATH`. The launcher resolves the current Session directory,
 requests one-Repository App credentials, clears inherited auth/config/debug
@@ -198,10 +198,33 @@ Do this only on the target host after running the bootstrap command above:
    terminal observation, branch, files, and one original prompt are preserved.
    If OpenCode observation is unavailable, expect the existing stale/not-ready
    presentation rather than treating the Atlas update as failed.
+6. On **Updates**, inspect **Release retention** separately from activation.
+   Confirm cleanup completed, or preserve a reported cleanup failure for
+   diagnosis; do not treat a healthy active Release as failed solely because an
+   old tree could not be removed. Repeat the scoped helper read from step 1.
 
 Check keyboard focus and 320 px plus desktop layout manually for Check now,
 Install, Retry, active progress, recovered, and recovery-failed states. These
 browser and live-service checks are intentionally not automated here.
+
+### Read-only Release retention inspection
+
+The updater automatically retains current, previous-working, staged,
+in-flight, and Session-helper-referenced Releases. To inspect its decisions
+without deleting live files:
+
+```bash
+sudo readlink -f /opt/atlas/current
+sudo find /opt/atlas/releases -mindepth 1 -maxdepth 1 -type d -print | sort
+sudo jq '{activation, cleanup}' /var/lib/atlas/update-state.json
+sudo jq -r '.scopes[].helperPaths[]?' /var/lib/atlas/session-scopes.json | sort -u
+```
+
+Compare helper paths with the Release directories and the **Release retention**
+result on `/updates`. On failure, inspect
+`sudo journalctl --namespace=atlas -u atlas-updater.service` and fix the
+filesystem or registry problem before restarting the updater to retry the same
+rules. Do not manually `rm` a Release tree or edit either state file.
 
 ## Recovery and operational guardrails
 

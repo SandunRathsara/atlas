@@ -28,7 +28,7 @@ System_Boundary(credentialService, "Atlas credential service") {
 }
 
 System_Boundary(updaterService, "Atlas updater service") {
-  Component(updater, "Host updater", "src/updater-server.ts → src/updater.ts", "Independent authenticated staging, activation, health validation, rollback")
+  Component(updater, "Host updater", "src/updater-server.ts → src/updater.ts", "Independent staging, activation, rollback, helper-aware retention")
 }
 
 System_Ext(github, "GitHub", "App, issues labelled spec, PRs, native stacks, webhooks, public Releases")
@@ -79,12 +79,13 @@ Rel(updatePause, preparation, "pause / resume")
 Rel(updatePause, handoff, "pause / resume")
 Rel(viewer, opencode, "session.get / events")
 Rel(credentials, github, "mint installation tokens")
+Rel(updater, credentials, "read canonical helper references from shared registry contract")
 Rel(githubClient, github, "read API")
 Rel(persistence, sqlite, "WAL")
 Rel(updater, github, "download public archive/checksum")
-Rel(updater, releaseDirs, "atomic read-only staging and current selection")
-Rel(updater, updateState, "atomic staging/activation/recovery writes")
+Rel(updater, releaseDirs, "atomic staging/current selection; remove only unprotected older trees")
+Rel(updater, updateState, "atomic staging/activation/recovery/cleanup writes")
 Rel(updater, server, "stop/restart Atlas only; validate authenticated Atlas-only health")
 
-' repo-map-synced: beb8cc194167a5e203714a7d5e2b3b58069761cb
+' repo-map-synced: 7e89a703fe9233aa648886450b98c1051e5d2035
 @enduml

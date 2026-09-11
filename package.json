@@ -22,6 +22,7 @@
     "verify:issue57": "bun scripts/verify-release.ts && bash scripts/verify-release-artifact.sh",
     "verify:issue58": "bun scripts/verify-issue58.ts",
     "verify:issue59": "bun scripts/verify-issue59.ts",
+    "verify:issue61": "bun scripts/verify-issue61.ts",
     "verify:inbox": "bun scripts/verify-inbox.ts",
     "verify:landing": "bun scripts/verify-landing.ts",
     "verify:inbox-shell": "bun scripts/verify-inbox-shell.ts",

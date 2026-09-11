@@ -17,11 +17,13 @@ Environment=ATLAS_UPDATER_KEY_PATH=/etc/atlas/updater.key
 Environment=ATLAS_RELEASES_ROOT=/opt/atlas/releases
 Environment=ATLAS_CURRENT_PATH=/opt/atlas/current
 Environment=ATLAS_ENV_PATH=/etc/atlas/atlas.env
+Environment=ATLAS_CREDENTIAL_REGISTRY_PATH=/var/lib/atlas/session-scopes.json
 Environment=ATLAS_UPDATER_SUPPORT_ROOT=/opt/atlas/services/atlas-updater
 ExecStartPre=/usr/bin/test -x /opt/atlas/tools/bun/1.3.14/bin/bun
 ExecStartPre=/usr/bin/test -f /opt/atlas/services/atlas-updater/updater-server.ts
 ExecStartPre=/usr/bin/test -f /opt/atlas/services/atlas-updater/updater.ts
 ExecStartPre=/usr/bin/test -f /opt/atlas/services/atlas-updater/release.ts
+ExecStartPre=/usr/bin/test -f /opt/atlas/services/atlas-updater/credentials.ts
 ExecStartPre=/usr/bin/test -x /opt/atlas/services/atlas-updater/check-health.sh
 ExecStart=/opt/atlas/tools/bun/1.3.14/bin/bun /opt/atlas/services/atlas-updater/updater-server.ts
 Restart=on-failure

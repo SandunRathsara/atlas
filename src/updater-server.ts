@@ -1,11 +1,16 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { createCredentialBoundary } from "./credentials.ts";
 import type { ReleaseMetadata } from "./release.ts";
 import { createUpdaterService } from "./updater.ts";
 
 const toolsRoot = Bun.env.ATLAS_TOOLS_ROOT ?? "/opt/atlas/tools";
 const supportRoot = Bun.env.ATLAS_UPDATER_SUPPORT_ROOT ?? "/opt/atlas/services/atlas-updater";
 const atlasEnvironmentPath = Bun.env.ATLAS_ENV_PATH ?? "/etc/atlas/atlas.env";
+const credentials = createCredentialBoundary({
+  registryPath: Bun.env.ATLAS_CREDENTIAL_REGISTRY_PATH ?? "/var/lib/atlas/session-scopes.json",
+  serve: false,
+});
 const readAtlasHealthEnvironment = () => {
   const stat = lstatSync(atlasEnvironmentPath);
   if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) throw new Error("Atlas environment must be a private regular file");
@@ -66,6 +71,7 @@ const updater = createUpdaterService({
   downloadBaseUrl: Bun.env.ATLAS_RELEASE_DOWNLOAD_BASE_URL,
   controlAtlas: runSystemctl,
   checkAtlasHealth,
+  listHelperReferences: credentials.listHelperReferences,
   hostRuntime: (candidate) => {
     return {
       bun: Bun.version,

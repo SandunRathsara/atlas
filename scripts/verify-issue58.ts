@@ -87,6 +87,13 @@ const idleUpdater = (): UpdaterStatus => ({
     failedTags: [],
     lastResult: null,
   },
+  cleanup: {
+    state: "idle",
+    message: "Release cleanup has not run yet.",
+    updatedAt: null,
+    pendingTags: [],
+    removedTags: [],
+  },
 });
 
 const waitFor = async (predicate: () => boolean | Promise<boolean>, message: string) => {
