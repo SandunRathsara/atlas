@@ -17,6 +17,7 @@
     "verify:issue32": "bun scripts/verify-issue32-backoff.ts",
     "verify:issue29": "bun scripts/verify-issue29.ts",
     "verify:inbox": "bun scripts/verify-inbox.ts",
+    "verify:landing": "bun scripts/verify-landing.ts",
     "dev": "bun run build:css && bun --watch src/server.ts",
     "start": "bun run build:css && bun src/server.ts"
   },

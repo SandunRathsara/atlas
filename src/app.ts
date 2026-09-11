@@ -7,6 +7,7 @@ import {
   safeReturnTo,
   type AuthEnv,
 } from "./auth.ts";
+import { inboxCookie, readVisitCookie, visitCookie } from "./inbox-state.ts";
 import {
   createGitHubClient,
   type GitHubClient,
@@ -59,6 +60,7 @@ import {
   targetObservation,
   type PendingStartSession,
 } from "./views.ts";
+import { renderShell } from "./views/shell.ts";
 
 const MAX_FORM_BYTES = 512 * 1024;
 const MAX_TOKEN_LENGTH = 8 * 1024;
@@ -550,7 +552,48 @@ export const createApp = (options: AppOptions) => {
     }),
   );
 
-  app.get("/", (c) => c.redirect("/repositories", 303));
+  app.get("/", auth.middleware, (c) => {
+    const visit = readVisitCookie(c.req.header("Cookie"));
+    const session = persistence.findLandingSession(visit.lastVisitAt ?? "");
+    const lastRepository = visit.lastRepositoryId
+      ? persistence.getRepository(visit.lastRepositoryId)
+      : undefined;
+    const enrolledLast = lastRepository && !lastRepository.removedAt ? lastRepository : undefined;
+    const lastVisitAt = new Date(now()).toISOString();
+
+    let location: string;
+    let repositoryId: string | undefined;
+    if (session) {
+      location = sessionLocation(session);
+      repositoryId = session.repositoryId;
+    } else if (enrolledLast) {
+      location = `/repositories/${encodeURIComponent(enrolledLast.githubId)}/specs`;
+      repositoryId = enrolledLast.githubId;
+    } else if (persistence.listRepositories().length === 0) {
+      location = "/repositories/new";
+    } else {
+      location = "/inbox";
+    }
+
+    c.header("Set-Cookie", visitCookie(lastVisitAt, repositoryId), { append: true });
+    if (repositoryId) c.header("Set-Cookie", inboxCookie(repositoryId), { append: true });
+    return c.redirect(location, 303);
+  });
+
+  app.get("/inbox", auth.middleware, (c) => {
+    const repository = c.req.query("repository");
+    if (repository !== undefined) {
+      c.header("Set-Cookie", inboxCookie(repository || undefined));
+    }
+    const identity = c.get("auth");
+    setPrivateHtmlHeaders(c);
+    return c.html(renderShell({
+      title: "Inbox",
+      active: "repositories",
+      csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
+      content: '<h1 id="page-title" tabindex="-1" data-page-heading>Inbox</h1>',
+    }));
+  });
 
   app.get("/login", (c) => {
     setPrivateHtmlHeaders(c);
