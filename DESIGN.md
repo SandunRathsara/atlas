@@ -210,7 +210,7 @@ daisyUI components for controls, Tailwind utilities for layout. Preserve compone
 | Status | `badge badge-sm badge-<state>` with text; color reinforces the word. Never color alone. |
 | Feedback | `alert alert-<state> alert-soft` inline near the cause; toasts only for supplementary confirmation. |
 | Lists of records | A `table` inside a `rounded-box border border-edge bg-base-100` container with compact rows; stacked records below `md`. |
-| Inbox row | Variant A cards in the sidebar (`rounded-box border border-edge bg-base-100 p-3`): Spec title, `Spec #<n>`, state badge; Repository short name only when the filter is All Repositories. Waiting: 2px `warning` left border. On `/inbox`, `recordTable` / stacked records. |
+| Inbox row | Variant A cards in the sidebar (`rounded-box border border-edge bg-base-100 p-3`): Spec title, `Spec #<n>`, latest Session state (or No Session), separate Stale/access badges, and an unread dot when applicable; Repository short name only when the filter is All Repositories. Waiting: 2px `warning` left border. Selected: `brand-tint`, 2px `brand-readable` left border, and `aria-current="page"`. On `/inbox`, use `recordTable` / stacked records. |
 | Grouped content | Plain section with a heading first; a bordered container only for tables, forms, and record groups. |
 | Short confirmation | Native `dialog` styled with `modal`; full page for complex editing. |
 
