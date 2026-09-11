@@ -7,8 +7,6 @@ import { Service } from "@opencode-ai/client/service";
 import type { Endpoint } from "@opencode-ai/client/service";
 import type { Persistence, Session } from "./persistence.ts";
 
-export const APPROVED_OPENCODE_VERSION = "0.0.0-beta-19135";
-
 const DEFAULT_POLL_MS = 2_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const EVENT_CONNECT_TIMEOUT_MS = 1_000;
@@ -86,10 +84,7 @@ const fallbackEndpoint = async (file: string): Promise<Endpoint | undefined> => 
     : typeof service.password === "string"
       ? service.password
       : typeof root.password === "string" ? root.password : undefined;
-  const version = typeof service.version === "string"
-    ? service.version
-    : typeof root.version === "string" ? root.version : undefined;
-  if (!url || !password || version !== APPROVED_OPENCODE_VERSION) return undefined;
+  if (!url || !password) return undefined;
 
   return safeEndpoint({
     url,
@@ -98,7 +93,7 @@ const fallbackEndpoint = async (file: string): Promise<Endpoint | undefined> => 
 };
 
 const discoverEndpoint = async (file: string) => {
-  const discovered = await Service.discover({ file, version: APPROVED_OPENCODE_VERSION }).catch(() => undefined);
+  const discovered = await Service.discover({ file }).catch(() => undefined);
   const endpoint = discovered ?? await fallbackEndpoint(file);
   return endpoint ? safeEndpoint(endpoint) : undefined;
 };
@@ -186,6 +181,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   let connectionPromise: Promise<OpenCodeClient> | undefined;
   let transportState: "connected" | "stale" = "stale";
   let readinessReason: string | undefined = "OpenCode connection is not established.";
+  let observedVersion: string | undefined;
   const eventListeners = new Set<(event: OpenCodeEvent) => void>();
   const transportListeners = new Set<(state: "connected" | "stale", reason?: string) => void>();
   const evidence = new Map<string, EventEvidence>();
@@ -295,9 +291,10 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     if (!endpoint) {
       retryAt = Date.now() + retryDelay;
       retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
-      throw new Error(`OpenCode service is unavailable or is not approved version ${APPROVED_OPENCODE_VERSION}`);
+      throw new Error("OpenCode service is unavailable or has invalid discovery data");
     }
 
+    observedVersion = undefined;
     const nextClient = OpenCode.make({
       baseUrl: endpoint.url.endsWith("/") ? endpoint.url : `${endpoint.url}/`,
       headers: Service.headers(endpoint),
@@ -310,11 +307,15 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
       retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
       throw error;
     }
-    if (!health.healthy || health.version !== APPROVED_OPENCODE_VERSION) {
+    const healthValue = health as unknown as { healthy?: unknown; version?: unknown };
+    if (healthValue?.healthy !== true) {
       retryAt = Date.now() + retryDelay;
       retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
-      throw new Error(`OpenCode service did not validate against ${APPROVED_OPENCODE_VERSION}`);
+      throw new Error("OpenCode service did not report healthy");
     }
+    observedVersion = typeof healthValue.version === "string" && healthValue.version.length > 0
+      ? healthValue.version
+      : undefined;
 
     const controller = new AbortController();
     const iterator = nextClient.event.subscribe({ signal: controller.signal })[Symbol.asyncIterator]();
@@ -714,7 +715,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     } catch (error) {
       const reason = error instanceof Error && error.message.includes("retry delay")
         ? "OpenCode is unavailable or waiting for its retry delay; Atlas is retaining the preparation slot."
-        : `OpenCode is unavailable or incompatible; launches are paused until ${APPROVED_OPENCODE_VERSION} is healthy.`;
+        : "OpenCode is unavailable or incompatible; launches are paused until the service is healthy.";
       markStaleSessions(reason);
       return;
     }
@@ -805,6 +806,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
       ready: Boolean(client && streamReady && transportState === "connected"),
       state: transportState,
       reason: readinessReason,
+      version: observedVersion,
     }),
     onEvent,
     onTransport,

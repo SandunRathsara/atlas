@@ -27,7 +27,7 @@ Returns `AtlasApp`. Options: `AppOptions`.
 
 | Method | Path | Concern |
 |---|---|---|
-| GET | `/health` | Authenticated persistence + OpenCode pin JSON. UI app only. |
+| GET | `/health` | Authenticated persistence + OpenCode readiness/observed-version JSON. Persistence determines HTTP status. UI app only. |
 | GET | `/assets/app.css`, `/assets/app.js`, `/assets/htmx.min.js` | Static assets. |
 | GET | `/` | Landing: `findLandingSession` + `atlas_visit` / `atlas_inbox`; 303 to Session, Spec list, `/inbox`, or `/repositories/new`. |
 | GET | `/inbox` | Inbox page. `?repository=` is the canonical filter URL and sets/clears `atlas_inbox`; a remembered valid filter redirects a bare `/inbox` here. |
@@ -102,7 +102,7 @@ Clones under `ATLAS_SESSION_ROOT`. Default capacity 1. Uses `scripts/atlas-git-c
 
 ### OpenCode handoff — `src/opencode.ts#createOpenCodeHandoffService`
 
-Returns `{ start, stop, enqueue, process, getClient, isReady, readiness, onEvent, onTransport, transportState }`. Pin: `src/opencode.ts#APPROVED_OPENCODE_VERSION` (`0.0.0-beta-19135`). Discovers `@opencode-ai/client` `Service`. Checkpoints: intent → events → create once → associate once → one exact prompt → reconcile. Does not store a transcript.
+Returns `{ start, stop, enqueue, process, getClient, isReady, readiness, onEvent, onTransport, transportState }`. Discovers `@opencode-ai/client` `Service` without a server-version filter, validates endpoint/health/events, and exposes the observed version through readiness when available. Checkpoints: intent → events → create once → associate once → one exact prompt → reconcile. Does not store a transcript.
 
 ### Session viewer — `src/session-viewer.ts#createSessionViewerService`
 
@@ -174,7 +174,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 
 **GitHub:** installation token from `CredentialBoundary.installationToken`; browse may fall back to `ATLAS_GITHUB_INSTALLATION_TOKEN`.
 
-**OpenCode:** `@opencode-ai/client` against pin `0.0.0-beta-19135`. Service file default `$XDG_STATE_HOME/opencode/service.json` or `OPENCODE_SERVICE_FILE`.
+**OpenCode:** release-installed `@opencode-ai/client` `0.0.0-beta-19135` against an independently running server with no version gate. Service file default `$XDG_STATE_HOME/opencode/service.json` or `OPENCODE_SERVICE_FILE`.
 
 **Filesystem:** Session directories under `ATLAS_SESSION_ROOT`; credential scopes in `session-scopes.json`; supplier socket `0600`.
 
@@ -182,7 +182,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 
 - **Credential leakage.** `cloneGitEnvironment` strips inherited tokens. Supplier socket `0600`. `scripts/atlas-gh.ts` forbids `auth token` / login. Never log tokens, keys, prompts, or auth headers.
 - **Webhook surface.** Signature required. Empty secret fails boot. Webhook app has no UI, login, Session, health, or OpenCode routes.
-- **OpenCode version split.** Atlas's installed client and runtime approval gate remain in `src/opencode.ts` / `package.json`; deployment independently selects the host executable through `/opt/atlas/tools/opencode/current`. Staging must not pair or replace Atlas client packages and never activates the selected server.
+- **OpenCode boundary.** Keep the release-installed client dependency unchanged; deployment independently selects the host executable through `/opt/atlas/tools/opencode/current`, and staging neither pairs with nor replaces Atlas client packages and never activates the server. Server version is diagnostic, not a discovery gate. Invalid discovery/health/events and later API failures must retain not-ready/stale/uncertain state and never duplicate create/prompt effects or invent terminal outcomes.
 - **No GitHub mutation from Atlas.** `GitHubClient` is read-only. Reservation release and target reconfirmation change SQLite only. Agent may publish via scoped git/gh; Atlas must not grow write APIs.
 - **Theme tokens.** Hex and radii live in `src/styles.css` / `DESIGN.md`. Rebuild with `bun run build:css`.
 - **Two ports.** `ATLAS_WEBHOOK_PORT !== ATLAS_PORT`. Both `127.0.0.1`. Funnel webhook only.
@@ -205,6 +205,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 | `bun run verify:issue27-fixes` | Preparation free space, App token mint, clone admission. |
 | `bun run verify:issue32` | Refresh coordinator retry backoff. |
 | `bun run verify:issue29` | Session viewer hydrate, SSE (no transcript leak). |
+| `bun run verify:issue52` | Real-client local-server discovery, runtime handoff/failure checkpoints, direct health requests, and deployment health exit contracts. |
 | `bun run verify:inbox` | Inbox Spec projection, latest Session, group/state ordering, Settled cap, terminal unread time, and landing selection. |
 | `bun run verify:landing` | GET `/` landing redirects, per-browser `atlas_visit` / `atlas_inbox`, and canonical `/inbox` filter URL. |
 | `bun run verify:inbox-shell` (`scripts/verify-inbox-shell.ts`) | Desktop sidebar and navigation landmarks, canonical/filter cookie behavior, selected Spec identity, `/inbox/list` fragment contract, access semantics, and exact `status=all` utility state. |

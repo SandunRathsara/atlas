@@ -12,7 +12,7 @@ Outside: GitHub (App, inventory, issues, PRs, native stacks, signed webhooks); a
 
 ## Primary Stack
 
-Bun `1.3.14`, TypeScript `7.0.2`, Hono `4.13.7`, HTMX `2.0.10`, Tailwind CSS `4.3.3` + daisyUI `5.7.28`, SQLite via `bun:sqlite`. Package manager: Bun (`package.json#packageManager`). Atlas installs OpenCode client `0.0.0-beta-19135`; the host server is independently selected through `/opt/atlas/tools/opencode/current`. Host Git `2.55.0` and gh `2.100.0` (`deploy/pins.env`).
+Bun `1.3.14`, TypeScript `7.0.2`, Hono `4.13.7`, HTMX `2.0.10`, Tailwind CSS `4.3.3` + daisyUI `5.7.28`, SQLite via `bun:sqlite`. Package manager: Bun (`package.json#packageManager`). Atlas installs OpenCode client `0.0.0-beta-19135`; the host server is independently selected through `/opt/atlas/tools/opencode/current`, and runtime discovery does not gate on its version. Host Git `2.55.0` and gh `2.100.0` (`deploy/pins.env`).
 
 ## Significant Dependencies
 
@@ -20,7 +20,7 @@ Bun `1.3.14`, TypeScript `7.0.2`, Hono `4.13.7`, HTMX `2.0.10`, Tailwind CSS `4.
 |---|---|
 | `hono` | Two apps: private UI (`src/app.ts#createApp`) and webhook (`src/webhook.ts#createWebhookApp`). |
 | `htmx.org` | Served at `/assets/htmx.min.js`; templates use `hx-*`. |
-| `@opencode-ai/client` | Discover pinned V2, create/associate/prompt, consume events (`src/opencode.ts#createOpenCodeHandoffService`); viewer reads (`src/session-viewer.ts#createSessionViewerService`). |
+| `@opencode-ai/client` | Discover an independently running V2 service without a server-version filter, validate health/events, create/associate/prompt, and consume events (`src/opencode.ts#createOpenCodeHandoffService`); viewer reads (`src/session-viewer.ts#createSessionViewerService`). |
 | `bun:sqlite` | Sole database (`src/persistence.ts#createPersistence`). |
 | `tailwindcss` + `daisyui` | Build `public/app.css` via `bun run build:css`. Theme tokens live in `src/styles.css`, not templates. |
 | Native `fetch` | GitHub REST + one GraphQL merge-state read (`src/github.ts#createGitHubClient`). No Octokit. |
@@ -92,14 +92,14 @@ Local `justfile` defaults: token/webhook secret, `data/atlas.sqlite`, `~/.local/
 
 ## Architectural Constraints
 
-No accepted ADRs (`docs/adr/INDEX.md` is empty). Constraints from shipped code and operator docs:
+Accepted decisions are indexed in `docs/adr/INDEX.md`; ADR-0001 makes OpenCode server version diagnostic rather than a runtime discovery gate. Constraints from shipped code and operator docs:
 
 - Bind UI and webhook to `127.0.0.1`. Funnel the webhook only.
 - Cookie: `Path=/; Secure; HttpOnly; SameSite=Strict` for `atlas_session`, `atlas_inbox`, and `atlas_visit` (`atlas_session` also has a seven-day max age). Browser mutations need same-origin CSRF. Health is authenticated and exists only on the UI app.
 - Inbox filter state is URL-canonical on `/inbox`; a valid remembered `atlas_inbox` filter redirects bare `/inbox` to `?repository=...`, while removed or invalid Repositories fall back to all enrolled Repositories.
 - The `/inbox/list` fragment owns its 30-second `outerHTML` poll boundary; `public/app.js` must restore focus, open details, and scroll after a successful swap without adding history.
 - GitHub client is read-only (GET plus one GraphQL merge-state query). Atlas never creates, changes, or submits PRs or stacks.
-- OpenCode must report `0.0.0-beta-19135`. Atlas does not own OpenCode lifecycle.
+- Atlas uses its release-installed OpenCode client and discovers the independent service without a server-version filter. Endpoint/health/event validation and conservative API-failure behavior remain; Atlas does not own OpenCode lifecycle.
 - Credential supplier mints one-Repository App tokens over a unix socket. Tokens never appear in HTML, URLs, arguments, prompts, or logs.
 - SQLite: foreign keys, WAL (except in-memory), `synchronous=FULL`. One writer; unfinished Session ownership restored at startup.
 - One unfinished Session per Spec (unique partial index).

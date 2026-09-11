@@ -18,13 +18,8 @@ if ! jq -e '.atlas.process == true and .persistence.healthy == true' >/dev/null 
   exit 1
 fi
 
-if ! jq -e '.openCode.expectedVersion == "0.0.0-beta-19135"' >/dev/null <<<"$response"; then
-  echo "Atlas reported an unexpected OpenCode compatibility pin" >&2
-  exit 1
-fi
-
 if jq -e '.openCode.ready == true' >/dev/null <<<"$response"; then
-  echo "Atlas process, persistence, and approved OpenCode readiness are healthy"
+  echo "Atlas process, persistence, and OpenCode readiness are healthy"
 else
   echo "Atlas process and persistence are healthy; OpenCode readiness is not established" >&2
   exit 3

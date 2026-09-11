@@ -50,8 +50,9 @@ OpenCode service untouched.
   Atlas's secret environment file.
 - Atlas's private app listener and loopback webhook listener remain separate;
   their ports come from `atlas.env`. Funnel must target only the webhook port.
-- `check-health.sh` checks the private, authenticated `/health` route. A
-  healthy Atlas process/database is reported separately from OpenCode readiness.
+- `check-health.sh` checks the private, authenticated `/health` route. It
+  requires a healthy Atlas process/database and OpenCode readiness, without
+  requiring a particular or non-empty observed OpenCode version.
 
 The private health route is authenticated and exists only on the private app.
 The webhook app has no health, login, Session, event, or OpenCode routes.
