@@ -6,7 +6,7 @@ Answers: why does this system exist? Populated and kept current by `/refresh-rep
 
 Atlas is an internal control plane for a team that already writes work as GitHub issues. It lets that team triage Specs across onboarded GitHub Repositories and start autonomous OpenCode Sessions from team-authored Specs, then observe those Sessions without Atlas itself publishing GitHub Pull requests or stacks.
 
-Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; an inbox of current Specs with landing on `/`; read-only Pull request and native-stack browsing; authenticated Session directory preparation backed by credential serving that survives Atlas UI restarts; a guarded OpenCode handoff; Session viewing; Atlas-side stack reservation hold and release.
+Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; an inbox of current Specs with landing on `/`; read-only Pull request and native-stack browsing; authenticated Session directory preparation backed by credential serving that survives Atlas UI restarts; a guarded OpenCode handoff; an awaitable safe update pause for preparation/handoff; Session viewing; Atlas-side stack reservation hold and release.
 
 ## Actors
 
@@ -68,6 +68,22 @@ Atlas projects GitHub issues labelled exactly `spec` (open, not a pull request) 
 1. Queue: CSRF-protected form with required prompt (max 20,000 characters) and an observed target. Duplicate `submission_id` with the same content is idempotent. An unfinished Session on that Spec is rejected.
 2. Prepare: global execution-slot capacity (default one). Register the Session directory and helper references, request a Repository-scoped GitHub App token from the independently running supplier, and clone under `ATLAS_SESSION_ROOT` with a unique working branch. Pause when credential serving or Session storage is unavailable, below the free-space floor (default 10 GiB), or host space status says pause. Preparation never falls back to a weaker browse token.
 3. Handoff: discover the independently running OpenCode service without filtering by server version, validate its endpoint/health/event stream, create once, associate once, send one exact initial message, and reconcile HTTP state. Atlas does not store a transcript copy.
+
+### Safe update pause
+
+Atlas exposes one coordinated process-local update pause. A request immediately
+blocks new preparation and create/associate/prompt work, then completes only
+after already in-flight Atlas-owned work leaves its external operation and its
+durable checkpoint records completion or uncertainty. The pause preserves all
+Session and reservation state. OpenCode execution-state reconciliation may
+continue, so Running, Waiting, and Idle Sessions do not delay readiness.
+
+The default deadline is five minutes. A timeout abandons and removes only the
+update-owned pause; it neither kills in-flight work nor removes independent
+operator, capacity, storage, recovery, persistence, or OpenCode-readiness
+restrictions. A completed pause remains held until its scoped, idempotent resume
+is used. This is the lifecycle prerequisite for later activation work, not an
+update UI or host updater.
 
 ### Webhook refresh
 
@@ -146,6 +162,7 @@ _Avoid_: Stall, timeout, hang
 - GET `/` landing follows rules 1–4 above. Cookies `atlas_visit` (`lastVisitAt`, `lastRepositoryId`) and `atlas_inbox` (Repository filter) are `Secure; HttpOnly; SameSite=Strict`.
 - **Settled** is inbox UI grouping for Specs whose latest Session is terminal, not a Session state. Idle is never Settled.
 - Inbox access and refresh warnings never replace the latest Session state; unknown access is not evidence of revocation, and an unavailable Specs refresh is not evidence of an empty inbox.
+- An update pause blocks new preparation and OpenCode create/associate/prompt effects, but does not wait for Running, Waiting, or Idle Agent execution. It times out after five minutes without interrupting uncertain work and removes only its own restriction.
 
 ## Boundaries and Non-Goals
 
@@ -153,6 +170,7 @@ _Avoid_: Stall, timeout, hang
 - Does not enroll every GitHub App-visible Repository automatically.
 - Does not automatically provision the host, move OpenCode data, or change Tailscale/firewall. The operator-run bootstrap is limited to the independent credential service and updated unit files.
 - Does not own OpenCode lifecycle, configuration, or transcripts.
+- The safe update pause does not itself discover, download, activate, or roll back a release and has no operator-facing maintenance UI.
 - Viewer does not reply to, cancel, or resume OpenCode permissions, forms, or inbox items.
 - Does not create GitHub labels.
 - Design guidelines do not introduce features or change business rules.

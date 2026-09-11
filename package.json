@@ -18,6 +18,7 @@
     "verify:issue29": "bun scripts/verify-issue29.ts",
     "verify:issue52": "bun scripts/verify-issue52.ts",
     "verify:issue55": "bun scripts/verify-issue55.ts",
+    "verify:issue56": "bun scripts/verify-issue56.ts",
     "verify:inbox": "bun scripts/verify-inbox.ts",
     "verify:landing": "bun scripts/verify-landing.ts",
     "verify:inbox-shell": "bun scripts/verify-inbox-shell.ts",
