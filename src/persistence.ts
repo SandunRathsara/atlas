@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
+import { assertReleaseMetadata, type ReleaseMetadata } from "./release.ts";
 
 export type AccessStatus = "available" | "unknown" | "revoked" | "transferred" | "suspended";
 export type RefreshView = "access" | "specs" | "pullRequests";
@@ -287,6 +288,16 @@ export type Inbox = {
   rows: InboxRow[];
   settledTotal: number;
   settledNew: number;
+};
+
+export type UpdateDiscoveryState = {
+  candidates: ReleaseMetadata[];
+  lastCheckAt: string | null;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  failureReason: string | null;
+  stageRequestFailureAt: string | null;
+  stageRequestFailureReason: string | null;
 };
 
 const inboxGroup = (state: SessionState | null): InboxRow["group"] => {
@@ -953,6 +964,21 @@ const migrations = [
       DROP INDEX IF EXISTS pr_stacks_repository_number_unique;
     `,
   },
+  {
+    version: 13,
+    sql: `
+      CREATE TABLE update_discovery (
+        singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),
+        candidates_json TEXT NOT NULL,
+        last_check_at TEXT,
+        last_success_at TEXT,
+        last_failure_at TEXT,
+        failure_reason TEXT,
+        stage_request_failure_at TEXT,
+        stage_request_failure_reason TEXT
+      );
+    `,
+  },
 ];
 
 const isoNow = (now: () => number) => new Date(now()).toISOString();
@@ -1361,6 +1387,79 @@ export const createPersistence = (options: PersistenceOptions) => {
       VALUES (?, ?)
       ON CONFLICT (repository_id, view) DO NOTHING
     `).run(repositoryId, view);
+  };
+
+  const getUpdateDiscoveryState = (): UpdateDiscoveryState => {
+    const row = database.query("SELECT * FROM update_discovery WHERE singleton = 1").get() as {
+      candidates_json: string;
+      last_check_at: string | null;
+      last_success_at: string | null;
+      last_failure_at: string | null;
+      failure_reason: string | null;
+      stage_request_failure_at: string | null;
+      stage_request_failure_reason: string | null;
+    } | null;
+    if (!row) {
+      return {
+        candidates: [],
+        lastCheckAt: null,
+        lastSuccessAt: null,
+        lastFailureAt: null,
+        failureReason: null,
+        stageRequestFailureAt: null,
+        stageRequestFailureReason: null,
+      };
+    }
+    const candidates = JSON.parse(row.candidates_json) as unknown;
+    if (!Array.isArray(candidates)) throw new Error("Saved release discovery state is invalid");
+    return {
+      candidates: candidates.map(assertReleaseMetadata),
+      lastCheckAt: row.last_check_at,
+      lastSuccessAt: row.last_success_at,
+      lastFailureAt: row.last_failure_at,
+      failureReason: row.failure_reason,
+      stageRequestFailureAt: row.stage_request_failure_at,
+      stageRequestFailureReason: row.stage_request_failure_reason,
+    };
+  };
+
+  const recordUpdateDiscoverySuccess = (candidates: readonly ReleaseMetadata[]) => {
+    const timestamp = isoNow(now);
+    database.query(`
+      INSERT INTO update_discovery (
+        singleton, candidates_json, last_check_at, last_success_at,
+        last_failure_at, failure_reason, stage_request_failure_at, stage_request_failure_reason
+      ) VALUES (1, ?, ?, ?, NULL, NULL, NULL, NULL)
+      ON CONFLICT (singleton) DO UPDATE SET
+        candidates_json = excluded.candidates_json,
+        last_check_at = excluded.last_check_at,
+        last_success_at = excluded.last_success_at,
+        last_failure_at = NULL,
+        failure_reason = NULL,
+        stage_request_failure_at = NULL,
+        stage_request_failure_reason = NULL
+    `).run(JSON.stringify(candidates), timestamp, timestamp);
+  };
+
+  const recordUpdateDiscoveryFailure = (reason: string) => {
+    const timestamp = isoNow(now);
+    database.query(`
+      INSERT INTO update_discovery (
+        singleton, candidates_json, last_check_at, last_failure_at, failure_reason
+      ) VALUES (1, '[]', ?, ?, ?)
+      ON CONFLICT (singleton) DO UPDATE SET
+        last_check_at = excluded.last_check_at,
+        last_failure_at = excluded.last_failure_at,
+        failure_reason = excluded.failure_reason
+    `).run(timestamp, timestamp, reason);
+  };
+
+  const recordUpdateStageRequestFailure = (reason: string | null) => {
+    database.query(`
+      UPDATE update_discovery
+      SET stage_request_failure_at = ?, stage_request_failure_reason = ?
+      WHERE singleton = 1
+    `).run(reason ? isoNow(now) : null, reason);
   };
 
   const getRepository = (githubId: string) => {
@@ -3780,6 +3879,10 @@ export const createPersistence = (options: PersistenceOptions) => {
     getHealth,
     isHealthy: () => persistenceHealthy && startupRestored,
     markUnhealthy,
+    getUpdateDiscoveryState,
+    recordUpdateDiscoverySuccess,
+    recordUpdateDiscoveryFailure,
+    recordUpdateStageRequestFailure,
     getRepository,
     listRepositories,
     upsertRepository,

@@ -8,6 +8,8 @@ import { createWebhookApp } from "./webhook.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadReleaseIdentity } from "./release.ts";
+import { createUpdateService } from "./update-discovery.ts";
+import { createUpdaterClient } from "./updater.ts";
 
 const githubEnvPath = Bun.env.ATLAS_GITHUB_ENV_PATH ?? `${homedir()}/.config/atlas/github.env`;
 loadGithubEnv(githubEnvPath);
@@ -61,6 +63,15 @@ const refreshCoordinator = createRefreshCoordinator({
   installationId,
 });
 const releaseRoot = Bun.env.ATLAS_RELEASE_ROOT ?? join(import.meta.dir, "..");
+const releaseIdentity = loadReleaseIdentity(releaseRoot);
+const updates = createUpdateService({
+  persistence,
+  installed: releaseIdentity,
+  updater: createUpdaterClient({
+    socketPath: Bun.env.ATLAS_UPDATER_SOCKET,
+    keyPath: Bun.env.ATLAS_UPDATER_KEY_PATH,
+  }),
+});
 
 const app = createApp({
   allowedOrigin: Bun.env.ATLAS_ORIGIN,
@@ -81,7 +92,8 @@ const app = createApp({
   getSharedToken: () => Bun.env.ATLAS_SHARED_TOKEN,
   persistence,
   refreshCoordinator,
-  releaseIdentity: loadReleaseIdentity(releaseRoot),
+  releaseIdentity,
+  updates,
   sharedToken,
 });
 
@@ -94,6 +106,7 @@ const webhookApp = createWebhookApp({
 });
 
 refreshCoordinator.start();
+updates.start();
 
 const uiServer = Bun.serve({
   fetch: app.fetch,
@@ -118,6 +131,7 @@ const shutdown = async (signal: NodeJS.Signals) => {
   stopping = true;
   console.log(`Atlas stopping (${signal})`);
   refreshCoordinator.stop();
+  updates.stop();
   try {
     await Promise.all([uiServer.stop(true), webhookServer.stop(true)]);
   } catch {

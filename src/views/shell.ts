@@ -88,7 +88,7 @@ export const renderLoginPage = (options: {
 const renderLogoutForm = (csrfToken: string) => `<form id="logout-form" class="flex flex-wrap items-center gap-2" action="/logout" method="post" hx-post="/logout" hx-target="#logout-form" hx-swap="none" hx-indicator="#logout-progress" hx-disabled-elt="button[type='submit']">
   <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
   <span data-form-status class="sr-only" role="status" aria-live="polite"></span>
-  <button class="btn btn-ghost" type="submit">${icon("arrow-right-start-on-rectangle", 16)} Sign out</button>
+  <button class="btn btn-ghost" type="submit" aria-label="Sign out">${icon("arrow-right-start-on-rectangle", 16)} <span class="hidden sm:inline">Sign out</span></button>
   <span id="logout-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Signing out...</span>
 </form>`;
 
@@ -121,6 +121,13 @@ const emptyInbox = (): InboxContext => ({
   specsRefresh: [],
 });
 
+const renderGlobalNavigation = (currentPath: string) => {
+  const current = currentPath === "/updates" || currentPath === "/updates/status";
+  return `<nav class="border-t border-edge p-2" aria-label="Atlas">
+    <a class="flex h-8 items-center gap-2 rounded-field border-l-2 ${current ? "border-l-brand-readable bg-brand-tint" : "border-transparent"} px-3 text-sm font-medium text-muted" href="/updates"${current ? ' aria-current="page"' : ""}>${icon("arrow-path", 20)}<span>Updates</span></a>
+  </nav>`;
+};
+
 export const renderShell = ({
   title,
   csrfToken,
@@ -145,13 +152,15 @@ export const renderShell = ({
         ${brandBand("/repositories")}
         ${renderInboxFilter(inbox)}
         ${renderInboxList(inbox)}
+        ${renderGlobalNavigation(inbox.currentPath)}
       </aside>
       <div class="min-w-0 flex-1">
         <header class="atlas-glass sticky top-0 z-20">
           <div class="relative flex h-12 items-center justify-between gap-3 px-4 sm:px-6">
-            <p class="min-w-0 truncate text-sm text-muted" title="${escapeHtml(headerName)}">${escapeHtml(headerName)}</p>
+            <p class="hidden min-w-0 truncate text-sm text-muted sm:block" title="${escapeHtml(headerName)}">${escapeHtml(headerName)}</p>
             <div class="flex shrink-0 flex-wrap items-center gap-2">
-              <a class="btn btn-ghost lg:hidden" href="/inbox">${icon("rectangle-stack", 16)} Inbox</a>
+              <a class="btn btn-ghost lg:hidden" href="/inbox" aria-label="Inbox">${icon("rectangle-stack", 16)} <span class="hidden sm:inline">Inbox</span></a>
+              <a class="btn btn-ghost lg:hidden" href="/updates"${inbox.currentPath === "/updates" || inbox.currentPath === "/updates/status" ? ' aria-current="page"' : ""}>${icon("arrow-path", 16)} Updates</a>
               ${renderLogoutForm(csrfToken)}
             </div>
           </div>

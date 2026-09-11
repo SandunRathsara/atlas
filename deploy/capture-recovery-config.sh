@@ -63,8 +63,8 @@ private_directory "$release_dir"
   exit 1
 }
 
-config_files=(atlas.env github.env github-app.pem supplier.key)
-unit_files=(atlas.service atlas-credentials.service opencode.service atlas-snapshot.service atlas-snapshot.timer atlas-space-check.service atlas-space-check.timer)
+config_files=(atlas.env github.env github-app.pem supplier.key updater.key)
+unit_files=(atlas.service atlas-credentials.service atlas-updater.service opencode.service atlas-snapshot.service atlas-snapshot.timer atlas-space-check.service atlas-space-check.timer)
 for name in "${config_files[@]}"; do regular_file "$config_root/$name"; done
 for name in "${unit_files[@]}"; do regular_file "$unit_root/$name"; done
 regular_file "$route_record"

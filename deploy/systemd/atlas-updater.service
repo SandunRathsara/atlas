@@ -1,0 +1,41 @@
+[Unit]
+Description=Atlas release staging service
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/opt/atlas/services/atlas-updater /opt/atlas/tools /opt/atlas/releases /var/lib/atlas /etc/atlas
+StartLimitIntervalSec=5min
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=root
+Group=omega
+WorkingDirectory=/opt/atlas/services/atlas-updater
+Environment=ATLAS_UPDATE_STATE_PATH=/var/lib/atlas/update-state.json
+Environment=ATLAS_UPDATER_SOCKET=/run/atlas-updater/updater.sock
+Environment=ATLAS_UPDATER_KEY_PATH=/etc/atlas/updater.key
+Environment=ATLAS_RELEASES_ROOT=/opt/atlas/releases
+ExecStartPre=/usr/bin/test -x /opt/atlas/tools/bun/1.3.14/bin/bun
+ExecStartPre=/usr/bin/test -f /opt/atlas/services/atlas-updater/updater-server.ts
+ExecStartPre=/usr/bin/test -f /opt/atlas/services/atlas-updater/updater.ts
+ExecStartPre=/usr/bin/test -f /opt/atlas/services/atlas-updater/release.ts
+ExecStart=/opt/atlas/tools/bun/1.3.14/bin/bun /opt/atlas/services/atlas-updater/updater-server.ts
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=1000
+SyslogIdentifier=atlas-updater
+LogNamespace=atlas
+UMask=0007
+RuntimeDirectory=atlas-updater
+RuntimeDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/atlas/releases /var/lib/atlas /run/atlas-updater
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -6,17 +6,19 @@ Answers: where is today's shipped implementation? Organized by capability and co
 
 | Path | Role |
 |---|---|
-| `src/server.ts` | UI process entry. Loads env and release identity, configures a client for the independent credential supplier, starts SQLite, GitHub client, refresh coordinator, UI + webhook `Bun.serve` listeners, and handles SIGINT/SIGTERM shutdown without owning the supplier socket. |
+| `src/server.ts` | UI process entry. Loads env/release identity, configures independent credential/updater clients, starts SQLite, Repository refresh and Release discovery, serves UI + webhook listeners, and shuts down without owning either surviving socket. |
 | `src/credential-server.ts` | Independent credential supplier process entry. Owns the existing authenticated Unix-socket boundary and survives Atlas UI restarts. |
+| `src/updater-server.ts` | Independent release-staging process entry. Reports installed host runtimes, owns the authenticated updater socket, and resumes durable staging after its own restart. |
 | `package.json` `dev` / `start` | Development builds CSS then watches `src/server.ts`; release start runs the prebuilt tree without installing or building. |
 | `package.json` `credentials` | Runs the credential supplier process directly for local development. |
+| `package.json` `updater` | Runs the release-staging updater process directly. |
 | `justfile#dev` | Local bootstrap then `bun run dev`. `justfile#checklist` opens the bearings previewer. |
 | `src/app.ts#createApp` | Private UI Hono app; returned `AtlasApp.updatePause` is the coordinated preparation/handoff activation prerequisite. |
 | `src/webhook.ts#createWebhookApp` | Webhook-only Hono app. |
 | `scripts/atlas-gh.ts` | Scoped `gh` wrapper used by `deploy/bin/gh`. |
 | `scripts/atlas-git-credential.ts` | Git credential helper used by preparation and `deploy/bin/git-credential-atlas`. |
 | `.github/workflows/release.yml`, `scripts/build-release.sh`, `scripts/release.ts` | Serialized tag validation, exact-commit frozen build, Linux x64 archive/metadata/checksum production, and immutable GitHub Release publishing. |
-| `deploy/bootstrap.sh`, `deploy/stage-release.sh`, `deploy/stage-opencode.sh`, `deploy/atlas-snapshot.sh`, `deploy/restore-rehearsal.sh`, `deploy/check-health.sh`, `deploy/check-opencode.sh`, `deploy/check-space.sh`, `deploy/capture-recovery-config.sh`, `deploy/verify-assets.sh`, `deploy/verify-opencode-commands.sh`, `deploy/verify-sqlite-wal.sh` | Operator-facing host scripts. Bootstrap installs the independent credential service without restarting OpenCode. OpenCode staging is exact-version, registry-integrity-verified, and server-only; selection follows the operator-controlled `current` symlink. Inert until applied on the host. |
+| `deploy/bootstrap.sh`, `deploy/stage-release.sh`, `deploy/stage-opencode.sh`, `deploy/atlas-snapshot.sh`, `deploy/restore-rehearsal.sh`, `deploy/check-health.sh`, `deploy/check-opencode.sh`, `deploy/check-space.sh`, `deploy/capture-recovery-config.sh`, `deploy/verify-assets.sh`, `deploy/verify-opencode-commands.sh`, `deploy/verify-sqlite-wal.sh` | Operator-facing host scripts. Bootstrap installs independent credential and Release-staging services without restarting OpenCode. OpenCode staging is exact-version, registry-integrity-verified, and server-only; selection follows the operator-controlled `current` symlink. Inert until applied on the host. |
 
 The implemented inbox lives in `src/views/inbox.ts`; the deleted `src/prototype-inbox.ts` is not a runtime entry point.
 
@@ -54,6 +56,9 @@ Returns `AtlasApp`. Options: `AppOptions`.
 | GET/POST | `/sessions/:sessionId/target` | Target reconfirmation. |
 | GET/POST | `/sessions/:sessionId/reservation/release` | Explicit reservation release. |
 | GET | `/sessions/:sessionId/view` | Viewer fragment or page. |
+| GET | `/updates` | Global Updates page: installed/available Release identities, discovery truth, host requirements, staging progress/result, and fixed approval-required policy. |
+| GET | `/updates/status` | Updates status fragment when `HX-Request`; full page otherwise. Active checks/staging poll every two seconds without history. |
+| POST | `/updates/check` | Existing bearer or browser same-origin/CSRF-protected public Release check; coalesces with an in-flight check and redirects to `/updates`. |
 
 Internal (not exported): `isCurrentSpec`, `isEligibleRepository`, `parseForm`, `securityHeaders`, `saveCandidate`, `refreshRepository`, `refreshPullRequests`, `enrolledInboxRepository`, `inboxLocation`, `selectedSpecForPath`, `inboxFromRequest`, `rememberInboxFilter`, `manageInboxFilter`.
 
@@ -69,11 +74,11 @@ Cookie `atlas_session`: `Secure; HttpOnly; SameSite=Strict`. Bearer `Authorizati
 
 ### Persistence — `src/persistence.ts#createPersistence`
 
-Returns `Persistence`. WAL + `synchronous=FULL` + foreign keys. Migrations 1–12.
+Returns `Persistence`. WAL + `synchronous=FULL` + foreign keys. Migrations 1–13.
 
-Public methods: `database`, `close`, `restoreStartup`, `checkHealth`, `getHealth`, `isHealthy`, `markUnhealthy`, `getRepository`, `listRepositories`, `upsertRepository`, `removeRepository`, `restoreRepository`, `saveRepositoryObservation`, `updateAccess`, `markAccessObservation`, `markAccessFailure`, `requestRefresh`, `acceptWebhookDelivery`, `markRefreshSuccess`, `markRefreshFailure`, `isRefreshGenerationCurrent`, `getRefreshState`, `replaceSpecs`, `replacePullRequests`, `listPullRequests`, `listPrStacks`, `listSpecs`, `getSpec`, `getSession`, `getSessionBySubmissionId`, `queueSession`, `listQueuedSessions`, `listPreparingSessions`, `reconfirmQueuedTarget`, `claimPreparation`, `setPreparationCheckpoint`, `setQueuedSessionReason`, `blockQueuedPreparation`, `requeuePreparation`, `failPreparation`, `setHandoffIntent`, `setHandoffCheckpoint`, `setHandoffCreated`, `confirmHandoffAssociation`, `recordPromptAccepted`, `markHandoffUnconfirmed`, `markOpenCodeStale`, `reconcileOpenCode`, `releaseReservation`, `listOpenCodeSessions`, `getSessionByOpenCodeSessionId`, `listSessions`, `listSessionsForSpec`, `listInbox`, `findLandingSession`.
+Public methods: `database`, `close`, `restoreStartup`, `checkHealth`, `getHealth`, `isHealthy`, `markUnhealthy`, `getUpdateDiscoveryState`, `recordUpdateDiscoverySuccess`, `recordUpdateDiscoveryFailure`, `recordUpdateStageRequestFailure`, `getRepository`, `listRepositories`, `upsertRepository`, `removeRepository`, `restoreRepository`, `saveRepositoryObservation`, `updateAccess`, `markAccessObservation`, `markAccessFailure`, `requestRefresh`, `acceptWebhookDelivery`, `markRefreshSuccess`, `markRefreshFailure`, `isRefreshGenerationCurrent`, `getRefreshState`, `replaceSpecs`, `replacePullRequests`, `listPullRequests`, `listPrStacks`, `listSpecs`, `getSpec`, `getSession`, `getSessionBySubmissionId`, `queueSession`, `listQueuedSessions`, `listPreparingSessions`, `reconfirmQueuedTarget`, `claimPreparation`, `setPreparationCheckpoint`, `setQueuedSessionReason`, `blockQueuedPreparation`, `requeuePreparation`, `failPreparation`, `setHandoffIntent`, `setHandoffCheckpoint`, `setHandoffCreated`, `confirmHandoffAssociation`, `recordPromptAccepted`, `markHandoffUnconfirmed`, `markOpenCodeStale`, `reconcileOpenCode`, `releaseReservation`, `listOpenCodeSessions`, `getSessionByOpenCodeSessionId`, `listSessions`, `listSessionsForSpec`, `listInbox`, `findLandingSession`.
 
-Types: `Repository`, `Spec`, `PullRequest`, `PrStack`, `Session`, `SessionState`, `SessionFilter`, `Inbox`, `InboxRow`, `PreparationCheckpoint`, `HandoffCheckpoint`, `TargetKind`, `SessionTarget`, `ResolvedTarget`, `PublicationStatus`, `AccessStatus`, `RefreshState`, `QueueSessionResult` (`created` \| `existing` \| `conflict` \| `unfinished`), `ReservationReleaseResult` (`released` \| `already_released` \| `not_found` \| `not_terminal`).
+Types: `Repository`, `Spec`, `PullRequest`, `PrStack`, `Session`, `SessionState`, `SessionFilter`, `Inbox`, `InboxRow`, `UpdateDiscoveryState`, `PreparationCheckpoint`, `HandoffCheckpoint`, `TargetKind`, `SessionTarget`, `ResolvedTarget`, `PublicationStatus`, `AccessStatus`, `RefreshState`, `QueueSessionResult` (`created` \| `existing` \| `conflict` \| `unfinished`), `ReservationReleaseResult` (`released` \| `already_released` \| `not_found` \| `not_terminal`).
 
 `listInbox` selects current open exact-label Specs from enrolled Repositories, joins each latest Session by submission order, assigns Needs you/In progress/Not started/Settled groups, ranks In progress as Running → Queued → Preparing → Idle, orders by `updatedAt`, caps the displayed Settled group at 10, and computes terminal unread time from `session_history` with an `updatedAt` fallback. `findLandingSession` selects the earliest new terminal Session after `lastVisitAt`, otherwise the earliest unfinished Session with Waiting first; removed Repositories are excluded from both.
 
@@ -127,6 +132,7 @@ Returns `{ hydrate }`. Also `createViewerEventReducer`, `ViewerScopeError`. Type
 | `renderPullRequestsPage` | `src/views/pull-requests.ts` |
 | `renderStartSessionForm`, `renderStartSessionPage`, `renderSessionsPage`, `renderPendingStartSessionPage`, `renderPendingStartSessionFragment`, `renderTargetReconfirmationPage`, `renderTargetReconfirmationForm`, `renderReservationReleasePage`, `renderReservationReleaseForm` | `src/views/sessions.ts` |
 | `renderSessionDetailPage`, `renderSessionViewerFragment` | `src/views/viewer.ts` |
+| `renderUpdatesPage`, `renderUpdatesStatus` | `src/views/updates.ts` |
 
 Inbox navigation internals: `src/views/inbox.ts#renderInboxUtility` owns the filtered Repository utility links and their path/query current-state predicates; `utilityLink` owns their shared markup.
 
@@ -147,6 +153,28 @@ metadata generation to CI; `scripts/build-release.sh` archives every tracked
 file, installs the frozen production dependency tree, adds built CSS and
 metadata, and emits the archive/checksum/sidecar without overwriting output.
 
+### Release discovery — `src/update-discovery.ts#createUpdateService`
+
+Returns `UpdateService`: `{ start, stop, check, status }`. Also
+`createUnavailableUpdateService`, `UPDATE_CHECK_INTERVAL_MS`. Types:
+`UpdateStatus`, `UpdateServiceOptions`. Lists all non-draft/non-prerelease public
+GitHub Releases and validates each `atlas-release.json`; orders with
+`compareReleaseTags`; persists the complete candidate set; retains it on
+failure; and requests staging for the newest Release newer than the installed
+published identity. Startup/manual/scheduled checks share one coalesced promise.
+
+### Release staging — `src/updater.ts#createUpdaterService`
+
+Returns `{ start, close, status, requestStage }`; `createUpdaterClient` returns
+the UI-side authenticated Unix-socket `UpdaterClient`. Types: `UpdaterStatus`,
+`UpdaterResult`, `RuntimeRequirements`, `HostRuntime`. The independent service
+atomically writes `/var/lib/atlas/update-state.json`, serializes one request,
+downloads the named archive/checksum, validates SHA-256 and embedded metadata,
+atomically renames one complete tree under `/opt/atlas/releases`, makes it
+read-only, reuses matching staged trees, and resumes an active durable request
+after restart. It never reads or changes `/opt/atlas/current` and has no
+OpenCode operation.
+
 ## Critical Flows
 
 **Land on `/`.** `src/app.ts#createApp` GET `/` → `src/inbox-state.ts#readVisitCookie` → `Persistence.findLandingSession` → 303 to the earliest new terminal Session, otherwise the earliest unfinished Session with Waiting first, otherwise the remembered enrolled Repository's Spec list, `/inbox` when Repositories exist, or `/repositories/new`. Every redirect writes `atlas_visit`; a selected Session/Repository also writes `atlas_inbox`.
@@ -162,6 +190,18 @@ metadata, and emits the archive/checksum/sidecar without overwriting output.
 **Start Session.** GET `.../sessions/new` → refresh access/specs/PRs → `src/views/sessions.ts#renderStartSessionPage` + `src/views/targets.ts#startTargetOptions`. POST → CSRF + target observation match → `Persistence.queueSession` → `PreparationService.enqueue`. Duplicate unfinished Spec → 409. `createPreparationService.prepareNext` → `claimPreparation` → atomically register the Session scope/helper references → request a preflight credential from the independent supplier → clone via `cloneGitEnvironment` → checkpoints through `prepared`. `createOpenCodeHandoffService` then intent → events → create → associate → one prompt → `Persistence.reconcileOpenCode`. Terminal → `refreshPullRequests` + `preparation.enqueue`.
 
 **Safe update pause.** Later activation code calls `AtlasApp.updatePause.pause()` → `src/update-pause.ts#createUpdatePauseCoordinator` synchronously holds both services → preparation finishes any active cycle at a durable preparation/uncertainty checkpoint while handoff finishes only active create/associate/prompt work → result is `paused` with scoped `resume`. Prompt/evidence and execution reconciliation continue, so Running/Waiting/Idle Sessions do not block. At five minutes the result is `timed_out`, both update holds are removed, and unsafe in-flight work is never aborted.
+
+**Discover/stage Release.** `src/server.ts` starts
+`src/update-discovery.ts#createUpdateService` → public GitHub Release pages and
+each `atlas-release.json` → `Persistence.recordUpdateDiscoverySuccess` (or a
+retaining failure) → newest eligible metadata over
+`src/updater.ts#createUpdaterClient` → independent `src/updater-server.ts` →
+durable requested/downloading/verifying/extracting/result state → checksum and
+embedded-metadata validation → atomic read-only Release tree. GET `/updates`
+and `/updates/status` read both stores and prefer matching durable updater state
+over a lost staging response; POST `/updates/check` uses existing
+auth/same-origin/CSRF and the same coalesced path. Staging neither calls the
+safe pause nor changes active selection.
 
 **All Sessions.** GET `/sessions` → `persistence.listRepositories()` → `listSessions(repositoryId, filter)` for every enrolled, non-removed Repository → flatten and sort by submission order → `renderSessionsPage` in global mode. `?status=all` includes terminal history; default `active` includes every unfinished state.
 
@@ -190,11 +230,13 @@ extraction/startup with no OpenCode → `gh release create` without overwrite.
 - `public/app.js` — client HTMX glue; preserves inbox poll focus, open `<details>`, and scroll position.
 - `src/recovery-status.ts` — read-only host status.
 - `src/release.ts` — tag parsing/order, metadata validation, and runtime identity.
+- `src/update-discovery.ts` — public Release discovery, scheduling, candidate retention, and updater requests.
+- `src/updater.ts` — durable independent staging service and authenticated socket client.
 - `src/config.ts#loadGitHubEnv` and `src/credentials.ts#loadGithubEnv` — two github.env loaders (browse keys vs App key path).
 
 ## Interfaces and State
 
-**SQLite tables:** `schema_migrations`, `repositories`, `specs`, `refresh_state`, `pull_requests`, `pr_stacks`, `stack_members`, `sessions`, `webhook_deliveries`, `stack_reservations`, `reservation_prs`, `reservation_conflict_holds`, `session_history`.
+**SQLite tables:** `schema_migrations`, `repositories`, `specs`, `refresh_state`, `pull_requests`, `pr_stacks`, `stack_members`, `sessions`, `webhook_deliveries`, `stack_reservations`, `reservation_prs`, `reservation_conflict_holds`, `session_history`, `update_discovery`.
 
 **Session identity:** Atlas IDs `ses_<uuid>`. Unfinished states unique per Spec (`sessions_unfinished_spec_idx`).
 
@@ -204,7 +246,7 @@ extraction/startup with no OpenCode → `gh release create` without overwrite.
 
 **OpenCode:** release-installed `@opencode-ai/client` `0.0.0-beta-19135` against an independently running server with no version gate. Service file default `$XDG_STATE_HOME/opencode/service.json` or `OPENCODE_SERVICE_FILE`.
 
-**Filesystem:** Session directories under `ATLAS_SESSION_ROOT`; credential scopes and canonical helper references in `session-scopes.json`; supplier socket `0600`, owned by `atlas-credentials.service`; stable supplier source under `/opt/atlas/services/atlas-credentials`.
+**Filesystem:** Session directories under `ATLAS_SESSION_ROOT`; credential scopes and canonical helper references in `session-scopes.json`; supplier socket `0600`, owned by `atlas-credentials.service`; updater socket `0660`, owned by `atlas-updater.service`; stable service sources under `/opt/atlas/services/atlas-credentials` and `/opt/atlas/services/atlas-updater`; durable updater state at `/var/lib/atlas/update-state.json`; inactive read-only Release trees under `/opt/atlas/releases`.
 
 **Update pause:** process-local generation and service hold flags only. Session identity, prompt, target, ordering, preparation/handoff uncertainty, execution-slot ownership, and reservations remain in existing SQLite rows/checkpoints.
 
@@ -232,6 +274,12 @@ file and reports `published: false`.
   build, resolve latest dependencies in CI, or infer rollback safety from
   SemVer/build. The package client pin, lockfile, deployment client manifest,
   and named pin docs move together before tagging.
+- **Discovery/staging truth.** A failed public Release check retains known
+  candidates and must not render as a successful no-update result. Validate
+  published and embedded metadata plus the named checksum before reporting a
+  complete staged tree. Coalesce repeated checks/requests, keep progress/result
+  durable, and never let staging change `/opt/atlas/current`, pause Session
+  admission, install/build dependencies, or inspect/manage OpenCode.
 - **Activation health separation.** `deploy/check-health.sh` may require exact
   candidate tag/SHA but gates only on Atlas process/persistence. Keep OpenCode
   readiness/version out of startup and activation; use the independent
@@ -254,6 +302,7 @@ file and reports `published: false`.
 | `bun run verify:issue55` | Independent supplier subprocess/socket continuity, client restart, atomic scope registration, invalid-scope rejection, helper references, and Git/gh helpers across fixture release selection. |
 | `bun run verify:issue56` | Real-SQLite coordinated preparation/handoff pause, controlled clone/prompt effects, timeout/resume, uncertainty/no-duplicate behavior, independent restrictions, and Running/Waiting/Idle non-blocking behavior. |
 | `bun run verify:issue57` | Tag/order/global-sequence rules, generated metadata and authenticated health identity, plus isolated archive contents/checksum/startup with no install, CSS build, or OpenCode. |
+| `bun run verify:issue58` | Authenticated Updates HTTP/CSRF/direct-fragment behavior, startup/four-hour/manual discovery, candidate retention/failures/ordering, runtime/maintenance presentation, updater socket/archive failure/coalescing, durable restart status, and unchanged active selection/admission. |
 | `bun run verify:inbox` | Inbox Spec projection, latest Session, group/state ordering, Settled cap, terminal unread time, and landing selection. |
 | `bun run verify:landing` | GET `/` landing redirects, per-browser `atlas_visit` / `atlas_inbox`, and canonical `/inbox` filter URL. |
 | `bun run verify:inbox-shell` (`scripts/verify-inbox-shell.ts`) | Desktop sidebar and navigation landmarks, canonical/filter cookie behavior, selected Spec identity, `/inbox/list` fragment contract, access semantics, and exact `status=all` utility state. |
@@ -265,4 +314,4 @@ file and reports `published: false`.
 | `bash deploy/verify-opencode-commands.sh` | Isolated server-only staging/integrity, `current` preflight selection, no-activation, and observed-version WAL command regressions. |
 | `bash deploy/verify-sqlite-wal.sh` | Pinned Bun and selected OpenCode embedded-SQLite WAL safeguards. |
 
-<!-- repo-map-synced: 60d5a38df21d5b840c768b36ce37aacecf90e059 -->
+<!-- repo-map-synced: 61f971f790060ad0d19e1a356120f299b9136e40 -->

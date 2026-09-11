@@ -6,7 +6,7 @@ Answers: why does this system exist? Populated and kept current by `/refresh-rep
 
 Atlas is an internal control plane for a team that already writes work as GitHub issues. It lets that team triage Specs across onboarded GitHub Repositories and start autonomous OpenCode Sessions from team-authored Specs, then observe those Sessions without Atlas itself publishing GitHub Pull requests or stacks.
 
-Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; an inbox of current Specs with landing on `/`; read-only Pull request and native-stack browsing; authenticated Session directory preparation backed by credential serving that survives Atlas UI restarts; a guarded OpenCode handoff; an awaitable safe update pause for preparation/handoff; Session viewing; Atlas-side stack reservation hold and release; immutable numbered Linux x64 Releases built from authoritative tags.
+Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; an inbox of current Specs with landing on `/`; read-only Pull request and native-stack browsing; authenticated Session directory preparation backed by credential serving that survives Atlas UI restarts; a guarded OpenCode handoff; an awaitable safe update pause for preparation/handoff; Session viewing; Atlas-side stack reservation hold and release; immutable numbered Linux x64 Releases built from authoritative tags; public Release discovery and durable inactive host staging.
 
 ## Actors
 
@@ -16,8 +16,8 @@ Shipped outcomes: private sign-in; durable Repository, Spec, and Session records
 | Maintainer | Commits complete release inputs and publishes an immutable Release by pushing its authoritative tag. |
 | Operator | Provisions the private host, pins binaries, supplies the shared credential, and controls admission, storage, and recovery. Not an in-app admin role. |
 | Agent | The OpenCode agent that implements a Spec inside a Session. Atlas does not start, upgrade, or replace OpenCode. |
-| GitHub | System of record for Repositories, Specs (issues labelled `spec`), PRs, native stacks, App installation inventory, and signed webhooks. |
-| Atlas processes | Private UI listener, loopback webhook listener, SQLite projections, independent credential supplier, preparation, and OpenCode handoff. |
+| GitHub | System of record for Repositories, Specs (issues labelled `spec`), PRs, native stacks, App installation inventory, signed webhooks, and public Releases. |
+| Atlas processes | Private UI listener, loopback webhook listener, SQLite projections, independent credential supplier and release-staging updater, preparation, and OpenCode handoff. |
 
 ## Use Cases
 
@@ -33,6 +33,7 @@ Shipped outcomes: private sign-in; durable Repository, Spec, and Session records
 - Release a held stack reservation after confirmed terminal execution.
 - Accept signed GitHub webhooks that wake background refresh of enrolled Repositories.
 - Publish a numbered ready-to-run Linux x64 Release from a reviewed tag without changing dependencies during publishing.
+- Check public Releases and observe durable staging without changing the active Release or Session admission.
 
 ## Workflows
 
@@ -84,8 +85,8 @@ The default deadline is five minutes. A timeout abandons and removes only the
 update-owned pause; it neither kills in-flight work nor removes independent
 operator, capacity, storage, recovery, persistence, or OpenCode-readiness
 restrictions. A completed pause remains held until its scoped, idempotent resume
-is used. This is the lifecycle prerequisite for later activation work, not an
-update UI or host updater.
+is used. This is the lifecycle prerequisite for later activation work; Release
+discovery and staging do not invoke it.
 
 ### Webhook refresh
 
@@ -106,6 +107,24 @@ tree, and creates immutable public metadata, checksum, and a ready-to-run Linux
 x64 archive. The archive starts with host-installed pinned Bun and reports the
 tag-derived identity plus storage health even when OpenCode is absent. An
 untagged checkout reports unpublished development identity.
+
+### Discover and stage Release
+
+Atlas checks all public GitHub Releases at startup, every four hours, and when a
+team member uses **Check now**. It validates each published metadata document,
+orders Releases by SemVer and then numeric build, and persists the complete
+known candidate set. A failed check retains that set and remains distinct from a
+successful check that found no newer Release.
+
+When a newer Release is available, Atlas requests staging over an authenticated
+Unix socket. The independently running updater durably records the request,
+progress, host-runtime requirements, and latest result; verifies the archive
+checksum and embedded metadata; and atomically creates a read-only Release tree.
+Repeated requests coalesce or reuse the completed tree. `/opt/atlas/current`
+and Session admission remain unchanged. The Updates page shows
+rollback-incompatible manual-maintenance instructions and unmet Bun, Git, or gh
+requirements, but neither Atlas process upgrades those host tools or manages
+OpenCode. Approval is required and activation controls are not yet present.
 
 ## Ubiquitous Language
 
@@ -187,14 +206,20 @@ _Avoid_: moving build, source snapshot
 - Atlas startup and Release activation health require exact Atlas identity and
   healthy persistence, never OpenCode readiness, availability, or version
   inspection. OpenCode diagnostics remain independent.
+- Release discovery uses public GitHub Releases and validates their metadata.
+  Failed checks retain the last successful candidate set. Staging is durable,
+  read-only, and inactive; it neither pauses Session admission nor changes
+  `/opt/atlas/current`.
 
 ## Boundaries and Non-Goals
 
 - Not a public app. Shared-token private access only.
 - Does not enroll every GitHub App-visible Repository automatically.
-- Does not automatically provision the host, move OpenCode data, or change Tailscale/firewall. The operator-run bootstrap is limited to the independent credential service and updated unit files.
+- Does not automatically provision the host, move OpenCode data, or change Tailscale/firewall. The operator-run bootstrap is limited to the independent credential/updater services and updated unit files.
 - Does not own OpenCode lifecycle, configuration, or transcripts.
-- The safe update pause does not itself discover, download, activate, or roll back a release and has no operator-facing maintenance UI.
+- Release discovery/staging does not invoke the safe update pause, activate or
+  roll back a Release, or expose Install/Retry controls. The safe update pause
+  remains reserved for later activation work.
 - Viewer does not reply to, cancel, or resume OpenCode permissions, forms, or inbox items.
 - Does not create GitHub labels.
 - Design guidelines do not introduce features or change business rules.
@@ -202,4 +227,4 @@ _Avoid_: moving build, source snapshot
   and automatic selection/upgrading of Bun, Git, gh, OS packages, or OpenCode.
 - Phase 1 has no off-site backup. Snapshots cannot undo GitHub effects. Shared host identity `omega` is not hostile-agent isolation.
 
-<!-- repo-map-synced: 60d5a38df21d5b840c768b36ce37aacecf90e059 -->
+<!-- repo-map-synced: 61f971f790060ad0d19e1a356120f299b9136e40 -->
