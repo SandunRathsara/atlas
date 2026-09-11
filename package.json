@@ -19,6 +19,7 @@
     "verify:inbox": "bun scripts/verify-inbox.ts",
     "verify:landing": "bun scripts/verify-landing.ts",
     "verify:inbox-shell": "bun scripts/verify-inbox-shell.ts",
+    "verify:inbox-page": "bun scripts/verify-inbox-page.ts",
     "dev": "bun run build:css && bun --watch src/server.ts",
     "start": "bun run build:css && bun src/server.ts"
   },

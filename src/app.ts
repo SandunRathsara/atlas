@@ -60,7 +60,7 @@ import {
   targetObservation,
   type PendingStartSession,
 } from "./views.ts";
-import { renderInboxList } from "./views/inbox.ts";
+import { renderInboxList, renderInboxPage } from "./views/inbox.ts";
 import { renderShell } from "./views/shell.ts";
 
 const MAX_FORM_BYTES = 512 * 1024;
@@ -576,15 +576,21 @@ export const createApp = (options: AppOptions) => {
     const repositoryId = query !== undefined && query !== "manage"
       ? query
       : readInboxCookie(c.req.header("Cookie")).repositoryId;
+    const repositories = persistence.listRepositories();
     const filtered = enrolledInboxRepository(repositoryId);
+    const list = persistence.listInbox({
+      repositoryId: filtered?.githubId,
+      lastVisitAt: readVisitCookie(c.req.header("Cookie")).lastVisitAt,
+    });
+    const relevant = filtered ? [filtered] : repositories;
     return {
-      repositories: persistence.listRepositories(),
+      repositories,
       filtered,
-      list: persistence.listInbox({
-        repositoryId: filtered?.githubId,
-        lastVisitAt: readVisitCookie(c.req.header("Cookie")).lastVisitAt,
-      }),
+      list,
       currentPath: inboxPath(c),
+      specsRefresh: list.rows.length === 0
+        ? relevant.map((repository) => persistence.getRefreshState(repository.githubId, "specs"))
+        : [],
     };
   };
 
@@ -636,13 +642,14 @@ export const createApp = (options: AppOptions) => {
     if (managed) return managed;
     rememberInboxFilter(c);
     const identity = c.get("auth");
+    const inbox = inboxFromRequest(c);
     setPrivateHtmlHeaders(c);
     return c.html(renderShell({
       title: "Inbox",
       active: "repositories",
       csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
-      inbox: inboxFromRequest(c),
-      content: '<h1 id="page-title" tabindex="-1" data-page-heading>Inbox</h1>',
+      inbox,
+      content: renderInboxPage(inbox),
     }));
   });
 
@@ -659,7 +666,7 @@ export const createApp = (options: AppOptions) => {
         active: "repositories",
         csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
         inbox,
-        content: '<h1 id="page-title" tabindex="-1" data-page-heading>Inbox</h1>',
+        content: renderInboxPage(inbox),
       }));
     }
     return c.html(renderInboxList(inbox));
