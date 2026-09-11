@@ -93,6 +93,30 @@ must be non-empty and a normal updater must refuse activation. Schema-1 fields
 will not be removed or reinterpreted; a future incompatible contract requires
 an explicit compatibility path readable by the installed and previous release.
 
+## Discovery and staging
+
+An installed Atlas process lists all public GitHub Releases at startup and every
+four hours; **Check now** uses the same path. It reads every candidate's
+`atlas-release.json`, orders candidates with the release ordering above, and
+retains the complete known set so a later automatic policy can still find a
+newer build of the installed SemVer when another SemVer also exists. A failed
+check retains the last successful set and is not reported as up to date.
+
+The independently installed `atlas-updater.service` owns archive download,
+checksum verification, extraction, and durable staging status. Atlas submits
+validated metadata over its authenticated Unix socket. The updater stages one
+request at a time beneath `/opt/atlas/releases`, resumes an interrupted durable
+request after its own restart, verifies embedded metadata before an atomic
+rename, and never changes `/opt/atlas/current`. Repeated requests for the same
+release reuse the complete staged tree, and a lost request response is
+reconciled from updater status. Host runtime differences and rollback-incompatible
+release instructions remain visible on `/updates`.
+
+Staging does not pause Session preparation, install dependencies, build CSS,
+select a release, restart Atlas, or inspect/manage OpenCode. Approval remains
+required, but activation controls are intentionally absent until the activation
+and rollback slice is delivered.
+
 Authenticated health reports the same identity under `atlas.release`, existing
 `persistence` health, and independent OpenCode diagnostics. Candidate success
 uses `atlas.process`, exact `atlas.release`, and `persistence.healthy`; it does

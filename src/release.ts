@@ -43,6 +43,7 @@ export const DEVELOPMENT_RELEASE_IDENTITY: ReleaseIdentity = {
 };
 
 const tagPattern = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\+build\.([1-9]\d*)$/;
+const runtimeVersionPattern = /^[A-Za-z0-9][A-Za-z0-9.+-]{0,63}$/;
 
 export const parseReleaseTag = (tag: string) => {
   const match = tagPattern.exec(tag);
@@ -90,7 +91,7 @@ export const createReleaseMetadata = (
 ): ReleaseMetadata => {
   const parsed = parseReleaseTag(tag);
   if (!/^[0-9a-f]{40}$/.test(gitSha)) throw new Error("Release Git SHA must be a full lowercase SHA-1");
-  if (Object.values(runtime).some((version) => !version)) throw new Error("Release runtime versions must be present");
+  if (Object.values(runtime).some((version) => !runtimeVersionPattern.test(version))) throw new Error("Release runtime versions must be present and safe");
   const name = `atlas-linux-x64-${tag}.tar.gz`;
   return {
     schemaVersion: 1,
@@ -121,8 +122,9 @@ export const assertReleaseMetadata = (value: unknown): ReleaseMetadata => {
       artifact.architecture !== "x64" || artifact.format !== "tar.gz") {
     throw new Error("Release artifact metadata is invalid");
   }
-  if (typeof runtime?.bun !== "string" || !runtime.bun || typeof runtime.git !== "string" || !runtime.git ||
-      typeof runtime.gh !== "string" || !runtime.gh) {
+  if (typeof runtime?.bun !== "string" || !runtimeVersionPattern.test(runtime.bun) ||
+      typeof runtime.git !== "string" || !runtimeVersionPattern.test(runtime.git) ||
+      typeof runtime.gh !== "string" || !runtimeVersionPattern.test(runtime.gh)) {
     throw new Error("Release runtime metadata is invalid");
   }
   if (typeof rollback?.codeOnlyCompatible !== "boolean" ||

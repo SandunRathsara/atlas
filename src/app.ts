@@ -57,6 +57,8 @@ import {
   renderSpecDetailPage,
   renderSpecUnavailablePage,
   renderSpecsPage,
+  renderUpdatesPage,
+  renderUpdatesStatus,
   startTargetOptions,
   targetObservation,
   type PendingStartSession,
@@ -64,6 +66,7 @@ import {
 import { renderInboxList, renderInboxPage } from "./views/inbox.ts";
 import { renderShell } from "./views/shell.ts";
 import { DEVELOPMENT_RELEASE_IDENTITY, type ReleaseIdentity } from "./release.ts";
+import { createUnavailableUpdateService, type UpdateService } from "./update-discovery.ts";
 
 const MAX_FORM_BYTES = 512 * 1024;
 const MAX_TOKEN_LENGTH = 8 * 1024;
@@ -114,6 +117,7 @@ export type AppOptions = {
   refreshCoordinator?: RefreshCoordinator;
   openCode?: OpenCodeHandoffService;
   releaseIdentity?: ReleaseIdentity;
+  updates?: UpdateService;
   sharedToken?: string;
 };
 
@@ -498,6 +502,7 @@ export const createApp = (options: AppOptions) => {
 
   const persistenceReady = () => persistence.checkHealth();
   const releaseIdentity = options.releaseIdentity ?? DEVELOPMENT_RELEASE_IDENTITY;
+  const updates = options.updates ?? createUnavailableUpdateService(persistence, releaseIdentity);
   const currentOpenCodeReadiness = () => {
     const readiness = openCodeService.readiness?.();
     if (readiness) return { ready: readiness.ready, reason: readiness.reason, version: readiness.version };
@@ -821,6 +826,8 @@ export const createApp = (options: AppOptions) => {
   app.use("/sessions", auth.middleware);
   app.use("/sessions/*", auth.middleware);
   app.use("/events", auth.middleware);
+  app.use("/updates", auth.middleware);
+  app.use("/updates/*", auth.middleware);
 
   app.get("/events", (c) => {
     const sessionId = c.req.query("session");
@@ -915,6 +922,40 @@ export const createApp = (options: AppOptions) => {
       unsubscribeEvent();
       unsubscribeTransport();
     });
+  });
+
+  const updatesPage = async (c: Context, fragment = false) => {
+    const identity = c.get("auth");
+    const status = await updates.status();
+    setPrivateHtmlHeaders(c);
+    if (fragment && isHtmx(c)) return c.html(renderUpdatesStatus(status));
+    return c.html(renderShell({
+      title: "Updates",
+      csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
+      inbox: inboxFromRequest(c),
+      content: renderUpdatesPage(status, auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined)),
+    }));
+  };
+
+  app.get("/updates", (c) => updatesPage(c));
+  app.get("/updates/status", (c) => updatesPage(c, true));
+  app.post("/updates/check", async (c) => {
+    setPrivateHtmlHeaders(c);
+    let form: Record<string, unknown>;
+    try {
+      form = await parseForm(c.req.raw);
+    } catch (error) {
+      if (error instanceof FormBodyTooLarge) return c.text("Request body is too large", 413);
+      return c.text("Malformed update request", 400);
+    }
+    const identity = c.get("auth");
+    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return c.text("Request rejected", 403);
+    void updates.check().catch(() => undefined);
+    if (isHtmx(c)) {
+      c.header("HX-Redirect", "/updates");
+      return c.body(null, 200);
+    }
+    return c.redirect("/updates", 303);
   });
 
   app.get("/repositories", (c) => {

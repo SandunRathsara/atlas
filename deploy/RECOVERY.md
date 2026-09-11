@@ -7,8 +7,9 @@ release automatically.
 ## Protection boundary and targets
 
 - `/var/lib/atlas` must be one Btrfs subvolume containing ordinary directories
-  only: Atlas SQLite and its WAL/journal, OpenCode data/state/config/cache and
-  matching database sidecars, complete Session directories, and
+  only: Atlas SQLite and its WAL/journal, durable updater staging state,
+  OpenCode data/state/config/cache and matching database sidecars, complete
+  Session directories, and
   `recovery-config/current`. Nested subvolumes, nested mounts, and external
   symlink targets are not captured. Inventory these before readiness.
 - `/var/backups/atlas` contains local read-only snapshots named only
@@ -128,9 +129,10 @@ only a positively identified rehearsal tree after the owner accepts the result.
    `rollback.codeOnlyCompatible` for ordinary code-only rollback; otherwise
    follow its non-empty manual-maintenance instructions. Run migrations by
    selecting the immutable versioned release and starting Atlas while admission
-   remains paused. The independently installed credential supplier and its
-   stable support tree remain running; do not restart it as part of release
-   selection. Never overwrite a release or restart OpenCode.
+   remains paused. The independently installed credential supplier and
+   release-staging updater and their stable support trees remain running; do
+   not restart them as part of release selection. Never overwrite a release or
+   restart OpenCode.
 5. Validate authenticated Atlas identity and storage health first; this startup
    gate does not query or wait for OpenCode. Separately diagnose OpenCode and
    validate reconciliation, preserved Session reopening/history/files, private

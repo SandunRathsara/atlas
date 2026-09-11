@@ -2,8 +2,9 @@
 
 This directory is the deployment seam for the private host. Nothing changes the
 host until an operator runs it. The one bootstrap command installs and enables
-only the independent credential service and updated unit files; it does not
-move OpenCode data or change Tailscale/firewall state.
+the independent credential and release-staging services plus updated unit
+files; it does not activate a staged release, move OpenCode data, or change
+Tailscale/firewall state.
 
 ## Pins
 
@@ -50,9 +51,16 @@ OpenCode service untouched.
   Repository-scoped credential protocol from a stable support tree, and keeps
   running while Atlas is stopped or restarted. It loads only the GitHub App
   credential file, registry, and supplier key—not Atlas UI/webhook secrets.
+- `systemd/atlas-updater.service` runs from the stable
+  `/opt/atlas/services/atlas-updater` tree, owns its authenticated Unix socket,
+  downloads and verifies public Atlas artifacts, and records durable staging
+  progress under `/var/lib/atlas`. Its implementation writes only staged
+  releases, updater state, and its runtime socket. It does not load Atlas UI
+  secrets, select `/opt/atlas/current`, pause admission, or operate OpenCode.
 - `systemd/atlas.service` runs Atlas as `omega` with explicit Bun, pinned Git,
   `HOME`, `PATH`, working directory, crash restart, bounded journal rate, and
-  `/etc/atlas/atlas.env`. It connects to, but does not own, the supplier socket.
+  `/etc/atlas/atlas.env`. It connects to, but does not own, either surviving
+  service socket.
 - `systemd/opencode.service` independently runs the operator-selected V2 server as
   `omega`, bound to `127.0.0.1` with a dynamic port and `--service` discovery.
   Its preflight follows `current`, validates the executable, and reports its
@@ -77,11 +85,13 @@ The webhook app has no health, login, Session, event, or OpenCode routes.
 | `/opt/atlas/releases/<release>` | Read-only versioned Atlas release |
 | `/opt/atlas/current` | Operator-selected release symlink |
 | `/opt/atlas/services/atlas-credentials` | Stable credential supplier source, independent of release selection |
+| `/opt/atlas/services/atlas-updater` | Stable release-staging service source, independent of release selection |
 | `<release>/RELEASE_METADATA.json` | Tag-derived SemVer, global build, Git SHA, artifact/runtime, and rollback contract |
 | `/opt/atlas/tools/<tool>/<version>` | Pinned Bun, Git, and GitHub CLI binaries; installed OpenCode server versions |
 | `/opt/atlas/tools/opencode/current` | Operator-selected OpenCode server symlink used by the independent service |
 | `/var/lib/atlas` | One ordinary-directory Btrfs subvolume |
 | `/var/lib/atlas/atlas.sqlite` | Atlas SQLite database and matching WAL/journal |
+| `/var/lib/atlas/update-state.json` | Durable updater request, progress, requirements, and latest staging result |
 | `/var/lib/atlas/sessions/<atlas-id>` | Full private clone per Session |
 | `/var/lib/atlas/opencode-data/opencode` | OpenCode data, database, logs, shells, snapshots, tool output |
 | `/var/lib/atlas/opencode-data/opencode/log` | OpenCode file logs; human-installed size/retention bound |
@@ -91,10 +101,11 @@ The webhook app has no health, login, Session, event, or OpenCode routes.
 | `/var/lib/atlas/opencode-runtime` | Stable service working directory, never a Session clone |
 | `/var/lib/atlas/recovery-config/current` | Protected required configuration and rollback records |
 | `/var/lib/atlas/recovery-status` | Bounded atomic backup/space status read by Atlas |
-| `/etc/atlas` | `atlas.env`, `github.env`, App key, supplier key; restricted |
+| `/etc/atlas` | `atlas.env`, `github.env`, App key, supplier key, updater key; restricted |
 | `/var/backups/atlas` | Restricted same-disk read-only Atlas recovery snapshots |
 | `/var/lib/atlas-restore-rehearsals` | Isolated writable rehearsal targets; never a service path |
 | `/run/atlas` | systemd-created runtime socket directory |
+| `/run/atlas-updater` | systemd-created updater socket directory |
 
 Do not create nested subvolumes or rely on symlinks to include external data.
 Before activation, inventory every real OpenCode data/config path and verify the
@@ -103,7 +114,7 @@ hostile-agent isolation. Refresh `recovery-config/current` after any accepted
 configuration, unit, route, firewall, binary, or release change; the previous
 copy is retained for rollback.
 
-## Credential bootstrap and continuity
+## Credential and updater bootstrap
 
 After installing `/etc/atlas/github.env` and its App key, both an existing and a
 new installation use the same one-time command:
@@ -112,12 +123,13 @@ new installation use the same one-time command:
 sudo /opt/atlas/current/deploy/bootstrap.sh
 ```
 
-The command installs the credential service in its stable support tree, installs
-the credential-aware Atlas/OpenCode units, creates or preserves the private
-supplier key, reloads systemd, and enables the supplier. On an existing install
-it briefly stops and restarts Atlas only when needed to transfer `/run/atlas`
-ownership; it never stops, restarts, selects, or inspects OpenCode. This is the
-credential-service portion of bootstrap. The web updater has not shipped yet.
+The command installs the credential and updater services in stable support
+trees, installs the service-aware Atlas/OpenCode units, creates or preserves
+their private keys, reloads systemd, and enables both services. On an existing
+install it briefly stops and restarts Atlas only when needed to transfer
+`/run/atlas` ownership; it never stops, restarts, selects, or inspects OpenCode.
+This is the credential/updater portion of bootstrap. The updater can stage
+releases but cannot activate them yet.
 For a new install, run it after private configuration is in place and before
 enabling Atlas/OpenCode in the normal cutover order.
 
@@ -151,14 +163,22 @@ opening admission. The other focused real-Git
 regression: `bun scripts/verify-clone-scope.ts` with explicit Bun 1.3.14.
 These checks are not performed by `verify-assets.sh`.
 
+After bootstrap, visit the private global `/updates` page. It reports installed
+and available identities, the approval-required policy, runtime/manual
+maintenance limits, and durable staging progress. **Check now** is the only
+update mutation in this slice. Confirm `/opt/atlas/current` is unchanged after
+staging; there is intentionally no Install or automatic-activation control.
+Run `bun run verify:issue58` for controlled HTTP, clock, Unix-socket, archive,
+failure, coalescing, and restart-status coverage.
+
 ## Recovery and operational guardrails
 
 `capture-recovery-config.sh` is the least protected recovery-copy procedure.
 Run it as the operator after the required files and records exist. It copies
-only `atlas.env`, `github.env`, `github-app.pem`, `supplier.key`, all installed
-Atlas/OpenCode/recovery units, the selected release marker/pin manifest, the
-Atlas journal-namespace bound, an operator-recorded Tailscale
-route file, and an operator-recorded firewall file into
+only `atlas.env`, `github.env`, `github-app.pem`, `supplier.key`, `updater.key`,
+all installed Atlas/OpenCode/updater/recovery units, the selected release
+marker/pin manifest, the Atlas journal-namespace bound, an operator-recorded
+Tailscale route file, and an operator-recorded firewall file into
 `/var/lib/atlas/recovery-config/current`. It also records SHA-256 checksums for
 those files, the pinned tools, and the selected OpenCode executable. It rejects
 missing, symlinked, or partial inputs, writes a private temporary tree, and

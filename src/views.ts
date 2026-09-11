@@ -17,3 +17,4 @@ export {
   renderTargetReconfirmationPage,
 } from "./views/sessions.ts";
 export { renderSessionDetailPage, renderSessionViewerFragment } from "./views/viewer.ts";
+export { renderUpdatesPage, renderUpdatesStatus } from "./views/updates.ts";
