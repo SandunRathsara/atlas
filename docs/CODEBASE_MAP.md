@@ -180,6 +180,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 | `bun run verify:issue27-fixes` | Preparation free space, App token mint, clone admission. |
 | `bun run verify:issue32` | Refresh coordinator retry backoff. |
 | `bun run verify:issue29` | Session viewer hydrate, SSE (no transcript leak). |
+| `bun run verify:inbox` | Inbox Spec projection (`listInbox`, `findLandingSession`). |
 | `bun scripts/verify-clone-scope.ts` | Clone git env + credential helper isolation. |
 | `bun scripts/verify-repository-filter.ts` | `repositoryMatchesQuery` + add-repo UI. |
 | `bun scripts/check-restored-state.ts` | Restore DB/schema/registry. |
