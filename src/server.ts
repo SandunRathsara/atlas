@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadReleaseIdentity } from "./release.ts";
 import { createUpdateService } from "./update-discovery.ts";
-import { createUpdaterClient } from "./updater.ts";
+import { activationInProgress, createUpdaterClient } from "./updater.ts";
 
 const githubEnvPath = Bun.env.ATLAS_GITHUB_ENV_PATH ?? `${homedir()}/.config/atlas/github.env`;
 loadGithubEnv(githubEnvPath);
@@ -64,13 +64,15 @@ const refreshCoordinator = createRefreshCoordinator({
 });
 const releaseRoot = Bun.env.ATLAS_RELEASE_ROOT ?? join(import.meta.dir, "..");
 const releaseIdentity = loadReleaseIdentity(releaseRoot);
+const updater = createUpdaterClient({
+  socketPath: Bun.env.ATLAS_UPDATER_SOCKET,
+  keyPath: Bun.env.ATLAS_UPDATER_KEY_PATH,
+});
+const startupUpdaterStatus = await updater.status().catch(() => null);
 const updates = createUpdateService({
   persistence,
   installed: releaseIdentity,
-  updater: createUpdaterClient({
-    socketPath: Bun.env.ATLAS_UPDATER_SOCKET,
-    keyPath: Bun.env.ATLAS_UPDATER_KEY_PATH,
-  }),
+  updater,
 });
 
 const app = createApp({
@@ -93,6 +95,7 @@ const app = createApp({
   persistence,
   refreshCoordinator,
   releaseIdentity,
+  startPausedForUpdate: Boolean(startupUpdaterStatus && activationInProgress(startupUpdaterStatus)),
   updates,
   sharedToken,
 });
@@ -107,6 +110,22 @@ const webhookApp = createWebhookApp({
 
 refreshCoordinator.start();
 updates.start();
+if (startupUpdaterStatus && activationInProgress(startupUpdaterStatus)) {
+  void app.updatePause.pause().then(async (outcome) => {
+    if (outcome.status !== "paused") return;
+    while (true) {
+      try {
+        if (!activationInProgress(await updater.status())) {
+          outcome.resume();
+          return;
+        }
+      } catch {
+        // The surviving updater remains authoritative while activation status is unavailable.
+      }
+      await Bun.sleep(250);
+    }
+  });
+}
 
 const uiServer = Bun.serve({
   fetch: app.fetch,

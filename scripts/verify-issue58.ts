@@ -73,6 +73,20 @@ const idleUpdater = (): UpdaterStatus => ({
   message: "No release has been staged yet.",
   requirements: null,
   lastResult: null,
+  activation: {
+    state: "idle",
+    metadata: null,
+    previousPath: null,
+    previousMetadata: null,
+    requestedAt: null,
+    updatedAt: null,
+    deadlineAt: null,
+    message: "No release activation has been requested.",
+    failureMessage: null,
+    retry: false,
+    failedTags: [],
+    lastResult: null,
+  },
 });
 
 const waitFor = async (predicate: () => boolean | Promise<boolean>, message: string) => {
@@ -134,6 +148,9 @@ try {
         if (loseStageResponse) throw new Error("controlled lost response");
         return updaterStatus;
       },
+      prepareActivation: async () => { throw new Error("activation is outside the issue #58 fixture"); },
+      activate: async () => { throw new Error("activation is outside the issue #58 fixture"); },
+      abandonActivation: async () => { throw new Error("activation is outside the issue #58 fixture"); },
     },
     scheduleEvery: (callback, milliseconds) => {
       scheduled = callback;
@@ -263,7 +280,14 @@ try {
   assert.match(html, /Manual maintenance required/);
   assert.match(html, /stopped-writer procedure/);
   assert.match(html, /Host runtime requirements are not met/);
-  assert.match(html, /OpenCode is independently managed and is not checked/);
+  assert.match(html, /OpenCode keeps running and is not an activation gate/);
+  assert.doesNotMatch(html, /action="\/updates\/install"/, "maintenance-required or runtime-ineligible releases must not expose Install");
+  response = await app.fetch(new Request("http://atlas.test/updates/install", {
+    method: "POST",
+    headers: { Authorization: "Bearer secret", "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ tag: maintenance.identity.tag }),
+  }));
+  assert.equal(response.status, 409, "direct activation must reject maintenance-required or runtime-ineligible releases");
   updates.stop();
   persistence.close();
   const reopenedPersistence = createPersistence({ path: databasePath });

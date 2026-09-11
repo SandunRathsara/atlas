@@ -113,7 +113,21 @@ It never starts Atlas, OpenCode, Agents, sockets, or listeners. Never point a
 service at the rehearsal tree. Preserve a failed tree for investigation; delete
 only a positively identified rehearsal tree after the owner accepts the result.
 
-## Versioned release and rollback
+## Approval-driven code-only release and rollback
+
+For a normal `rollback.codeOnlyCompatible` Release, run the current Release's
+one-time `sudo /opt/atlas/current/deploy/bootstrap.sh` first. Use **Install** on
+the private Updates page. The surviving updater records approval and progress,
+waits for Atlas's preparation/handoff checkpoint, stops only Atlas, atomically
+selects the candidate, and requires its exact identity plus healthy storage
+within 60 seconds. OpenCode and the credential supplier continue running. A
+failed candidate selects and verifies the previous code automatically against
+the unchanged database; **Recovered** is success, while **Recovery failed**
+requires operator intervention. Inspect the durable result before using
+**Retry**. Do not restore a snapshot for this ordinary path.
+
+Use the stopped-writer procedure below only for a Release marked Manual
+maintenance required or for recovery outside the normal web contract.
 
 1. Set `ATLAS_ADMISSION_PAUSED=1` in `/etc/atlas/atlas.env` and restart **Atlas
    only**. Confirm queued work does not enter Preparing. Do not stop OpenCode.
@@ -130,7 +144,7 @@ only a positively identified rehearsal tree after the owner accepts the result.
    follow its non-empty manual-maintenance instructions. Run migrations by
    selecting the immutable versioned release and starting Atlas while admission
    remains paused. The independently installed credential supplier and
-   release-staging updater and their stable support trees remain running; do
+   updater and their stable support trees remain running; do
    not restart them as part of release selection. Never overwrite a release or
    restart OpenCode.
 5. Validate authenticated Atlas identity and storage health first; this startup

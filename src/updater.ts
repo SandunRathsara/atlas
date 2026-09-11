@@ -6,8 +6,10 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -23,6 +25,60 @@ const DEFAULT_DOWNLOAD_BASE = "https://github.com/SandunRathsara/atlas/releases/
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024;
 const activeStates = new Set<UpdaterStatus["state"]>(["requested", "downloading", "verifying", "extracting"]);
+export const ACTIVATION_HEALTH_TIMEOUT_MS = 60 * 1_000;
+
+export type ActivationState =
+  | "idle"
+  | "awaiting_checkpoint"
+  | "requested"
+  | "stopping"
+  | "selecting"
+  | "starting"
+  | "validating"
+  | "selecting_previous"
+  | "restarting_previous"
+  | "validating_previous"
+  | "succeeded"
+  | "rolled_back"
+  | "rollback_failed"
+  | "abandoned";
+
+const activeActivationStates = new Set<ActivationState>([
+  "awaiting_checkpoint",
+  "requested",
+  "stopping",
+  "selecting",
+  "starting",
+  "validating",
+  "selecting_previous",
+  "restarting_previous",
+  "validating_previous",
+]);
+
+export type ActivationResult = {
+  tag: string;
+  state: "succeeded" | "rolled_back" | "rollback_failed" | "abandoned";
+  message: string;
+  at: string;
+};
+
+export type ActivationStatus = {
+  state: ActivationState;
+  metadata: ReleaseMetadata | null;
+  previousPath: string | null;
+  previousMetadata: ReleaseMetadata | null;
+  requestedAt: string | null;
+  updatedAt: string | null;
+  deadlineAt: string | null;
+  message: string;
+  failureMessage: string | null;
+  retry: boolean;
+  failedTags: string[];
+  lastResult: ActivationResult | null;
+};
+
+export const activationInProgress = (status: Pick<UpdaterStatus, "activation">) =>
+  activeActivationStates.has(status.activation.state);
 
 export type HostRuntime = { bun: string | null; git: string | null; gh: string | null };
 
@@ -49,20 +105,42 @@ export type UpdaterStatus = {
   message: string;
   requirements: RuntimeRequirements | null;
   lastResult: UpdaterResult | null;
+  activation: ActivationStatus;
 };
 
 export type UpdaterClient = {
   status: () => Promise<UpdaterStatus>;
   stage: (metadata: ReleaseMetadata) => Promise<UpdaterStatus>;
+  prepareActivation: (metadata: ReleaseMetadata, retry: boolean) => Promise<UpdaterStatus>;
+  activate: (metadata: ReleaseMetadata) => Promise<UpdaterStatus>;
+  abandonActivation: (metadata: ReleaseMetadata, message: string) => Promise<UpdaterStatus>;
 };
 
 type UpdaterRequest =
   | { key: string; operation: "status" }
-  | { key: string; operation: "stage"; metadata: ReleaseMetadata };
+  | { key: string; operation: "stage"; metadata: ReleaseMetadata }
+  | { key: string; operation: "prepare_activation"; metadata: ReleaseMetadata; retry: boolean }
+  | { key: string; operation: "activate"; metadata: ReleaseMetadata }
+  | { key: string; operation: "abandon_activation"; metadata: ReleaseMetadata; message: string };
 
 type UpdaterResponse =
   | { ok: true; status: UpdaterStatus }
   | { ok: false; error: string };
+
+const initialActivation = (): ActivationStatus => ({
+  state: "idle",
+  metadata: null,
+  previousPath: null,
+  previousMetadata: null,
+  requestedAt: null,
+  updatedAt: null,
+  deadlineAt: null,
+  message: "No release activation has been requested.",
+  failureMessage: null,
+  retry: false,
+  failedTags: [],
+  lastResult: null,
+});
 
 const initialStatus = (): UpdaterStatus => ({
   schemaVersion: 1,
@@ -74,6 +152,7 @@ const initialStatus = (): UpdaterStatus => ({
   message: "No release has been staged yet.",
   requirements: null,
   lastResult: null,
+  activation: initialActivation(),
 });
 
 const readKey = (path: string) => {
@@ -88,6 +167,44 @@ const keysMatch = (left: string, right: string) => {
   const leftBytes = Buffer.from(left);
   const rightBytes = Buffer.from(right);
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+};
+
+const activationStates: ActivationState[] = [
+  "idle",
+  "awaiting_checkpoint",
+  "requested",
+  "stopping",
+  "selecting",
+  "starting",
+  "validating",
+  "selecting_previous",
+  "restarting_previous",
+  "validating_previous",
+  "succeeded",
+  "rolled_back",
+  "rollback_failed",
+  "abandoned",
+];
+
+const parseActivation = (value: unknown): ActivationStatus => {
+  if (value === undefined) return initialActivation();
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Updater activation state is invalid");
+  const activation = value as Partial<ActivationStatus>;
+  const lastResult = activation.lastResult as Partial<ActivationResult> | null | undefined;
+  if (typeof activation.state !== "string" || !activationStates.includes(activation.state as ActivationState) ||
+      activation.metadata === undefined || (activation.metadata !== null && !assertReleaseMetadata(activation.metadata)) ||
+      activation.previousMetadata === undefined || (activation.previousMetadata !== null && !assertReleaseMetadata(activation.previousMetadata)) ||
+      ![activation.previousPath, activation.requestedAt, activation.updatedAt, activation.deadlineAt, activation.failureMessage]
+        .every((item) => item === null || typeof item === "string") ||
+      typeof activation.message !== "string" || typeof activation.retry !== "boolean" ||
+      !Array.isArray(activation.failedTags) || !activation.failedTags.every((tag) => typeof tag === "string") ||
+      lastResult === undefined || (lastResult !== null && (typeof lastResult.tag !== "string" ||
+        !["succeeded", "rolled_back", "rollback_failed", "abandoned"].includes(lastResult.state ?? "") ||
+        typeof lastResult.message !== "string" || typeof lastResult.at !== "string"))) {
+    throw new Error("Updater activation state is invalid");
+  }
+  if (activation.state !== "idle" && activation.metadata === null) throw new Error("Updater activation state is invalid");
+  return activation as ActivationStatus;
 };
 
 const parseStatus = (value: unknown): UpdaterStatus => {
@@ -109,7 +226,7 @@ const parseStatus = (value: unknown): UpdaterStatus => {
     throw new Error("Updater state is invalid");
   }
   if (status.state !== "idle" && status.metadata === null) throw new Error("Updater state is invalid");
-  return status as UpdaterStatus;
+  return { ...status, activation: parseActivation(status.activation) } as UpdaterStatus;
 };
 
 const readStatusFile = (path: string) => {
@@ -197,6 +314,12 @@ export type UpdaterServiceOptions = {
   fetcher?: typeof fetch;
   now?: () => number;
   hostRuntime?: (metadata: ReleaseMetadata) => HostRuntime;
+  currentPath?: string;
+  activationTimeoutMs?: number;
+  activationPollMs?: number;
+  controlAtlas?: (operation: "stop" | "start") => boolean | Promise<boolean>;
+  checkAtlasHealth?: (metadata: ReleaseMetadata) => boolean | Promise<boolean>;
+  sleep?: (milliseconds: number) => Promise<void>;
 };
 
 export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
@@ -208,9 +331,21 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
   const fetcher = options.fetcher ?? fetch;
   const now = options.now ?? Date.now;
   const hostRuntime = options.hostRuntime ?? (() => ({ bun: Bun.version, git: null, gh: null }));
+  const currentPath = resolve(options.currentPath ?? "/opt/atlas/current");
+  const activationTimeoutMs = options.activationTimeoutMs ?? ACTIVATION_HEALTH_TIMEOUT_MS;
+  const activationPollMs = options.activationPollMs ?? 1_000;
+  const controlAtlas = options.controlAtlas ?? (() => false);
+  const checkAtlasHealth = options.checkAtlasHealth ?? (() => false);
+  const sleep = options.sleep ?? Bun.sleep;
+  if (!Number.isSafeInteger(activationTimeoutMs) || activationTimeoutMs < 1 ||
+      !Number.isSafeInteger(activationPollMs) || activationPollMs < 1) {
+    throw new Error("Updater activation timing must use positive safe integers");
+  }
   let status = readStatusFile(statePath);
   let server: Server | undefined;
   let staging: Promise<void> | undefined;
+  let activating: Promise<void> | undefined;
+  let closing = false;
 
   const socketInUse = () => new Promise<boolean>((resolveUse) => {
     const socket = connect(socketPath);
@@ -230,6 +365,174 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
   };
   const timestamp = () => new Date(now()).toISOString();
   const candidatePath = (metadata: ReleaseMetadata) => join(releasesRoot, `atlas-${metadata.identity.tag}`);
+  const sameMetadata = (left: ReleaseMetadata | null, right: ReleaseMetadata) =>
+    left !== null && metadataRecord(left) === metadataRecord(right);
+
+  const saveActivation = (next: ActivationStatus) => save({ ...status, activation: next });
+  const activationProgress = (state: ActivationState, message: string, deadlineAt: string | null = null) => {
+    saveActivation({ ...status.activation, state, message, updatedAt: timestamp(), deadlineAt });
+  };
+
+  const releaseMetadataAt = (path: string) =>
+    assertReleaseMetadata(JSON.parse(readFileSync(join(path, "RELEASE_METADATA.json"), "utf8")));
+
+  const selectedRelease = () => {
+    if (!existsSync(currentPath) || !lstatSync(currentPath).isSymbolicLink()) {
+      throw new Error("The active Atlas release selection is unsafe.");
+    }
+    const path = realpathSync(currentPath);
+    if (dirname(path) !== releasesRoot || !lstatSync(path).isDirectory() || lstatSync(path).isSymbolicLink()) {
+      throw new Error("The active Atlas release is outside the managed release directory.");
+    }
+    return { path, metadata: releaseMetadataAt(path) };
+  };
+
+  const selectRelease = (path: string) => {
+    if (dirname(path) !== releasesRoot || !existsSync(path) || !lstatSync(path).isDirectory() || lstatSync(path).isSymbolicLink()) {
+      throw new Error("The requested Atlas release path is unsafe.");
+    }
+    mkdirSync(dirname(currentPath), { recursive: true, mode: 0o755 });
+    const temporary = join(dirname(currentPath), `.current-${process.pid}-${randomBytes(8).toString("hex")}`);
+    try {
+      symlinkSync(path, temporary, "dir");
+      renameSync(temporary, currentPath);
+    } finally {
+      if (existsSync(temporary)) unlinkSync(temporary);
+    }
+  };
+
+  const waitForHealth = async (metadata: ReleaseMetadata, existingDeadline: string | null) => {
+    const deadline = existingDeadline ? Date.parse(existingDeadline) : now() + activationTimeoutMs;
+    if (!Number.isFinite(deadline)) throw new Error("Updater activation deadline is invalid");
+    if (!existingDeadline) activationProgress(status.activation.state, status.activation.message, new Date(deadline).toISOString());
+    while (now() < deadline) {
+      if (closing) return "closed" as const;
+      try {
+        if (await checkAtlasHealth(metadata)) return "healthy" as const;
+      } catch {
+        // Candidate health is retried until the fixed activation deadline.
+      }
+      if (closing) return "closed" as const;
+      await sleep(Math.min(activationPollMs, Math.max(1, deadline - now())));
+    }
+    return "timed_out" as const;
+  };
+
+  const terminalActivation = (state: ActivationResult["state"], message: string) => {
+    const metadata = status.activation.metadata;
+    if (!metadata) return;
+    const at = timestamp();
+    saveActivation({
+      ...status.activation,
+      state,
+      message,
+      updatedAt: at,
+      deadlineAt: null,
+      lastResult: { tag: metadata.identity.tag, state, message, at },
+    });
+  };
+
+  const recoverPrevious = async () => {
+    const activation = status.activation;
+    const previousPath = activation.previousPath;
+    const previousMetadata = activation.previousMetadata;
+    if (!previousPath || !previousMetadata) {
+      terminalActivation("rollback_failed", `${activation.failureMessage ?? "Atlas activation failed"} The previous release identity is unavailable; automatic rollback could not be verified.`);
+      return;
+    }
+    try {
+      if (activation.state === "selecting_previous") {
+        selectRelease(previousPath);
+        activationProgress("restarting_previous", "The previous Atlas release was selected; restarting it now.");
+      }
+      if (status.activation.state === "restarting_previous") {
+        if (!await controlAtlas("start")) {
+          terminalActivation("rollback_failed", `${status.activation.failureMessage ?? "Atlas activation failed"} The previous release was selected but could not be started.`);
+          return;
+        }
+        activationProgress("validating_previous", "Waiting for the previous Atlas release to recover.");
+      }
+      if (status.activation.state === "validating_previous") {
+        const outcome = await waitForHealth(previousMetadata, status.activation.deadlineAt);
+        if (outcome === "closed") return;
+        if (outcome !== "healthy") {
+          terminalActivation("rollback_failed", `${status.activation.failureMessage ?? "Atlas activation failed"} The previous release did not report its expected identity and healthy storage before the recovery deadline.`);
+          return;
+        }
+        terminalActivation("rolled_back", `${status.activation.failureMessage ?? "Atlas activation failed"} The previous release recovered successfully.`);
+      }
+    } catch {
+      if (!closing) terminalActivation("rollback_failed", `${status.activation.failureMessage ?? "Atlas activation failed"} The previous release could not be selected and verified.`);
+    }
+  };
+
+  const failAndRollback = async (message: string) => {
+    const metadata = status.activation.metadata;
+    if (!metadata) return;
+    const failedTags = [...new Set([...status.activation.failedTags, metadata.identity.tag])];
+    saveActivation({
+      ...status.activation,
+      state: "selecting_previous",
+      message: `${message} Restoring the previous Atlas release.`,
+      failureMessage: message,
+      failedTags,
+      updatedAt: timestamp(),
+      deadlineAt: null,
+    });
+    await recoverPrevious();
+  };
+
+  const activateCurrent = async () => {
+    if (activating) return activating;
+    activating = (async () => {
+      if (["selecting_previous", "restarting_previous", "validating_previous"].includes(status.activation.state)) {
+        await recoverPrevious();
+        return;
+      }
+      if (!["requested", "stopping", "selecting", "starting", "validating"].includes(status.activation.state)) return;
+      const metadata = status.activation.metadata;
+      if (!metadata) return;
+      try {
+        if (["requested", "stopping"].includes(status.activation.state)) {
+          activationProgress("stopping", "Stopping Atlas while OpenCode and credential serving continue.");
+          if (!await controlAtlas("stop")) {
+            await failAndRollback("Atlas could not be stopped for activation.");
+            return;
+          }
+          if (closing) return;
+          activationProgress("selecting", "Selecting the complete staged Atlas release.");
+        }
+        if (status.activation.state === "selecting") {
+          const path = candidatePath(metadata);
+          if (!sameMetadata(releaseMetadataAt(path), metadata)) throw new Error("The staged release identity changed before activation.");
+          selectRelease(path);
+          activationProgress("starting", "The candidate Atlas release was selected; starting it now.");
+        }
+        if (status.activation.state === "starting") {
+          if (!await controlAtlas("start")) {
+            await failAndRollback("The candidate Atlas release failed to start.");
+            return;
+          }
+          if (closing) return;
+          activationProgress("validating", "Waiting for the candidate to report its exact identity and healthy Atlas storage.");
+        }
+        if (status.activation.state === "validating") {
+          const outcome = await waitForHealth(metadata, status.activation.deadlineAt);
+          if (outcome === "closed") return;
+          if (outcome !== "healthy") {
+            await failAndRollback("The candidate did not report its expected identity and healthy Atlas storage within 60 seconds.");
+            return;
+          }
+          terminalActivation("succeeded", `Atlas ${metadata.identity.tag} was activated and verified.`);
+        }
+      } catch {
+        if (!closing) await failAndRollback("The candidate Atlas release could not be selected or verified.");
+      }
+    })().finally(() => {
+      activating = undefined;
+    });
+    return activating;
+  };
 
   const setProgress = (state: UpdaterStatus["state"], message: string) => save({
     ...status,
@@ -314,7 +617,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
 
   const requestStage = (metadataValue: unknown) => {
     const metadata = assertReleaseMetadata(metadataValue);
-    if (activeStates.has(status.state)) return status;
+    if (activeStates.has(status.state) || activationInProgress(status)) return status;
     const at = timestamp();
     save({
       schemaVersion: 1,
@@ -326,12 +629,82 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
       message: "Release staging was requested.",
       requirements: requirementsFor(metadata, hostRuntime(metadata)),
       lastResult: status.lastResult,
+      activation: status.activation,
     });
     void runStage();
     return status;
   };
 
+  const prepareActivation = (metadataValue: unknown, retryValue: unknown) => {
+    const metadata = assertReleaseMetadata(metadataValue);
+    if (typeof retryValue !== "boolean") throw new Error("Activation retry value is invalid");
+    if (activationInProgress(status)) {
+      if (sameMetadata(status.activation.metadata, metadata) && status.activation.state === "awaiting_checkpoint") return status;
+      throw new Error("Another Atlas activation is already in progress.");
+    }
+    const finalPath = candidatePath(metadata);
+    if (status.state !== "staged" || status.stagedPath !== finalPath || !sameMetadata(status.metadata, metadata) ||
+        status.requirements === null || status.requirements.unmet.length > 0) {
+      throw new Error("The requested release is not fully staged and host-runtime eligible.");
+    }
+    if (!metadata.rollback.codeOnlyCompatible) throw new Error("The requested release requires manual maintenance.");
+    if (!existsSync(finalPath) || realpathSync(finalPath) !== finalPath || !lstatSync(finalPath).isDirectory() ||
+        !sameMetadata(releaseMetadataAt(finalPath), metadata)) {
+      throw new Error("The staged release identity could not be verified.");
+    }
+    const previous = selectedRelease();
+    if (previous.path === finalPath) throw new Error("The requested release is already active.");
+    const suppressed = status.activation.failedTags.includes(metadata.identity.tag);
+    if (suppressed && !retryValue) throw new Error("This failed release requires an explicit Retry.");
+    if (!suppressed && retryValue) throw new Error("This release does not require Retry.");
+    const at = timestamp();
+    saveActivation({
+      ...status.activation,
+      state: "awaiting_checkpoint",
+      metadata,
+      previousPath: previous.path,
+      previousMetadata: previous.metadata,
+      requestedAt: at,
+      updatedAt: at,
+      deadlineAt: null,
+      message: "Approval was recorded; waiting for Atlas preparation and handoff to reach a safe checkpoint.",
+      failureMessage: null,
+      retry: retryValue,
+    });
+    return status;
+  };
+
+  const beginActivation = (metadataValue: unknown) => {
+    const metadata = assertReleaseMetadata(metadataValue);
+    if (sameMetadata(status.activation.metadata, metadata) &&
+        ["requested", "stopping", "selecting", "starting", "validating", "selecting_previous", "restarting_previous", "validating_previous"].includes(status.activation.state)) {
+      return status;
+    }
+    if (status.activation.state !== "awaiting_checkpoint" || !sameMetadata(status.activation.metadata, metadata)) {
+      throw new Error("Activation has no matching confirmed safe checkpoint.");
+    }
+    activationProgress("requested", "The safe checkpoint is confirmed; host activation was requested.");
+    void activateCurrent();
+    return status;
+  };
+
+  const abandonActivation = (metadataValue: unknown, messageValue: unknown) => {
+    const metadata = assertReleaseMetadata(metadataValue);
+    if (typeof messageValue !== "string" || !messageValue || messageValue.length > 2_000) {
+      throw new Error("Activation abandonment reason is invalid");
+    }
+    if (sameMetadata(status.activation.metadata, metadata) && ["abandoned", "succeeded", "rolled_back", "rollback_failed"].includes(status.activation.state)) {
+      return status;
+    }
+    if (status.activation.state !== "awaiting_checkpoint" || !sameMetadata(status.activation.metadata, metadata)) {
+      throw new Error("Activation cannot be abandoned from its current state.");
+    }
+    terminalActivation("abandoned", messageValue);
+    return status;
+  };
+
   const close = () => {
+    closing = true;
     const current = server;
     if (!current) return;
     server = undefined;
@@ -349,6 +722,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
 
   const start = async () => {
     if (server) return;
+    closing = false;
     const key = readKey(keyPath);
     mkdirSync(dirname(socketPath), { recursive: true, mode: 0o750 });
     if (existsSync(socketPath)) {
@@ -373,7 +747,13 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
               ? { ok: true, status }
               : request.operation === "stage"
                 ? { ok: true, status: requestStage(request.metadata) }
-                : { ok: false, error: "Updater request was rejected." };
+                : request.operation === "prepare_activation"
+                  ? { ok: true, status: prepareActivation(request.metadata, request.retry) }
+                  : request.operation === "activate"
+                    ? { ok: true, status: beginActivation(request.metadata) }
+                    : request.operation === "abandon_activation"
+                      ? { ok: true, status: abandonActivation(request.metadata, request.message) }
+                      : { ok: false, error: "Updater request was rejected." };
           } catch {
             response = { ok: false, error: "Updater request was rejected." };
           }
@@ -391,9 +771,14 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
       });
     });
     if (activeStates.has(status.state) && status.metadata) void runStage();
+    if (status.activation.state === "awaiting_checkpoint" && status.activation.metadata) {
+      abandonActivation(status.activation.metadata, "Activation was abandoned because the updater restarted before Atlas confirmed a safe checkpoint.");
+    } else if (activationInProgress(status)) {
+      void activateCurrent();
+    }
   };
 
-  return { start, close, status: () => status, requestStage };
+  return { start, close, status: () => status, requestStage, prepareActivation, beginActivation, abandonActivation };
 };
 
 export type UpdaterClientOptions = { socketPath?: string; keyPath?: string };
@@ -401,7 +786,12 @@ export type UpdaterClientOptions = { socketPath?: string; keyPath?: string };
 export const createUpdaterClient = (options: UpdaterClientOptions = {}): UpdaterClient => {
   const socketPath = resolve(options.socketPath ?? process.env.ATLAS_UPDATER_SOCKET ?? DEFAULT_SOCKET_PATH);
   const keyPath = resolve(options.keyPath ?? process.env.ATLAS_UPDATER_KEY_PATH ?? DEFAULT_KEY_PATH);
-  const request = async (payload: { operation: "status" } | { operation: "stage"; metadata: ReleaseMetadata }) => {
+  const request = async (payload:
+    | { operation: "status" }
+    | { operation: "stage"; metadata: ReleaseMetadata }
+    | { operation: "prepare_activation"; metadata: ReleaseMetadata; retry: boolean }
+    | { operation: "activate"; metadata: ReleaseMetadata }
+    | { operation: "abandon_activation"; metadata: ReleaseMetadata; message: string }) => {
     const encoded = `${JSON.stringify({ ...payload, key: readKey(keyPath) })}\n`;
     if (Buffer.byteLength(encoded) > MAX_MESSAGE_BYTES) throw new Error("Updater request is too large");
     return await new Promise<UpdaterStatus>((resolveStatus, reject) => {
@@ -439,5 +829,8 @@ export const createUpdaterClient = (options: UpdaterClientOptions = {}): Updater
   return {
     status: () => request({ operation: "status" }),
     stage: (metadata) => request({ operation: "stage", metadata }),
+    prepareActivation: (metadata, retry) => request({ operation: "prepare_activation", metadata, retry }),
+    activate: (metadata) => request({ operation: "activate", metadata }),
+    abandonActivation: (metadata, message) => request({ operation: "abandon_activation", metadata, message }),
   };
 };
