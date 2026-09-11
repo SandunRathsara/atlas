@@ -263,6 +263,41 @@ export type Session = {
   updatedAt: string;
 };
 
+export type InboxRow = {
+  repositoryId: string;
+  repositoryName: string;
+  repositoryFullName: string;
+  specGithubId: string;
+  issueNumber: string;
+  title: string;
+  htmlUrl: string;
+  session: null | {
+    atlasId: string;
+    state: SessionState;
+    stale: boolean;
+    submittedAt: string;
+    terminalAt: string | null;
+  };
+  group: "needs_you" | "in_progress" | "not_started" | "settled";
+  unread: boolean;
+  updatedAt: string;
+};
+
+export type Inbox = {
+  rows: InboxRow[];
+  settledTotal: number;
+  settledNew: number;
+};
+
+const inboxGroup = (state: SessionState | null): InboxRow["group"] => {
+  if (state === null) return "not_started";
+  if (state === "waiting") return "needs_you";
+  if (state === "queued" || state === "preparing" || state === "running" || state === "idle") {
+    return "in_progress";
+  }
+  return "settled";
+};
+
 export type QueueSessionInput = {
   atlasId: string;
   repositoryId: string;
@@ -3598,6 +3633,138 @@ export const createPersistence = (options: PersistenceOptions) => {
     return rows.map(toSession);
   };
 
+  const terminalAtSql = `
+    CASE WHEN s.state IN ('succeeded', 'failed', 'interrupted', 'failed_setup')
+      THEN COALESCE(
+        (SELECT MIN(h.occurred_at) FROM session_history h
+         WHERE h.session_id = s.atlas_id AND h.event_kind = 'terminal'),
+        s.updated_at)
+      ELSE NULL
+    END`;
+
+  const listInbox = (options: { repositoryId?: string; lastVisitAt?: string } = {}): Inbox => {
+    type InboxQueryRow = {
+      repository_id: string;
+      repository_name: string;
+      repository_full_name: string;
+      spec_github_id: string;
+      issue_number: string;
+      title: string;
+      html_url: string;
+      updated_at: string;
+      atlas_id: string | null;
+      state: SessionState | null;
+      opencode_freshness: OpenCodeFreshness | null;
+      submitted_at: string | null;
+      terminal_at: string | null;
+    };
+    const queryRows = database.query(`
+      SELECT
+        spec.repository_id AS repository_id,
+        repo.name AS repository_name,
+        repo.full_name AS repository_full_name,
+        spec.github_id AS spec_github_id,
+        spec.issue_number AS issue_number,
+        spec.title AS title,
+        spec.html_url AS html_url,
+        COALESCE(s.updated_at, spec.updated_at, spec.observed_at) AS updated_at,
+        s.atlas_id AS atlas_id,
+        s.state AS state,
+        s.opencode_freshness AS opencode_freshness,
+        s.submitted_at AS submitted_at,
+        ${terminalAtSql} AS terminal_at
+      FROM specs spec
+      JOIN repositories repo ON repo.github_id = spec.repository_id
+      LEFT JOIN sessions s ON s.atlas_id = (
+        SELECT atlas_id FROM sessions
+        WHERE repository_id = spec.repository_id AND spec_github_id = spec.github_id
+        ORDER BY submission_order DESC
+        LIMIT 1
+      )
+      WHERE spec.was_spec = 1
+        AND spec.is_current = 1
+        AND spec.state = 'open'
+        AND spec.has_spec_label = 1
+        AND spec.is_pull_request = 0
+        AND repo.removed_at IS NULL
+        AND (? = 0 OR spec.repository_id = ?)
+    `).all(options.repositoryId ? 1 : 0, options.repositoryId ?? "") as InboxQueryRow[];
+
+    const lastVisitAt = options.lastVisitAt;
+    const mapped = queryRows.map((row): InboxRow => {
+      const session = row.atlas_id === null ? null : {
+        atlasId: row.atlas_id,
+        state: row.state!,
+        stale: row.opencode_freshness === "stale",
+        submittedAt: row.submitted_at!,
+        terminalAt: row.terminal_at,
+      };
+      const group = inboxGroup(session?.state ?? null);
+      return {
+        repositoryId: row.repository_id,
+        repositoryName: row.repository_name,
+        repositoryFullName: row.repository_full_name,
+        specGithubId: row.spec_github_id,
+        issueNumber: row.issue_number,
+        title: row.title,
+        htmlUrl: row.html_url,
+        session,
+        group,
+        unread: group === "settled" && Boolean(lastVisitAt) && row.terminal_at !== null &&
+          row.terminal_at > lastVisitAt!,
+        updatedAt: row.updated_at,
+      };
+    });
+
+    const settled = mapped
+      .filter((row) => row.group === "settled")
+      .sort((a, b) => (a.session!.terminalAt! < b.session!.terminalAt! ? 1 : a.session!.terminalAt! > b.session!.terminalAt! ? -1 : 0));
+    const keptSettled = new Set(settled.slice(0, 10).map((row) => row.specGithubId));
+    const groupRank = { needs_you: 0, in_progress: 1, not_started: 2, settled: 3 } as const;
+    const rows = mapped
+      .filter((row) => row.group !== "settled" || keptSettled.has(row.specGithubId))
+      .sort((a, b) => {
+        const byGroup = groupRank[a.group] - groupRank[b.group];
+        if (byGroup !== 0) return byGroup;
+        return a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0;
+      });
+
+    return {
+      rows,
+      settledTotal: settled.length,
+      settledNew: settled.filter((row) => row.unread).length,
+    };
+  };
+
+  const findLandingSession = (lastVisitAt: string) => {
+    if (lastVisitAt) {
+      const terminal = database.query(`
+        SELECT atlas_id FROM (
+          SELECT s.atlas_id AS atlas_id, ${terminalAtSql} AS terminal_at
+          FROM sessions s
+          JOIN repositories repo ON repo.github_id = s.repository_id
+          WHERE repo.removed_at IS NULL
+            AND s.state IN ('succeeded', 'failed', 'interrupted', 'failed_setup')
+        ) AS landing
+        WHERE terminal_at > ?
+        ORDER BY terminal_at ASC
+        LIMIT 1
+      `).get(lastVisitAt) as { atlas_id: string } | null;
+      if (terminal) return getSession(terminal.atlas_id) ?? null;
+    }
+
+    const unfinished = database.query(`
+      SELECT s.atlas_id AS atlas_id
+      FROM sessions s
+      JOIN repositories repo ON repo.github_id = s.repository_id
+      WHERE repo.removed_at IS NULL
+        AND s.state IN ('queued', 'preparing', 'running', 'waiting', 'idle')
+      ORDER BY CASE WHEN s.state = 'waiting' THEN 0 ELSE 1 END, s.submitted_at ASC
+      LIMIT 1
+    `).get() as { atlas_id: string } | null;
+    return unfinished ? getSession(unfinished.atlas_id) ?? null : null;
+  };
+
   return {
     database,
     close: () => database.close(),
@@ -3652,6 +3819,8 @@ export const createPersistence = (options: PersistenceOptions) => {
     getSessionByOpenCodeSessionId,
     listSessions,
     listSessionsForSpec,
+    listInbox,
+    findLandingSession,
   };
 };
 
