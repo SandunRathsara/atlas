@@ -309,6 +309,8 @@ try {
       stop: () => undefined,
       enqueue: () => undefined,
       process: async () => undefined,
+      pauseForUpdate: async () => undefined,
+      resumeFromUpdate: () => undefined,
       getClient: async () => { throw new Error("not ready"); },
       isReady: () => false,
       readiness: () => ({ ready: false, state: "stale" as const, reason: "not ready", version: undefined }),

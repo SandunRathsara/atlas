@@ -9,7 +9,7 @@ Answers: where is today's shipped implementation? Organized by capability and co
 | `src/server.ts` | Process entry. Loads env, starts credential supplier, SQLite, GitHub client, refresh coordinator, UI + webhook `Bun.serve` listeners, SIGINT/SIGTERM shutdown. |
 | `package.json` `dev` / `start` | `bun run build:css` then `bun --watch src/server.ts` or `bun src/server.ts`. |
 | `justfile#dev` | Local bootstrap then `bun run dev`. `justfile#checklist` opens the bearings previewer. |
-| `src/app.ts#createApp` | Private UI Hono app. |
+| `src/app.ts#createApp` | Private UI Hono app; returned `AtlasApp.updatePause` is the coordinated preparation/handoff activation prerequisite. |
 | `src/webhook.ts#createWebhookApp` | Webhook-only Hono app. |
 | `scripts/atlas-gh.ts` | Scoped `gh` wrapper used by `deploy/bin/gh`. |
 | `scripts/atlas-git-credential.ts` | Git credential helper used by preparation and `deploy/bin/git-credential-atlas`. |
@@ -96,13 +96,17 @@ Unix-socket supplier. Repository-scoped App tokens. `src/config.ts#loadGitHubEnv
 
 ### Preparation — `src/preparation.ts#createPreparationService`
 
-Returns `PreparationService`: `{ start, stop, enqueue, prepareNext, credentials, sessionRoot, capacity }`. Also `DEFAULT_MIN_FREE_BYTES`, `hasRequiredFreeSpace`, `cloneGitEnvironment`.
+Returns `PreparationService`: `{ start, stop, enqueue, prepareNext, pauseForUpdate, resumeFromUpdate, credentials, sessionRoot, capacity }`. Also `DEFAULT_MIN_FREE_BYTES`, `hasRequiredFreeSpace`, `cloneGitEnvironment`.
 
 Clones under `ATLAS_SESSION_ROOT`. Default capacity 1. Uses `scripts/atlas-git-credential.ts`. Strips inherited Git/GitHub tokens from clone env. May gate on `src/recovery-status.ts#readRecoveryStatus`.
 
 ### OpenCode handoff — `src/opencode.ts#createOpenCodeHandoffService`
 
-Returns `{ start, stop, enqueue, process, getClient, isReady, readiness, onEvent, onTransport, transportState }`. Discovers `@opencode-ai/client` `Service` without a server-version filter, validates endpoint/health/events, and exposes the observed version through readiness when available. Checkpoints: intent → events → create once → associate once → one exact prompt → reconcile. Does not store a transcript.
+Returns `{ start, stop, enqueue, process, pauseForUpdate, resumeFromUpdate, getClient, isReady, readiness, onEvent, onTransport, transportState }`. Discovers `@opencode-ai/client` `Service` without a server-version filter, validates endpoint/health/events, and exposes the observed version through readiness when available. Checkpoints: intent → events → create once → associate once → one exact prompt → reconcile. Update pause drains create/associate/prompt work but permits prompt-acceptance evidence and execution reconciliation that cannot duplicate an effect. Does not store a transcript.
+
+### Safe update pause — `src/update-pause.ts#createUpdatePauseCoordinator`
+
+Returns `{ pause, state }`. `pause()` synchronously holds preparation and handoff, coalesces overlapping requests, and resolves to `paused` with an idempotent generation-scoped `resume`, or to `timed_out` after `UPDATE_PAUSE_TIMEOUT_MS` (five minutes) after automatically removing only this pause. `AtlasApp.updatePause` exposes this boundary for the later activation workflow.
 
 ### Session viewer — `src/session-viewer.ts#createSessionViewerService`
 
@@ -143,6 +147,8 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 
 **Start Session.** GET `.../sessions/new` → refresh access/specs/PRs → `src/views/sessions.ts#renderStartSessionPage` + `src/views/targets.ts#startTargetOptions`. POST → CSRF + target observation match → `Persistence.queueSession` → `PreparationService.enqueue`. Duplicate unfinished Spec → 409. `createPreparationService.prepareNext` → `claimPreparation` → clone via `cloneGitEnvironment` → checkpoints through `prepared`. `createOpenCodeHandoffService` then intent → events → create → associate → one prompt → `Persistence.reconcileOpenCode`. Terminal → `refreshPullRequests` + `preparation.enqueue`.
 
+**Safe update pause.** Later activation code calls `AtlasApp.updatePause.pause()` → `src/update-pause.ts#createUpdatePauseCoordinator` synchronously holds both services → preparation finishes any active cycle at a durable preparation/uncertainty checkpoint while handoff finishes only active create/associate/prompt work → result is `paused` with scoped `resume`. Prompt/evidence and execution reconciliation continue, so Running/Waiting/Idle Sessions do not block. At five minutes the result is `timed_out`, both update holds are removed, and unsafe in-flight work is never aborted.
+
 **All Sessions.** GET `/sessions` → `persistence.listRepositories()` → `listSessions(repositoryId, filter)` for every enrolled, non-removed Repository → flatten and sort by submission order → `renderSessionsPage` in global mode. `?status=all` includes terminal history; default `active` includes every unfinished state.
 
 **Webhook → refresh.** `src/server.ts` webhook listener → `createWebhookApp` POST `/webhooks/github` → `verifyGitHubSignature` → `Persistence.acceptWebhookDelivery` → `RefreshCoordinator.wake`.
@@ -178,6 +184,8 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 
 **Filesystem:** Session directories under `ATLAS_SESSION_ROOT`; credential scopes in `session-scopes.json`; supplier socket `0600`.
 
+**Update pause:** process-local generation and service hold flags only. Session identity, prompt, target, ordering, preparation/handoff uncertainty, execution-slot ownership, and reservations remain in existing SQLite rows/checkpoints.
+
 ## Change Hazards
 
 - **Credential leakage.** `cloneGitEnvironment` strips inherited tokens. Supplier socket `0600`. `scripts/atlas-gh.ts` forbids `auth token` / login. Never log tokens, keys, prompts, or auth headers.
@@ -189,6 +197,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 - **WAL SQLite.** Required except in-memory. One writer. `restoreStartup` reclaims unfinished ownership; do not skip health restore.
 - **One unfinished Session per Spec.** Unique index plus `queueSession` `unfinished` result. Do not add a second-start path that bypasses it.
 - **Capacity and disk.** Default capacity 1. Pause on low free space or stale/paused recovery status. `ATLAS_ADMISSION_PAUSED` is operator-controlled.
+- **Update pause ownership.** Resume and timeout clear only the process-local update hold. Keep operator, capacity, storage, recovery, persistence, and readiness gates independent. Never count OpenCode execution/reconciliation as drain work or abort an uncertain external operation to meet the deadline.
 - **Inbox refresh and selection.** `/inbox/list` replaces the whole list root every 30 seconds; keep the stable `data-inbox-scroll`/focus restoration contract, `HX-Current-URL` selection mapping, and `hx-push-url="false"` behavior together.
 - **Inbox truthfulness.** `listInbox` keeps only current Specs and the latest Session, ranks groups/states before `updatedAt`, uses terminal history for unread time, and must not turn mixed Specs refresh failures or unknown access into an empty list or a revoked-access claim.
 
@@ -206,6 +215,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 | `bun run verify:issue32` | Refresh coordinator retry backoff. |
 | `bun run verify:issue29` | Session viewer hydrate, SSE (no transcript leak). |
 | `bun run verify:issue52` | Real-client local-server discovery, runtime handoff/failure checkpoints, direct health requests, and deployment health exit contracts. |
+| `bun run verify:issue56` | Real-SQLite coordinated preparation/handoff pause, controlled clone/prompt effects, timeout/resume, uncertainty/no-duplicate behavior, independent restrictions, and Running/Waiting/Idle non-blocking behavior. |
 | `bun run verify:inbox` | Inbox Spec projection, latest Session, group/state ordering, Settled cap, terminal unread time, and landing selection. |
 | `bun run verify:landing` | GET `/` landing redirects, per-browser `atlas_visit` / `atlas_inbox`, and canonical `/inbox` filter URL. |
 | `bun run verify:inbox-shell` (`scripts/verify-inbox-shell.ts`) | Desktop sidebar and navigation landmarks, canonical/filter cookie behavior, selected Spec identity, `/inbox/list` fragment contract, access semantics, and exact `status=all` utility state. |
@@ -217,4 +227,4 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 | `bash deploy/verify-opencode-commands.sh` | Isolated server-only staging/integrity, `current` preflight selection, no-activation, and observed-version WAL command regressions. |
 | `bash deploy/verify-sqlite-wal.sh` | Pinned Bun and selected OpenCode embedded-SQLite WAL safeguards. |
 
-<!-- repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2 -->
+<!-- repo-map-synced: 60d5a38df21d5b840c768b36ce37aacecf90e059 -->

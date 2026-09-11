@@ -182,9 +182,30 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   let transportState: "connected" | "stale" = "stale";
   let readinessReason: string | undefined = "OpenCode connection is not established.";
   let observedVersion: string | undefined;
+  let updatePaused = false;
+  let activeHandoffs = 0;
+  const updatePauseWaiters = new Set<() => void>();
   const eventListeners = new Set<(event: OpenCodeEvent) => void>();
   const transportListeners = new Set<(state: "connected" | "stale", reason?: string) => void>();
   const evidence = new Map<string, EventEvidence>();
+
+  const beginHandoff = () => {
+    if (updatePaused) return false;
+    activeHandoffs += 1;
+    return true;
+  };
+
+  const finishHandoff = () => {
+    if (activeHandoffs === 0) return;
+    activeHandoffs -= 1;
+    if (activeHandoffs !== 0) return;
+    for (const resolvePause of updatePauseWaiters) resolvePause();
+    updatePauseWaiters.clear();
+    if (!updatePaused && pendingWake && !running && !stopped) {
+      pendingWake = false;
+      queueMicrotask(wake);
+    }
+  };
 
   const notifyEvent = (event: OpenCodeEvent) => {
     for (const listener of eventListeners) {
@@ -554,6 +575,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     let session = options.persistence.getSession(initial.atlasId) ?? initial;
     if (session.preparationCheckpoint !== "prepared" && session.handoffCheckpoint === "not_started") return;
     if (process.env.ATLAS_ADMISSION_PAUSED === "1" && ["not_started", "intent_saved", "events_consuming"].includes(session.handoffCheckpoint)) return;
+    if (updatePaused && !["prompt_sent", "prompt_accepted"].includes(session.handoffCheckpoint)) return;
 
     if (session.handoffCheckpoint === "not_started") {
       session = saveIntent(session) ?? session;
@@ -569,12 +591,16 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     }
 
     if (session.handoffCheckpoint === "events_consuming") {
+      if (!beginHandoff()) return;
       session = setHandoffCheckpoint(
         session,
         "create_sent",
         "OpenCode Session creation was sent once; Atlas will reconcile the saved identity instead of retrying it.",
       ) ?? session;
-      if (session.handoffCheckpoint !== "create_sent" || !session.opencodeIntendedSessionId || !session.directory) return;
+      if (session.handoffCheckpoint !== "create_sent" || !session.opencodeIntendedSessionId || !session.directory) {
+        finishHandoff();
+        return;
+      }
       try {
         const created = await activeClient.session.create({
           id: session.opencodeIntendedSessionId,
@@ -592,56 +618,68 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
           "OpenCode Session creation response was not durably confirmed; inspect the saved identity before any retry.",
         );
         return;
+      } finally {
+        finishHandoff();
       }
     }
+    if (updatePaused && session.handoffCheckpoint === "create_confirmed") return;
 
     if (session.handoffCheckpoint === "create_sent" || session.handoffCheckpoint === "create_confirmed") {
-      const info = await requestSession(activeClient, session);
-      if (!info) {
-        markUnconfirmed(
-          session.atlasId,
-          "OpenCode Session creation or association is unconfirmed; Atlas will not create it again.",
-        );
-        return;
-      }
+      if (!beginHandoff()) return;
       try {
-        if (session.handoffCheckpoint === "create_sent") {
-          const created = setHandoffCreated(session.atlasId, info.id);
-          if (!created) {
+        const info = await requestSession(activeClient, session);
+        if (!info) {
+          markUnconfirmed(
+            session.atlasId,
+            "OpenCode Session creation or association is unconfirmed; Atlas will not create it again.",
+          );
+          return;
+        }
+        try {
+          if (session.handoffCheckpoint === "create_sent") {
+            const created = setHandoffCreated(session.atlasId, info.id);
+            if (!created) {
+              markUnconfirmed(
+                session.atlasId,
+                "OpenCode Session association was observed but could not be durably saved; Atlas will not prompt or create it again.",
+              );
+              return;
+            }
+            session = created;
+          }
+          const associated = confirmHandoffAssociation(session.atlasId);
+          if (!associated) {
             markUnconfirmed(
               session.atlasId,
               "OpenCode Session association was observed but could not be durably saved; Atlas will not prompt or create it again.",
             );
             return;
           }
-          session = created;
-        }
-        const associated = confirmHandoffAssociation(session.atlasId);
-        if (!associated) {
+          session = associated;
+        } catch {
           markUnconfirmed(
             session.atlasId,
             "OpenCode Session association was observed but could not be durably saved; Atlas will not prompt or create it again.",
           );
           return;
         }
-        session = associated;
-      } catch {
-        markUnconfirmed(
-          session.atlasId,
-          "OpenCode Session association was observed but could not be durably saved; Atlas will not prompt or create it again.",
-        );
-        return;
+      } finally {
+        finishHandoff();
       }
     }
+    if (updatePaused && session.handoffCheckpoint === "associated") return;
 
     if (session.handoffCheckpoint === "associated") {
-      if (process.env.ATLAS_ADMISSION_PAUSED === "1") return;
+      if (process.env.ATLAS_ADMISSION_PAUSED === "1" || !beginHandoff()) return;
       session = setHandoffCheckpoint(
         session,
         "prompt_sent",
         "The initial prompt was sent once; Atlas will reconcile message/inbox evidence instead of resending it.",
       ) ?? session;
-      if (session.handoffCheckpoint !== "prompt_sent" || !session.openCodeSessionId || !session.initialMessageId || !session.exactMessage) return;
+      if (session.handoffCheckpoint !== "prompt_sent" || !session.openCodeSessionId || !session.initialMessageId || !session.exactMessage) {
+        finishHandoff();
+        return;
+      }
       try {
         const accepted = await activeClient.session.prompt({
           sessionID: session.openCodeSessionId,
@@ -664,6 +702,8 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
           "Initial prompt acceptance was not durably confirmed; Atlas will not resend the prompt.",
         );
         return;
+      } finally {
+        finishHandoff();
       }
     }
 
@@ -734,8 +774,8 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   };
 
   const wake = () => {
-    if (stopped || running) {
-      if (running) pendingWake = true;
+    if (stopped || running || activeHandoffs > 0) {
+      if (running || activeHandoffs > 0) pendingWake = true;
       return;
     }
     running = true;
@@ -777,8 +817,21 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     transportState = "stale";
   };
 
+  const pauseForUpdate = () => {
+    updatePaused = true;
+    return activeHandoffs === 0
+      ? Promise.resolve()
+      : new Promise<void>((resolvePause) => updatePauseWaiters.add(resolvePause));
+  };
+
+  const resumeFromUpdate = () => {
+    if (!updatePaused) return;
+    updatePaused = false;
+    enqueue();
+  };
+
   const enqueue = () => {
-    if (running) {
+    if (running || activeHandoffs > 0) {
       pendingWake = true;
       return;
     }
@@ -800,6 +853,8 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     stop,
     enqueue,
     process: runCycle,
+    pauseForUpdate,
+    resumeFromUpdate,
     getClient: ensureClient,
     isReady: () => Boolean(client && streamReady && transportState === "connected"),
     readiness: () => ({

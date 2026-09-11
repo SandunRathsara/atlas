@@ -108,6 +108,8 @@ const app = createApp({
     stop: () => undefined,
     enqueue: () => undefined,
     process: async () => undefined,
+    pauseForUpdate: async () => undefined,
+    resumeFromUpdate: () => undefined,
     getClient: async () => { throw new Error("unused in backoff check"); },
     onEvent: () => () => false,
     onTransport: () => () => false,

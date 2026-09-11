@@ -18,6 +18,7 @@ System_Boundary(atlas, "Atlas process") {
   Component(credentials, "Credential boundary", "src/credentials.ts#createCredentialBoundary", "Unix-socket App token supplier")
   Component(preparation, "Preparation", "src/preparation.ts#createPreparationService", "Clone Session directory, execution slot")
   Component(handoff, "OpenCode handoff", "src/opencode.ts#createOpenCodeHandoffService", "Create, associate, one prompt, reconcile")
+  Component(updatePause, "Safe update pause", "src/update-pause.ts#createUpdatePauseCoordinator", "Drain preparation/handoff without waiting for Agent execution")
   Component(viewer, "Session viewer", "src/session-viewer.ts#createSessionViewerService", "Hydrate OpenCode tree for display")
 }
 
@@ -43,6 +44,7 @@ Rel(ui, persistence, "read/write records")
 Rel(ui, sync, "request refresh")
 Rel(ui, preparation, "enqueue Session")
 Rel(ui, handoff, "start / events")
+Rel(ui, updatePause, "expose activation prerequisite")
 Rel(ui, viewer, "hydrate")
 Rel(webhook, persistence, "accept delivery")
 Rel(webhook, sync, "wake")
@@ -55,10 +57,12 @@ Rel(preparation, githubClient, "refresh before clone")
 Rel(preparation, sessionDirs, "git clone")
 Rel(handoff, persistence, "handoff checkpoints")
 Rel(handoff, opencode, "discover, create, prompt, events")
+Rel(updatePause, preparation, "pause / resume")
+Rel(updatePause, handoff, "pause / resume")
 Rel(viewer, opencode, "session.get / events")
 Rel(credentials, github, "mint installation tokens")
 Rel(githubClient, github, "read API")
 Rel(persistence, sqlite, "WAL")
 
-' repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2
+' repo-map-synced: 60d5a38df21d5b840c768b36ce37aacecf90e059
 @enduml

@@ -26,6 +26,7 @@ import { createPreparationService } from "./preparation.ts";
 import type { CredentialBoundary } from "./credentials.ts";
 import { createOpenCodeHandoffService } from "./opencode.ts";
 import type { OpenCodeHandoffService } from "./opencode.ts";
+import { createUpdatePauseCoordinator } from "./update-pause.ts";
 import {
   createSessionViewerService,
   ViewerScopeError,
@@ -485,6 +486,7 @@ export const createApp = (options: AppOptions) => {
     },
   });
   openCode = openCodeService;
+  const updatePause = createUpdatePauseCoordinator({ preparation, openCode: openCodeService });
   const sessionViewer = createSessionViewerService(openCodeService);
   openCodeService.onTransport((state) => {
     if (state === "connected") preparation.enqueue();
@@ -1847,7 +1849,7 @@ export const createApp = (options: AppOptions) => {
     return c.redirect("/login", 303);
   });
 
-  return app;
+  return Object.assign(app, { updatePause });
 };
 
 export type AtlasApp = ReturnType<typeof createApp>;
