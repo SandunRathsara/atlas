@@ -24,7 +24,7 @@ import {
 } from "./persistence.ts";
 import { createPreparationService } from "./preparation.ts";
 import type { CredentialBoundary } from "./credentials.ts";
-import { APPROVED_OPENCODE_VERSION, createOpenCodeHandoffService } from "./opencode.ts";
+import { createOpenCodeHandoffService } from "./opencode.ts";
 import type { OpenCodeHandoffService } from "./opencode.ts";
 import {
   createSessionViewerService,
@@ -495,10 +495,10 @@ export const createApp = (options: AppOptions) => {
   const persistenceReady = () => persistence.checkHealth();
   const currentOpenCodeReadiness = () => {
     const readiness = openCodeService.readiness?.();
-    if (readiness) return { ready: readiness.ready, reason: readiness.reason };
+    if (readiness) return { ready: readiness.ready, reason: readiness.reason, version: readiness.version };
     return {
       ready: openCodeService.transportState() === "connected",
-      reason: "The approved OpenCode service is unavailable or incompatible.",
+      reason: "The OpenCode service is unavailable or incompatible.",
     };
   };
 
@@ -524,10 +524,7 @@ export const createApp = (options: AppOptions) => {
       status: status === 200 ? "ok" : "degraded",
       atlas: { process: true },
       persistence: persistenceHealth,
-      openCode: {
-        ...openCodeReadiness,
-        expectedVersion: APPROVED_OPENCODE_VERSION,
-      },
+      openCode: openCodeReadiness,
     }, status);
   });
 

@@ -22,7 +22,7 @@ System_Boundary(atlas, "Atlas process") {
 }
 
 System_Ext(github, "GitHub", "App, issues labelled spec, PRs, native stacks, webhooks")
-System_Ext(opencode, "OpenCode V2", "Pinned 0.0.0-beta-19135; independent process")
+System_Ext(opencode, "OpenCode V2", "Independent process; server version is not a discovery gate")
 SystemDb_Ext(sqlite, "SQLite", "WAL file; Atlas-owned projections")
 Container_Ext(sessionDirs, "Session directories", "ATLAS_SESSION_ROOT clones")
 
@@ -60,5 +60,5 @@ Rel(credentials, github, "mint installation tokens")
 Rel(githubClient, github, "read API")
 Rel(persistence, sqlite, "WAL")
 
-' repo-map-synced: 1546f2d1ed3c9c58dca279e24a0b66d1de784525
+' repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2
 @enduml

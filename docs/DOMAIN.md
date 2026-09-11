@@ -67,7 +67,7 @@ Atlas projects GitHub issues labelled exactly `spec` (open, not a pull request) 
 
 1. Queue: CSRF-protected form with required prompt (max 20,000 characters) and an observed target. Duplicate `submission_id` with the same content is idempotent. An unfinished Session on that Spec is rejected.
 2. Prepare: global execution-slot capacity (default one). Clone a Session directory under `ATLAS_SESSION_ROOT` with a unique working branch. Pause when Session storage is missing, below the free-space floor (default 10 GiB), or host space status says pause. Production preparation mints a Repository-scoped GitHub App token; it never falls back to a weaker browse token.
-3. Handoff: discover the pinned OpenCode service, consume events, create once, associate once, send one exact initial message, reconcile HTTP state. Atlas does not store a transcript copy.
+3. Handoff: discover the independently running OpenCode service without filtering by server version, validate its endpoint/health/event stream, create once, associate once, send one exact initial message, and reconcile HTTP state. Atlas does not store a transcript copy.
 
 ### Webhook refresh
 
@@ -133,7 +133,7 @@ _Avoid_: Stall, timeout, hang
 - Blockers do not gate Session starts. Atlas does not yet display Blockers.
 - Specs are open GitHub issues with the exact label `spec` and are not pull requests. Atlas does not create that label.
 - Atlas never creates, changes, or submits GitHub Pull requests or stacks. Locally prepared branches are not native stack members.
-- Atlas never starts, upgrades, or replaces OpenCode. OpenCode must report the pinned baseline `0.0.0-beta-19135`.
+- Atlas never starts, upgrades, or replaces OpenCode. Server version is diagnostic rather than a discovery gate; Atlas uses the client installed in its release and retains conservative not-ready/stale behavior when that client cannot use the service.
 - Secrets and GitHub tokens never appear in HTML, URLs, arguments, prompts, or logs. Preparation never falls back to the browse installation token. If the App cannot grant requested writes, preparation stays queued instead of starting with a weaker token.
 - GitHub values used for browsing stay server-side. Inventory is filtered to the configured organization.
 - If GitHub is missing or fails, keep the enrolled Repository and the last complete Specs/PR projection.
@@ -157,4 +157,4 @@ _Avoid_: Stall, timeout, hang
 - Design guidelines do not introduce features or change business rules.
 - Phase 1 has no off-site backup. Snapshots cannot undo GitHub effects. Shared host identity `omega` is not hostile-agent isolation.
 
-<!-- repo-map-synced: 1546f2d1ed3c9c58dca279e24a0b66d1de784525 -->
+<!-- repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2 -->

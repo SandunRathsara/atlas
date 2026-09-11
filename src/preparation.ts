@@ -832,7 +832,7 @@ export const createPreparationService = (options: PreparationOptions) => {
 
     if (await resumePreparing()) return;
     if (options.isOpenCodeReady && !options.isOpenCodeReady()) {
-      if (queued[0]) setReason(queued[0], "Waiting for the approved OpenCode service (0.0.0-beta-19135) before admission.");
+      if (queued[0]) setReason(queued[0], "Waiting for the OpenCode service to become ready before admission.");
       return;
     }
     for (const session of queued) {

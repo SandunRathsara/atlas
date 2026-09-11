@@ -77,7 +77,7 @@ regular_file "$release_dir/deploy/pins.env"
 # shellcheck disable=SC1090
 . "$release_dir/deploy/pins.env"
 : "${ATLAS_BUN_BINARY:?Bun pin is missing}"
-: "${ATLAS_OPENCODE_BINARY:?OpenCode pin is missing}"
+: "${ATLAS_OPENCODE_BINARY:?OpenCode executable selection is missing}"
 : "${ATLAS_GIT_BINARY:?Git pin is missing}"
 : "${ATLAS_GIT_WRAPPER:?Git wrapper pin is missing}"
 : "${ATLAS_REAL_GH:?gh pin is missing}"

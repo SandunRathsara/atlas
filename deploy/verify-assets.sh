@@ -25,6 +25,7 @@ required=(
   "$root/atlas-snapshot.marker"
   "$root/lib/recovery-status.sh"
   "$root/restore-rehearsal.sh"
+  "$root/verify-opencode-commands.sh"
   "$root/verify-sqlite-wal.sh"
   "$root/stage-opencode.sh"
   "$root/stage-release.sh"
@@ -36,7 +37,7 @@ for path in "${required[@]}"; do
   test -f "$path" || { echo "missing deployment asset: $path" >&2; exit 1; }
 done
 
-for script in "$root/bin/gh" "$root/bin/git" "$root/bin/git-credential-atlas" "$root/capture-recovery-config.sh" "$root/check-health.sh" "$root/check-opencode.sh" "$root/check-space.sh" "$root/atlas-snapshot.sh" "$root/lib/recovery-status.sh" "$root/restore-rehearsal.sh" "$root/verify-sqlite-wal.sh" "$root/stage-opencode.sh" "$root/stage-release.sh"; do
+for script in "$root/bin/gh" "$root/bin/git" "$root/bin/git-credential-atlas" "$root/capture-recovery-config.sh" "$root/check-health.sh" "$root/check-opencode.sh" "$root/check-space.sh" "$root/atlas-snapshot.sh" "$root/lib/recovery-status.sh" "$root/restore-rehearsal.sh" "$root/verify-opencode-commands.sh" "$root/verify-sqlite-wal.sh" "$root/stage-opencode.sh" "$root/stage-release.sh"; do
   bash -n "$script"
 done
 
@@ -66,6 +67,7 @@ grep -Fq 'weekly_count -lt 4' "$root/atlas-snapshot.sh"
 
 grep -Fq -- '--log-level WARN serve --service --hostname 127.0.0.1' "$root/systemd/opencode.service"
 grep -Fq 'ExecStartPre=/opt/atlas/current/deploy/check-opencode.sh' "$root/systemd/opencode.service"
+grep -Fq 'ExecStart=/opt/atlas/tools/opencode/current/bin/opencode2 ' "$root/systemd/opencode.service"
 grep -Fq 'PATH=/opt/atlas/current/deploy/bin:' "$root/systemd/atlas.service"
 grep -Fq 'PATH=/opt/atlas/current/deploy/bin:' "$root/systemd/opencode.service"
 grep -Fq 'ATLAS_GIT_BINARY=/opt/atlas/current/deploy/bin/git' "$root/systemd/atlas.service"
@@ -86,18 +88,23 @@ grep -Fq 'ATLAS_BTRFS_METADATA_REQUIRED=1' "$root/atlas.env.example"
 grep -Fq 'ATLAS_RECOVERY_STATUS_PATH=/var/lib/atlas/recovery-status' "$root/atlas.env.example"
 grep -Fq 'ATLAS_RECOVERY_CONFIG_ROOT=/var/lib/atlas/recovery-config' "$root/atlas.env.example"
 grep -Fq 'ATLAS_GIT_BINARY=/opt/atlas/tools/git/2.55.0/bin/git' "$root/pins.env"
-grep -Fq 'ATLAS_OPENCODE_CLI_LINUX_X64_INTEGRITY=sha512-' "$root/pins.env"
-grep -Fq 'ATLAS_OPENCODE_CLIENT_INTEGRITY=sha512-' "$root/pins.env"
-grep -Fq 'ATLAS_OPENCODE_SCHEMA_INTEGRITY=sha512-' "$root/pins.env"
-grep -Fq 'ATLAS_OPENCODE_PROTOCOL_INTEGRITY=sha512-' "$root/pins.env"
+grep -Fq 'ATLAS_OPENCODE_BINARY=/opt/atlas/tools/opencode/current/bin/opencode2' "$root/pins.env"
+grep -Fq 'server_version=%s' "$root/stage-opencode.sh"
+grep -Fq 'registry_integrity=%s' "$root/stage-opencode.sh"
+if grep -Eq 'ATLAS_OPENCODE_(VERSION|CLIENT_VERSION|CLI_LINUX_X64_INTEGRITY|CLIENT_INTEGRITY|SCHEMA_INTEGRITY|PROTOCOL_INTEGRITY)=' "$root/pins.env"; then
+  echo "deployment manifest still pairs the OpenCode server with Atlas client packages" >&2
+  exit 1
+fi
+if grep -Eq '@opencode-ai/(client|schema|protocol)|systemctl' "$root/stage-opencode.sh" "$root/stage-release.sh"; then
+  echo "staging must not bundle Atlas client packages or manage OpenCode lifecycle" >&2
+  exit 1
+fi
 grep -Fq 'maxsize 100M' "$root/logrotate/atlas-opencode"
 grep -Fq 'rotate 10' "$root/logrotate/atlas-opencode"
 grep -Fq 'copytruncate' "$root/logrotate/atlas-opencode"
 grep -Fq 'SystemMaxUse=256M' "$root/journald/atlas.conf"
 grep -Fq 'MaxRetentionSec=14day' "$root/journald/atlas.conf"
 grep -Fq "ATLAS_BUN_VERSION=$ATLAS_BUN_VERSION" "$root/pins.env"
-grep -Fq "ATLAS_OPENCODE_VERSION=$ATLAS_OPENCODE_VERSION" "$root/pins.env"
-grep -Fq 'ATLAS_OPENCODE_CLIENT_VERSION=0.0.0-beta-19135' "$root/pins.env"
 if grep -Fq 'EnvironmentFile=' "$root/systemd/opencode.service"; then
   echo "OpenCode must not inherit Atlas secret environment" >&2
   exit 1
@@ -110,7 +117,7 @@ if command -v systemd-analyze >/dev/null 2>&1; then
     # The pinned host paths are intentionally absent during safe setup. Keep
     # systemd's syntax/dependency check, but do not pretend staged binaries
     # exist before the human cutover window.
-    unexpected=$(grep -Ev '^((atlas|opencode|atlas-snapshot|atlas-space-check)\.service: Command /opt/atlas/(current/deploy/(bin/git|check-opencode\.sh|atlas-snapshot\.sh|check-space\.sh)|tools/(bun/1\.3\.14/bin/bun|git/2\.55\.0/bin/git|opencode/0\.0\.0-beta-19135/bin/opencode2)) is not executable: No such file or directory)$' "$unit_output" || true)
+    unexpected=$(grep -Ev '^((atlas|opencode|atlas-snapshot|atlas-space-check)\.service: Command /opt/atlas/(current/deploy/(bin/git|check-opencode\.sh|atlas-snapshot\.sh|check-space\.sh)|tools/(bun/1\.3\.14/bin/bun|git/2\.55\.0/bin/git|opencode/current/bin/opencode2)) is not executable: No such file or directory)$' "$unit_output" || true)
     if [[ -n "$unexpected" ]]; then
       cat "$unit_output" >&2
       exit 1
