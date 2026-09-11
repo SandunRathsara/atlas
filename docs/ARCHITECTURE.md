@@ -6,7 +6,7 @@ Answers: how is the system technically shaped? Populated and kept current by `/r
 
 Inside this repository: the Atlas TypeScript process (private UI + loopback webhook), SQLite persistence, GitHub read client, credential supplier, Session clone/preparation, OpenCode handoff and viewer, server-rendered UI, and inert host deploy assets.
 
-Outside: GitHub (App, inventory, issues, PRs, native stacks, signed webhooks); an independently running OpenCode V2 process; the private host (systemd, Btrfs, Tailscale Serve/Funnel, pinned Bun/Git/gh/OpenCode binaries); operator-managed paths under `/opt/atlas`, `/var/lib/atlas`, `/etc/atlas`, `/var/backups/atlas`, and `/run/atlas`.
+Outside: GitHub (App, inventory, issues, PRs, native stacks, signed webhooks); an independently running OpenCode V2 process selected by the operator through `/opt/atlas/tools/opencode/current`; the private host (systemd, Btrfs, Tailscale Serve/Funnel, pinned Bun/Git/gh binaries); operator-managed paths under `/opt/atlas`, `/var/lib/atlas`, `/etc/atlas`, `/var/backups/atlas`, and `/run/atlas`.
 
 `deploy/` does not provision the host, enable units, move OpenCode data, or change Tailscale/firewall.
 

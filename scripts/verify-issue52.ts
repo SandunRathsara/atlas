@@ -9,7 +9,6 @@ import { createPersistence, type Persistence, type SpecInput } from "../src/pers
 type FixtureOptions = {
   health: unknown;
   healthText?: string;
-  healthStatus?: number;
   registration?: "primary" | "fallback";
   registrationVersion?: string;
   filePassword?: string;
@@ -47,8 +46,8 @@ const fixture = async (name: string, options: FixtureOptions) => {
       requests.push({ method: request.method, path: url.pathname, ...(body ? { body } : {}) });
 
       if (url.pathname === "/api/health") {
-        if (options.healthText !== undefined) return new Response(options.healthText, { status: options.healthStatus ?? 200, headers: { "Content-Type": "application/json" } });
-        return json(options.health, options.healthStatus);
+        if (options.healthText !== undefined) return new Response(options.healthText, { headers: { "Content-Type": "application/json" } });
+        return json(options.health);
       }
       if (url.pathname === "/api/event") {
         if (options.eventContentType) return new Response("{}", { headers: { "Content-Type": options.eventContentType } });
@@ -152,14 +151,20 @@ const preparedSession = (persistence: Persistence, id: string) => {
   assert.equal(persistence.setPreparationCheckpoint(id, "prepared", "Prepared for fixture handoff")?.preparationCheckpoint, "prepared");
 };
 
-const assertConnects = async (name: string, options: FixtureOptions, expectedVersion?: string) => {
+const withFixture = async (
+  name: string,
+  options: FixtureOptions,
+  run: (context: {
+    requests: RecordedRequest[];
+    persistence: Persistence;
+    service: ReturnType<typeof handoff>;
+  }) => Promise<void>,
+) => {
   const remote = await fixture(name, options);
   const persistence = createPersistence({ path: ":memory:" });
   const service = handoff(persistence, remote.serviceFile);
   try {
-    await service.getClient();
-    assert.equal(service.isReady(), true);
-    assert.equal(service.readiness().version, expectedVersion);
+    await run({ requests: remote.requests, persistence, service });
   } finally {
     service.stop();
     remote.stop();
@@ -167,81 +172,92 @@ const assertConnects = async (name: string, options: FixtureOptions, expectedVer
   }
 };
 
-try {
-  await assertConnects("primary-different", {
-    health: { healthy: true, version: "9.9.9-fixture", pid: process.pid },
-    registrationVersion: "9.9.9-fixture",
-  }, "9.9.9-fixture");
-  await assertConnects("primary-empty", {
-    health: { healthy: true, version: "", pid: process.pid },
-    registrationVersion: "",
-  });
-  await assertConnects("fallback-absent", {
-    health: { healthy: true },
-    registration: "fallback",
-  });
+const github = {
+  listInstallationRepositories: async () => [],
+  hasLabel: async () => true,
+  listIssues: async () => [],
+  listPullRequests: async () => [],
+  listStacks: async () => [],
+  getBranchRef: async () => null,
+};
 
-  {
-    const remote = await fixture("handoff-success", {
-      health: { healthy: true, version: "future-beta", pid: process.pid },
-      registrationVersion: "future-beta",
+try {
+  const successfulCases: Array<[string, FixtureOptions, string?]> = [
+    ["primary-different", {
+      health: { healthy: true, version: "9.9.9-fixture", pid: process.pid },
+      registrationVersion: "9.9.9-fixture",
+    }, "9.9.9-fixture"],
+    ["primary-empty", {
+      health: { healthy: true, version: "", pid: process.pid },
+      registrationVersion: "",
+    }],
+    ["fallback-absent", {
+      health: { healthy: true },
+      registration: "fallback",
+    }],
+  ];
+  for (const [name, options, expectedVersion] of successfulCases) {
+    await withFixture(name, options, async ({ requests, persistence, service }) => {
+      const atlasId = `ses_${crypto.randomUUID()}`;
+      preparedSession(persistence, atlasId);
+      await service.process();
+
+      assert.equal(service.isReady(), true);
+      assert.equal(service.readiness().version, expectedVersion);
+      const completed = persistence.getSession(atlasId)!;
+      assert.equal(completed.handoffCheckpoint, "prompt_accepted");
+      assert.equal(completed.openCodeSessionId, completed.opencodeIntendedSessionId);
+      assert.equal(completed.initialInboxId, completed.initialMessageId);
+      assert.equal(completed.state, "idle");
+      assert.equal(completed.opencodeFreshness, "fresh");
+      const creates = () => requests.filter((request) => request.method === "POST" && request.path === "/api/session");
+      const prompts = () => requests.filter((request) => request.method === "POST" && request.path.endsWith("/prompt"));
+      assert.equal(creates().length, 1);
+      assert.equal(prompts().length, 1);
+      assert.equal(prompts()[0]?.body?.text, completed.exactMessage);
+      await service.process();
+      assert.equal(creates().length, 1, `${name} must not recreate the OpenCode Session`);
+      assert.equal(prompts().length, 1, `${name} must not resend the initial prompt`);
+
+      const app = createApp({ persistence, sharedToken: "secret", github, openCode: service });
+      const unauthenticated = await app.fetch(new Request("http://atlas.test/health"));
+      assert.equal(unauthenticated.status, 303);
+      assert(unauthenticated.headers.get("Location")?.startsWith("/login"));
+      const response = await app.fetch(new Request("http://atlas.test/health", { headers: { Authorization: "Bearer secret" } }));
+      assert.equal(response.status, 200);
+      const body = await response.json() as { openCode: Record<string, unknown> };
+      assert.equal(body.openCode.ready, true);
+      assert.equal(Object.hasOwn(body.openCode, "expectedVersion"), false);
+      if (expectedVersion === undefined) assert.equal(Object.hasOwn(body.openCode, "version"), false);
+      else assert.equal(body.openCode.version, expectedVersion);
     });
-    const persistence = createPersistence({ path: ":memory:" });
-    const atlasId = "ses_52525252-5252-4252-8252-525252525252";
-    preparedSession(persistence, atlasId);
-    const service = handoff(persistence, remote.serviceFile);
-    await service.process();
-    const completed = persistence.getSession(atlasId)!;
-    assert.equal(completed.handoffCheckpoint, "prompt_accepted");
-    assert.equal(completed.state, "idle");
-    assert.equal(completed.opencodeFreshness, "fresh");
-    const creates = () => remote.requests.filter((request) => request.method === "POST" && request.path === "/api/session");
-    const prompts = () => remote.requests.filter((request) => request.method === "POST" && request.path.endsWith("/prompt"));
-    assert.equal(creates().length, 1);
-    assert.equal(prompts().length, 1);
-    assert.equal(prompts()[0]?.body?.text, completed.exactMessage);
-    await service.process();
-    assert.equal(creates().length, 1, "reconciliation must not recreate the OpenCode Session");
-    assert.equal(prompts().length, 1, "reconciliation must not resend the initial prompt");
-    service.stop();
-    remote.stop();
-    persistence.close();
   }
 
-  {
-    const remote = await fixture("later-decode-failure", {
-      health: { healthy: true, version: "future-beta", pid: process.pid },
-      registrationVersion: "future-beta",
-      malformedPaths: ["/api/session/active"],
-    });
-    const persistence = createPersistence({ path: ":memory:" });
+  await withFixture("later-decode-failure", {
+    health: { healthy: true, version: "future-beta", pid: process.pid },
+    registrationVersion: "future-beta",
+    malformedPaths: ["/api/session/active"],
+  }, async ({ requests, persistence, service }) => {
     const atlasId = "ses_53535353-5353-4353-8353-535353535353";
     preparedSession(persistence, atlasId);
-    const service = handoff(persistence, remote.serviceFile);
     await service.process();
     const uncertain = persistence.getSession(atlasId)!;
     assert.equal(uncertain.handoffCheckpoint, "prompt_accepted");
     assert.equal(uncertain.state, "preparing");
     assert.equal(uncertain.opencodeFreshness, "stale");
     assert.equal(uncertain.executionSlotHeld, true);
-    assert.equal(remote.requests.filter((request) => request.path.endsWith("/prompt")).length, 1);
+    assert.equal(requests.filter((request) => request.path.endsWith("/prompt")).length, 1);
     await service.process();
-    assert.equal(remote.requests.filter((request) => request.path.endsWith("/prompt")).length, 1, "a decoding failure must not duplicate the prompt");
+    assert.equal(requests.filter((request) => request.path.endsWith("/prompt")).length, 1, "a decoding failure must not duplicate the prompt");
     assert.equal(persistence.getSession(atlasId)?.state, "preparing", "a decoding failure must not invent a terminal outcome");
-    service.stop();
-    remote.stop();
-    persistence.close();
-  }
+  });
 
-  {
-    const remote = await fixture("unhealthy", {
-      health: { healthy: false, version: "future-beta", pid: process.pid },
-      registrationVersion: "future-beta",
-    });
-    const persistence = createPersistence({ path: ":memory:" });
+  await withFixture("unhealthy", {
+    health: { healthy: false, version: "future-beta", pid: process.pid },
+    registrationVersion: "future-beta",
+  }, async ({ requests, persistence, service }) => {
     const atlasId = "ses_54545454-5454-4454-8454-545454545454";
     preparedSession(persistence, atlasId);
-    const service = handoff(persistence, remote.serviceFile);
     await service.process();
     const paused = persistence.getSession(atlasId)!;
     assert.equal(service.isReady(), false);
@@ -249,11 +265,8 @@ try {
     assert.equal(paused.state, "preparing");
     assert.equal(paused.opencodeFreshness, "stale");
     assert.equal(paused.executionSlotHeld, true);
-    assert.equal(remote.requests.some((request) => request.method === "POST"), false);
-    service.stop();
-    remote.stop();
-    persistence.close();
-  }
+    assert.equal(requests.some((request) => request.method === "POST"), false);
+  });
 
   const rejected: Array<[string, FixtureOptions]> = [
     ["undecodable-health", { health: {}, healthText: "{" }],
@@ -261,14 +274,10 @@ try {
     ["invalid-event-stream", { health: { healthy: true, version: "future-beta", pid: process.pid }, registrationVersion: "future-beta", eventContentType: "application/json" }],
   ];
   for (const [name, options] of rejected) {
-    const remote = await fixture(name, options);
-    const persistence = createPersistence({ path: ":memory:" });
-    const service = handoff(persistence, remote.serviceFile);
-    await assert.rejects(service.getClient(), `${name} must not become ready`);
-    assert.equal(service.isReady(), false);
-    service.stop();
-    remote.stop();
-    persistence.close();
+    await withFixture(name, options, async ({ service }) => {
+      await assert.rejects(service.getClient(), `${name} must not become ready`);
+      assert.equal(service.isReady(), false);
+    });
   }
 
   {
@@ -291,37 +300,6 @@ try {
     assert.equal(service.isReady(), false);
     service.stop();
     persistence.close();
-  }
-
-  const github = {
-    listInstallationRepositories: async () => [],
-    hasLabel: async () => true,
-    listIssues: async () => [],
-    listPullRequests: async () => [],
-    listStacks: async () => [],
-    getBranchRef: async () => null,
-  };
-  {
-    const remote = await fixture("health-request", {
-      health: { healthy: true, version: "another-version", pid: process.pid },
-      registrationVersion: "another-version",
-    });
-    const persistence = createPersistence({ path: ":memory:" });
-    const service = handoff(persistence, remote.serviceFile);
-    await service.getClient();
-    const app = createApp({ persistence, sharedToken: "secret", github, openCode: service });
-    const unauthenticated = await app.fetch(new Request("http://atlas.test/health"));
-    assert.equal(unauthenticated.status, 303);
-    assert(unauthenticated.headers.get("Location")?.startsWith("/login"));
-    const response = await app.fetch(new Request("http://atlas.test/health", { headers: { Authorization: "Bearer secret" } }));
-    assert.equal(response.status, 200);
-    const body = await response.json() as { openCode: Record<string, unknown> };
-    assert.equal(body.openCode.ready, true);
-    assert.equal(body.openCode.version, "another-version");
-    assert.equal(Object.hasOwn(body.openCode, "expectedVersion"), false);
-    persistence.close();
-    service.stop();
-    remote.stop();
   }
 
   {
