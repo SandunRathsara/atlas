@@ -123,14 +123,17 @@ only a positively identified rehearsal tree after the owner accepts the result.
    `recovery-config/current`, verify both embedded SQLite builds, take and
    verify a pre-upgrade snapshot, and record Atlas commit/release, Bun,
    OpenCode client/server, Git, gh, and schema versions.
-4. Stage the clean commit with `stage-release.sh`. Run its migrations by
+4. Verify and extract the published archive selected by `atlas-release.json`
+   (or use `stage-release.sh` only for an unpublished manual rehearsal). Require
+   `rollback.codeOnlyCompatible` for ordinary code-only rollback; otherwise
+   follow its non-empty manual-maintenance instructions. Run migrations by
    selecting the immutable versioned release and starting Atlas while admission
-   remains paused. Never overwrite a release and do not unnecessarily restart
-   OpenCode.
-5. Validate authenticated health, database/schema, OpenCode compatibility,
-   reconciliation, preserved Session reopening/history/files, private UI,
-   public webhook-only exclusion, signatures, and Repository-scoped credential
-   routing/renewal/denial. Rehearse restore. Only then set
+   remains paused. Never overwrite a release or restart OpenCode.
+5. Validate authenticated Atlas identity and storage health first; this startup
+   gate does not query or wait for OpenCode. Separately diagnose OpenCode and
+   validate reconciliation, preserved Session reopening/history/files, private
+   UI, public webhook-only exclusion, signatures, and Repository-scoped
+   credential routing/renewal/denial. Rehearse restore. Only then set
    `ATLAS_ADMISSION_PAUSED=0`, restart Atlas, and confirm ordinary eligibility
    and storage checks resume preparation.
 6. For code-only rollback with unchanged schema, pause admission and atomically

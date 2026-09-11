@@ -6,6 +6,8 @@ import { createPersistence } from "./persistence.ts";
 import { createRefreshCoordinator } from "./sync.ts";
 import { createWebhookApp } from "./webhook.ts";
 import { homedir } from "node:os";
+import { join } from "node:path";
+import { loadReleaseIdentity } from "./release.ts";
 
 const githubEnvPath = Bun.env.ATLAS_GITHUB_ENV_PATH ?? `${homedir()}/.config/atlas/github.env`;
 loadGithubEnv(githubEnvPath);
@@ -58,6 +60,7 @@ const refreshCoordinator = createRefreshCoordinator({
   organization,
   installationId,
 });
+const releaseRoot = Bun.env.ATLAS_RELEASE_ROOT ?? join(import.meta.dir, "..");
 
 const app = createApp({
   allowedOrigin: Bun.env.ATLAS_ORIGIN,
@@ -78,6 +81,7 @@ const app = createApp({
   getSharedToken: () => Bun.env.ATLAS_SHARED_TOKEN,
   persistence,
   refreshCoordinator,
+  releaseIdentity: loadReleaseIdentity(releaseRoot),
   sharedToken,
 });
 

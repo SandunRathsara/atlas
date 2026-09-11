@@ -6,7 +6,9 @@ Tailscale/firewall state.
 
 ## Pins
 
-`pins.env` pins Bun `1.3.14`, Git `2.55.0`, and gh `2.100.0`. Their paths are
+`pins.env` pins Bun `1.3.14`, Git `2.55.0`, gh `2.100.0`, and the
+release-packaged OpenCode client. The client pin is diagnostic package input,
+not an OpenCode server selection or compatibility gate. Host tool paths are
 absolute and versioned; the Git wrapper loads this manifest and rejects a
 version drift on every managed Git invocation and service start. OpenCode is
 different: `ATLAS_OPENCODE_BINARY` follows the operator-controlled
@@ -15,10 +17,14 @@ Atlas release pin. The Atlas release still installs the exact
 `@opencode-ai/client` dependency in `package.json`; staging a server does not
 replace or pair that client.
 
-`stage-release.sh` archives a clean committed checkout into a new release,
-installs the frozen lockfile, builds CSS, records `RELEASE_COMMIT`, makes the
-tree read-only, and atomically renames the staging directory. It never
-overwrites `/opt/atlas/current` or an existing release.
+Published releases are produced from authoritative
+`vMAJOR.MINOR.PATCH+build.BUILD` tags by `.github/workflows/release.yml`. See
+[`docs/RELEASES.md`](../docs/RELEASES.md) for the immutable archive/metadata
+contract and maintainer procedure. `stage-release.sh` remains a manual
+clean-checkout staging helper: it archives a clean committed checkout into a
+new release, installs the frozen lockfile, builds CSS, records `RELEASE_COMMIT`,
+makes the tree read-only, and atomically renames the staging directory. It
+never overwrites `/opt/atlas/current` or an existing release.
 
 `stage-opencode.sh <exact-server-version> <directory>` queries npm registry
 metadata for that exact `@opencode-ai/cli-linux-x64` version, requires its
@@ -51,8 +57,10 @@ OpenCode service untouched.
 - Atlas's private app listener and loopback webhook listener remain separate;
   their ports come from `atlas.env`. Funnel must target only the webhook port.
 - `check-health.sh` checks the private, authenticated `/health` route. It
-  requires a healthy Atlas process/database and OpenCode readiness, without
-  requiring a particular or non-empty observed OpenCode version.
+  requires a healthy Atlas process/database and can require an exact candidate
+  release tag/SHA through `ATLAS_EXPECTED_RELEASE_TAG` and
+  `ATLAS_EXPECTED_RELEASE_SHA`. OpenCode readiness/version remain independent
+  diagnostics and never gate Atlas startup or release activation.
 
 The private health route is authenticated and exists only on the private app.
 The webhook app has no health, login, Session, event, or OpenCode routes.
@@ -63,6 +71,7 @@ The webhook app has no health, login, Session, event, or OpenCode routes.
 | --- | --- |
 | `/opt/atlas/releases/<release>` | Read-only versioned Atlas release |
 | `/opt/atlas/current` | Operator-selected release symlink |
+| `<release>/RELEASE_METADATA.json` | Tag-derived SemVer, global build, Git SHA, artifact/runtime, and rollback contract |
 | `/opt/atlas/tools/<tool>/<version>` | Pinned Bun, Git, and GitHub CLI binaries; installed OpenCode server versions |
 | `/opt/atlas/tools/opencode/current` | Operator-selected OpenCode server symlink used by the independent service |
 | `/var/lib/atlas` | One ordinary-directory Btrfs subvolume |
@@ -176,7 +185,9 @@ The following is a handoff, not an instruction for an agent to execute:
    XDG locations, including database WAL/journal sidecars. Keep originals
    until validation succeeds. Do not trust/copy the old live service endpoint;
    let the new service register a fresh endpoint.
-4. Stage a clean release with `stage-release.sh`. Separately install the staged
+4. Extract and checksum a published release using its `atlas-release.json`
+   contract (or use `stage-release.sh` only for a deliberate unpublished manual
+   staging rehearsal). Separately install the staged
    OpenCode version, atomically switch `/opt/atlas/tools/opencode/current`, and
    run `check-opencode.sh`. Install the two units, run `systemctl daemon-reload`,
    then explicitly enable/start the independent units in that order. Atlas must
@@ -189,7 +200,8 @@ The following is a handoff, not an instruction for an agent to execute:
    Tailscale Funnel to the webhook loopback port on different externally
    served ports. Apply the reviewed tailnet/firewall policy. Never Funnel the
    UI listener. Configure GitHub's signed webhook for `/webhooks/github`.
-7. Run `check-health.sh`, private cookie/bearer checks, public webhook-only
+7. Run `check-health.sh`, then the independent `check-opencode.sh` diagnostic,
+   private cookie/bearer checks, public webhook-only
    exclusion checks, valid/invalid signed webhook checks, and the credential
    matrix before admitting work. Reopen a preserved Session without replaying
    a prompt. Re-check after a planned reboot only after the operator accepts

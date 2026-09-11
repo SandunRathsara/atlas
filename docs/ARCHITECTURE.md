@@ -4,7 +4,7 @@ Answers: how is the system technically shaped? Populated and kept current by `/r
 
 ## System Boundary
 
-Inside this repository: the Atlas TypeScript process (private UI + loopback webhook), SQLite persistence, GitHub read client, credential supplier, Session clone/preparation, OpenCode handoff and viewer, server-rendered UI, and inert host deploy assets.
+Inside this repository: the Atlas TypeScript process (private UI + loopback webhook), SQLite persistence, GitHub read client, credential supplier, Session clone/preparation, OpenCode handoff and viewer, server-rendered UI, tag-driven GitHub Release publishing, and inert host deploy assets.
 
 Outside: GitHub (App, inventory, issues, PRs, native stacks, signed webhooks); an independently running OpenCode V2 process selected by the operator through `/opt/atlas/tools/opencode/current`; the private host (systemd, Btrfs, Tailscale Serve/Funnel, pinned Bun/Git/gh binaries); operator-managed paths under `/opt/atlas`, `/var/lib/atlas`, `/etc/atlas`, `/var/backups/atlas`, and `/run/atlas`.
 
@@ -32,6 +32,7 @@ Dependencies flow downward. Views do not call GitHub or OpenCode. The webhook ap
 
 ```
 src/server.ts
+  → src/release.ts#loadReleaseIdentity
   → src/credentials.ts#createCredentialBoundary
   → src/config.ts#loadGitHubEnv
   → src/persistence.ts#createPersistence
@@ -47,7 +48,7 @@ src/server.ts
        → src/views.ts → src/views/*
 ```
 
-`createApp` starts preparation and OpenCode after wiring `onSlotReleased` / `onTerminal`; it also assembles the inbox context from persistence and browser cookies for every authenticated page. `src/views/inbox.ts` renders the filter, grouped Spec rows, and full-page records without calling GitHub or OpenCode. Preparation may read `src/recovery-status.ts#readRecoveryStatus`. OpenCode notifies the viewer through events; the viewer does not write SQLite.
+`createApp` starts preparation and OpenCode after wiring `onSlotReleased` / `onTerminal`; it also assembles the inbox context from persistence and browser cookies for every authenticated page. `src/release.ts` validates generated release metadata; `server.ts` injects its identity into the authenticated health response. `src/views/inbox.ts` renders the filter, grouped Spec rows, and full-page records without calling GitHub or OpenCode. Preparation may read `src/recovery-status.ts#readRecoveryStatus`. OpenCode notifies the viewer through events; the viewer does not write SQLite.
 
 ## Integrations and State Ownership
 
@@ -66,6 +67,7 @@ src/server.ts
 | Space/backup status | host scripts; Atlas reads | `ATLAS_RECOVERY_STATUS_PATH` |
 | Inbox filter and last visit | UI app sets; browser holds | Cookies `atlas_inbox`, `atlas_visit` (`Path=/; Secure; HttpOnly; SameSite=Strict`) |
 | Inbox poll continuity | `public/app.js`; browser DOM holds | Active element, open `<details>`, and scroll position are transient and restored after list swaps |
+| Release identity and artifact contract | Git tag + release workflow | Generated `RELEASE_METADATA.json`; published `atlas-release.json`, archive, checksum |
 
 GitHub remains source of truth for inventory, Specs, PRs, and stacks. Browse may use `ATLAS_GITHUB_INSTALLATION_TOKEN` if App minting fails; preparation never uses that fallback.
 
@@ -73,7 +75,7 @@ GitHub remains source of truth for inventory, Specs, PRs, and stacks. Browse may
 
 Two loopback listeners (`src/server.ts`): UI `127.0.0.1:ATLAS_PORT` (default 3000) and webhook `127.0.0.1:ATLAS_WEBHOOK_PORT` (default 3001). Ports must differ. Tailscale Serve fronts the UI; Funnel must target only the webhook port.
 
-Production (`deploy/README.md`): user `omega`; read-only release at `/opt/atlas/current`; data on `/var/lib/atlas`; secrets in `/etc/atlas`; runtime sockets in `/run/atlas`. Units: `atlas.service` (loads `atlas.env`), independent `opencode.service` (does not load Atlas secrets and follows the operator-controlled OpenCode `current` symlink), `atlas-snapshot.timer`, `atlas-space-check.timer`. Exact-version OpenCode staging verifies registry integrity but does not install, select, or restart the server. Restarting Atlas must not stop OpenCode.
+Production (`deploy/README.md`): user `omega`; read-only release at `/opt/atlas/current`; data on `/var/lib/atlas`; secrets in `/etc/atlas`; runtime sockets in `/run/atlas`. An authoritative `vMAJOR.MINOR.PATCH+build.BUILD` tag drives the serialized `.github/workflows/release.yml`, which builds the exact frozen tagged tree and publishes immutable Linux x64 metadata/checksum/archive assets with production dependencies and built CSS. Units: `atlas.service` (loads `atlas.env`), independent `opencode.service` (does not load Atlas secrets and follows the operator-controlled OpenCode `current` symlink), `atlas-snapshot.timer`, `atlas-space-check.timer`. Exact-version OpenCode staging verifies registry integrity but does not install, select, or restart the server. Restarting Atlas must not stop OpenCode.
 
 Required to boot: `ATLAS_SHARED_TOKEN` and `ATLAS_GITHUB_WEBHOOK_SECRET`. Origin `ATLAS_ORIGIN` is the private HTTPS URL, not the Funnel URL.
 
@@ -84,7 +86,7 @@ Required to boot: `ATLAS_SHARED_TOKEN` and `ATLAS_GITHUB_WEBHOOK_SECRET`. Origin
 - Typecheck: `bun run check` (`tsc --noEmit`)
 - CSS: `bun run build:css`
 - Checklist previewer: `just checklist`
-- No CI workflow in this repository
+- Tag pushes matching the Atlas release shape run the release-only GitHub Actions workflow; there is no general branch/PR CI workflow
 - No formatter or linter configured
 - No unified test runner; scoped regressions are `bun run verify:*`, `bun scripts/verify-clone-scope.ts`, `bun scripts/verify-repository-filter.ts`, `bash deploy/verify-opencode-commands.sh`, `bash deploy/verify-assets.sh`
 
@@ -92,7 +94,7 @@ Local `justfile` defaults: token/webhook secret, `data/atlas.sqlite`, `~/.local/
 
 ## Architectural Constraints
 
-Accepted decisions are indexed in `docs/adr/INDEX.md`; ADR-0001 makes OpenCode server version diagnostic rather than a runtime discovery gate. Constraints from shipped code and operator docs:
+Accepted decisions are indexed in `docs/adr/INDEX.md`; ADR-0001 makes OpenCode server version diagnostic rather than a runtime discovery gate, and ADR-0002 establishes immutable SemVer/global-build Releases and Atlas-only activation health. Constraints from shipped code and operator docs:
 
 - Bind UI and webhook to `127.0.0.1`. Funnel the webhook only.
 - Cookie: `Path=/; Secure; HttpOnly; SameSite=Strict` for `atlas_session`, `atlas_inbox`, and `atlas_visit` (`atlas_session` also has a seven-day max age). Browser mutations need same-origin CSRF. Health is authenticated and exists only on the UI app.
@@ -106,5 +108,13 @@ Accepted decisions are indexed in `docs/adr/INDEX.md`; ADR-0001 makes OpenCode s
 - Default global preparation capacity is one. Pause new preparation when Session storage is unavailable, below `ATLAS_MIN_FREE_BYTES`, or host space status is missing/stale/paused.
 - Managed Git invocations must match `deploy/pins.env`.
 - Theme tokens live in `src/styles.css` / `DESIGN.md`. Do not copy hex values into templates.
+- Release tags are the sole release identity input. The first is
+  `v0.1.0+build.1`; builds increase globally, publication is serialized, and
+  existing Releases/assets are never overwritten. An untagged tree reports
+  unpublished development identity.
+- The Linux x64 archive contains the complete tracked tree, production
+  dependencies, built CSS, generated identity/runtime/rollback metadata, and a
+  checksum. Candidate health gates on Atlas identity and persistence only;
+  OpenCode readiness/version remain independent diagnostics.
 
-<!-- repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2 -->
+<!-- repo-map-synced: 60d5a38df21d5b840c768b36ce37aacecf90e059 -->

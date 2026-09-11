@@ -7,12 +7,13 @@ Answers: where is today's shipped implementation? Organized by capability and co
 | Path | Role |
 |---|---|
 | `src/server.ts` | Process entry. Loads env, starts credential supplier, SQLite, GitHub client, refresh coordinator, UI + webhook `Bun.serve` listeners, SIGINT/SIGTERM shutdown. |
-| `package.json` `dev` / `start` | `bun run build:css` then `bun --watch src/server.ts` or `bun src/server.ts`. |
+| `package.json` `dev` / `start` | Development builds CSS then watches `src/server.ts`; release start runs the prebuilt tree without installing or building. |
 | `justfile#dev` | Local bootstrap then `bun run dev`. `justfile#checklist` opens the bearings previewer. |
 | `src/app.ts#createApp` | Private UI Hono app. |
 | `src/webhook.ts#createWebhookApp` | Webhook-only Hono app. |
 | `scripts/atlas-gh.ts` | Scoped `gh` wrapper used by `deploy/bin/gh`. |
 | `scripts/atlas-git-credential.ts` | Git credential helper used by preparation and `deploy/bin/git-credential-atlas`. |
+| `.github/workflows/release.yml`, `scripts/build-release.sh`, `scripts/release.ts` | Serialized tag validation, exact-commit frozen build, Linux x64 archive/metadata/checksum production, and immutable GitHub Release publishing. |
 | `deploy/stage-release.sh`, `deploy/stage-opencode.sh`, `deploy/atlas-snapshot.sh`, `deploy/restore-rehearsal.sh`, `deploy/check-health.sh`, `deploy/check-opencode.sh`, `deploy/check-space.sh`, `deploy/capture-recovery-config.sh`, `deploy/verify-assets.sh`, `deploy/verify-opencode-commands.sh`, `deploy/verify-sqlite-wal.sh` | Operator-facing host scripts. OpenCode staging is exact-version, registry-integrity-verified, and server-only; selection follows the operator-controlled `current` symlink. Inert until applied on the host. |
 
 The implemented inbox lives in `src/views/inbox.ts`; the deleted `src/prototype-inbox.ts` is not a runtime entry point.
@@ -27,7 +28,7 @@ Returns `AtlasApp`. Options: `AppOptions`.
 
 | Method | Path | Concern |
 |---|---|---|
-| GET | `/health` | Authenticated persistence + OpenCode readiness/observed-version JSON. Persistence determines HTTP status. UI app only. |
+| GET | `/health` | Authenticated Atlas release identity + persistence health + independent OpenCode readiness/observed-version JSON. Persistence determines HTTP status. UI app only. |
 | GET | `/assets/app.css`, `/assets/app.js`, `/assets/htmx.min.js` | Static assets. |
 | GET | `/` | Landing: `findLandingSession` + `atlas_visit` / `atlas_inbox`; 303 to Session, Spec list, `/inbox`, or `/repositories/new`. |
 | GET | `/inbox` | Inbox page. `?repository=` is the canonical filter URL and sets/clears `atlas_inbox`; a remembered valid filter redirects a bare `/inbox` here. |
@@ -129,6 +130,17 @@ Shared markup: `src/views/html.ts` (`escapeHtml`, `safeExternalUrl`, `renderDocu
 
 Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas reads host-written status; it does not take snapshots.
 
+### Release identity — `src/release.ts`
+
+`parseReleaseTag`, `compareReleaseTags`, and `validateReleaseSequence` implement
+stable SemVer-first/global-build ordering beginning at `v0.1.0+build.1`.
+`createReleaseMetadata`, `assertReleaseMetadata`, and `loadReleaseIdentity`
+own generated schema-1 artifact/runtime/rollback metadata and the explicit
+unpublished-development fallback. `scripts/release.ts` exposes validation and
+metadata generation to CI; `scripts/build-release.sh` archives every tracked
+file, installs the frozen production dependency tree, adds built CSS and
+metadata, and emits the archive/checksum/sidecar without overwriting output.
+
 ## Critical Flows
 
 **Land on `/`.** `src/app.ts#createApp` GET `/` → `src/inbox-state.ts#readVisitCookie` → `Persistence.findLandingSession` → 303 to the earliest new terminal Session, otherwise the earliest unfinished Session with Waiting first, otherwise the remembered enrolled Repository's Spec list, `/inbox` when Repositories exist, or `/repositories/new`. Every redirect writes `atlas_visit`; a selected Session/Repository also writes `atlas_inbox`.
@@ -153,6 +165,13 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 
 **Target reconfirmation.** Queued Session blocked for explicit reconfirmation. GET/POST `/sessions/:sessionId/target` → refresh PRs → `Persistence.reconfirmQueuedTarget` → `preparation.enqueue`. Atlas does not infer a replacement.
 
+**Publish Release.** Push release tag → global Actions concurrency →
+`scripts/release.ts validate` against published GitHub Release tags → frozen
+install/typecheck/focused checks → `scripts/verify-release-artifact.sh` →
+`scripts/build-release.sh` archives the exact tagged commit, production
+dependencies, CSS, helpers/deploy assets, and `RELEASE_METADATA.json` → isolated
+extraction/startup with no OpenCode → `gh release create` without overwrite.
+
 ## Shared Utilities and Infrastructure
 
 - `src/inbox-state.ts` — `atlas_inbox` / `atlas_visit` cookie parse and set.
@@ -162,6 +181,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 - `src/styles.css` / `public/app.css` — Tailwind + daisyUI `atlas` theme.
 - `public/app.js` — client HTMX glue; preserves inbox poll focus, open `<details>`, and scroll position.
 - `src/recovery-status.ts` — read-only host status.
+- `src/release.ts` — tag parsing/order, metadata validation, and runtime identity.
 - `src/config.ts#loadGitHubEnv` and `src/credentials.ts#loadGithubEnv` — two github.env loaders (browse keys vs App key path).
 
 ## Interfaces and State
@@ -178,6 +198,11 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 
 **Filesystem:** Session directories under `ATLAS_SESSION_ROOT`; credential scopes in `session-scopes.json`; supplier socket `0600`.
 
+**Release files:** a published archive contains one read-only release directory
+and embedded `RELEASE_METADATA.json`; the GitHub Release also carries identical
+`atlas-release.json` and a named SHA-256 sidecar. Untagged source has no metadata
+file and reports `published: false`.
+
 ## Change Hazards
 
 - **Credential leakage.** `cloneGitEnvironment` strips inherited tokens. Supplier socket `0600`. `scripts/atlas-gh.ts` forbids `auth token` / login. Never log tokens, keys, prompts, or auth headers.
@@ -191,6 +216,15 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 - **Capacity and disk.** Default capacity 1. Pause on low free space or stale/paused recovery status. `ATLAS_ADMISSION_PAUSED` is operator-controlled.
 - **Inbox refresh and selection.** `/inbox/list` replaces the whole list root every 30 seconds; keep the stable `data-inbox-scroll`/focus restoration contract, `HX-Current-URL` selection mapping, and `hx-push-url="false"` behavior together.
 - **Inbox truthfulness.** `listInbox` keeps only current Specs and the latest Session, ranks groups/states before `updatedAt`, uses terminal history for unread time, and must not turn mixed Specs refresh failures or unknown access into an empty list or a revoked-access claim.
+- **Release authority/immutability.** Never add a second maintained release
+  version, move a published tag, overwrite an artifact, reset/reuse a global
+  build, resolve latest dependencies in CI, or infer rollback safety from
+  SemVer/build. The package client pin, lockfile, deployment client manifest,
+  and named pin docs move together before tagging.
+- **Activation health separation.** `deploy/check-health.sh` may require exact
+  candidate tag/SHA but gates only on Atlas process/persistence. Keep OpenCode
+  readiness/version out of startup and activation; use the independent
+  diagnostic for OpenCode.
 
 ## Verification Map
 
@@ -206,6 +240,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 | `bun run verify:issue32` | Refresh coordinator retry backoff. |
 | `bun run verify:issue29` | Session viewer hydrate, SSE (no transcript leak). |
 | `bun run verify:issue52` | Real-client local-server discovery, runtime handoff/failure checkpoints, direct health requests, and deployment health exit contracts. |
+| `bun run verify:issue57` | Tag/order/global-sequence rules, generated metadata and authenticated health identity, plus isolated archive contents/checksum/startup with no install, CSS build, or OpenCode. |
 | `bun run verify:inbox` | Inbox Spec projection, latest Session, group/state ordering, Settled cap, terminal unread time, and landing selection. |
 | `bun run verify:landing` | GET `/` landing redirects, per-browser `atlas_visit` / `atlas_inbox`, and canonical `/inbox` filter URL. |
 | `bun run verify:inbox-shell` (`scripts/verify-inbox-shell.ts`) | Desktop sidebar and navigation landmarks, canonical/filter cookie behavior, selected Spec identity, `/inbox/list` fragment contract, access semantics, and exact `status=all` utility state. |
@@ -217,4 +252,4 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 | `bash deploy/verify-opencode-commands.sh` | Isolated server-only staging/integrity, `current` preflight selection, no-activation, and observed-version WAL command regressions. |
 | `bash deploy/verify-sqlite-wal.sh` | Pinned Bun and selected OpenCode embedded-SQLite WAL safeguards. |
 
-<!-- repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2 -->
+<!-- repo-map-synced: 60d5a38df21d5b840c768b36ce37aacecf90e059 -->

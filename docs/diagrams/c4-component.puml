@@ -19,6 +19,7 @@ System_Boundary(atlas, "Atlas process") {
   Component(preparation, "Preparation", "src/preparation.ts#createPreparationService", "Clone Session directory, execution slot")
   Component(handoff, "OpenCode handoff", "src/opencode.ts#createOpenCodeHandoffService", "Create, associate, one prompt, reconcile")
   Component(viewer, "Session viewer", "src/session-viewer.ts#createSessionViewerService", "Hydrate OpenCode tree for display")
+  Component(releaseIdentity, "Release identity", "src/release.ts", "Validate tag-derived metadata for health")
 }
 
 System_Ext(github, "GitHub", "App, issues labelled spec, PRs, native stacks, webhooks")
@@ -36,6 +37,7 @@ Rel(server, githubClient, "construct")
 Rel(server, sync, "construct")
 Rel(server, webhook, "serve :ATLAS_WEBHOOK_PORT")
 Rel(server, ui, "serve :ATLAS_PORT")
+Rel(server, releaseIdentity, "load generated metadata")
 
 Rel(ui, auth, "authenticate mutations")
 Rel(ui, views, "render")
@@ -44,6 +46,7 @@ Rel(ui, sync, "request refresh")
 Rel(ui, preparation, "enqueue Session")
 Rel(ui, handoff, "start / events")
 Rel(ui, viewer, "hydrate")
+Rel(ui, releaseIdentity, "report identity in health")
 Rel(webhook, persistence, "accept delivery")
 Rel(webhook, sync, "wake")
 
@@ -60,5 +63,5 @@ Rel(credentials, github, "mint installation tokens")
 Rel(githubClient, github, "read API")
 Rel(persistence, sqlite, "WAL")
 
-' repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2
+' repo-map-synced: 60d5a38df21d5b840c768b36ce37aacecf90e059
 @enduml

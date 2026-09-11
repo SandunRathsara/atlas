@@ -76,4 +76,7 @@ terminal outcomes. Server activation remains an explicit operator action.
 This ADR supersedes only the exact OpenCode server-version and server/client
 pairing requirements established by [#28](https://github.com/SandunRathsara/atlas/issues/28)
 and [#37](https://github.com/SandunRathsara/atlas/issues/37). Their remaining
-requirements stay in force. This ADR is not superseded.
+requirements stay in force. [ADR-0002](0002-versioned-releases-and-graceful-self-updates.md)
+partially supersedes this ADR only where OpenCode readiness or inspection would
+gate Atlas startup or self-update activation. Normal Session discovery,
+observation, service selection, and explicit OpenCode diagnostics remain here.

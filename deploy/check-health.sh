@@ -18,9 +18,16 @@ if ! jq -e '.atlas.process == true and .persistence.healthy == true' >/dev/null 
   exit 1
 fi
 
-if jq -e '.openCode.ready == true' >/dev/null <<<"$response"; then
-  echo "Atlas process, persistence, and OpenCode readiness are healthy"
-else
-  echo "Atlas process and persistence are healthy; OpenCode readiness is not established" >&2
-  exit 3
+expected_tag=${ATLAS_EXPECTED_RELEASE_TAG:-}
+expected_sha=${ATLAS_EXPECTED_RELEASE_SHA:-}
+if [[ -n "$expected_tag" || -n "$expected_sha" ]]; then
+  [[ -n "$expected_tag" && -n "$expected_sha" ]] || { echo "expected release tag and SHA must be supplied together" >&2; exit 2; }
+  if ! jq -e --arg tag "$expected_tag" --arg sha "$expected_sha" \
+    '.atlas.release.published == true and .atlas.release.tag == $tag and .atlas.release.gitSha == $sha' >/dev/null <<<"$response"; then
+    echo "Atlas release identity does not match the expected candidate" >&2
+    exit 1
+  fi
 fi
+
+identity=$(jq -r 'if .atlas.release.published == true then .atlas.release.tag + " (" + .atlas.release.gitSha + ")" else "development checkout" end' <<<"$response")
+echo "Atlas process and persistence are healthy: $identity"
