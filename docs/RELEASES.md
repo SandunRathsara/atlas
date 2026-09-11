@@ -93,13 +93,16 @@ must be non-empty and a normal updater must refuse activation. Schema-1 fields
 will not be removed or reinterpreted; a future incompatible contract requires
 an explicit compatibility path readable by the installed and previous release.
 
-## Discovery, staging, and approval
+## Discovery, staging, and update policy
 
 An installed Atlas process lists all public GitHub Releases at startup and every
 four hours; **Check now** uses the same path. It reads every candidate's
 `atlas-release.json`, orders candidates with the release ordering above, and
-retains the complete known set so a later automatic policy can still find a
-newer build of the installed SemVer when another SemVer also exists. A failed
+retains the complete known set. **Approval required** is the durable default.
+When an installation selects **Automatic for current SemVer builds**, every
+check prefers the highest newer numeric build with the exact installed SemVer,
+even when a newer patch, minor, or major Release also exists. With no such
+build, the newest Release is staged but still waits for **Install**. A failed
 check retains the last successful set and is not reported as up to date.
 
 The independently installed `atlas-updater.service` owns archive download,
@@ -114,25 +117,31 @@ release instructions remain visible on `/updates`.
 
 Staging does not pause Session preparation, install dependencies, build CSS,
 select a release, restart Atlas, or inspect/manage OpenCode. A staged,
-host-runtime-eligible, code-only-compatible candidate exposes **Install**. The
-authenticated approval is durably recorded before Atlas waits up to five minutes
-for preparation/handoff to reach a safe checkpoint. Repeated or lost requests
-reconcile against the one updater status boundary rather than starting a second
-activation.
+host-runtime-eligible, code-only-compatible candidate exposes **Install**. In
+automatic mode, only a newer numeric build of the exact installed SemVer enters
+the same activation path without that click; all SemVer changes remain explicit.
+The policy is stored per installation in updater state and survives Atlas and
+updater restarts, activation, and rollback. An approval or applicable automatic
+decision is durable before Atlas waits up to five minutes for
+preparation/handoff to reach a safe checkpoint. Repeated checks, submissions,
+and policy changes reconcile against the one updater status boundary rather
+than starting a second activation.
 
 The surviving updater stops only Atlas, atomically changes `/opt/atlas/current`,
 restarts Atlas, and allows 60 seconds for the candidate's exact identity and
 healthy persistence. It uses the Atlas-only form of the authenticated health
 route and never queries or gates on OpenCode. Failure selects and verifies the
 previous working release without restoring older data. The failed tag remains
-suppressed across restarts until **Retry**; a later Release is independently
-eligible. A checkpoint timeout is a durable abandonment and leaves the current
-release selected. Release deletion remains outside this slice.
+suppressed from automatic activation across restarts until **Retry**; a later
+eligible build of the current SemVer can proceed normally. A checkpoint timeout
+is a durable abandonment and leaves the current release selected. Release
+deletion remains outside this slice.
 
-Updater schema 1 keeps its original staging fields and adds activation state,
-previous-release identity, progress/result, and failed-tag suppression. This is
-deliberately additive so the previous Atlas release can still read staging
-status after rollback.
+Updater schema 1 keeps its original staging fields and additively stores the
+installation policy, activation state, previous-release identity,
+progress/result, and failed-tag suppression. Missing policy in older state reads
+as approval required, while subsequent writes preserve an existing selection so
+the previous Atlas release can still read staging status after rollback.
 
 Authenticated health reports the same identity under `atlas.release`, existing
 `persistence` health, and independent OpenCode diagnostics. Candidate success

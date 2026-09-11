@@ -197,6 +197,7 @@ try {
   const realClient = webHost.client();
   const lossyClient: UpdaterClient = {
     status: realClient.status,
+    setPolicy: realClient.setPolicy,
     stage: realClient.stage,
     prepareActivation: async (candidate, retry) => {
       const durable = await realClient.prepareActivation(candidate, retry);
