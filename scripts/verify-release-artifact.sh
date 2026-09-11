@@ -88,7 +88,7 @@ server_pid=$!
 healthy=0
 for _ in $(seq 1 100); do
   if ATLAS_SHARED_TOKEN=fixture-secret \
-      ATLAS_HEALTH_URL="http://127.0.0.1:$port/health" \
+      ATLAS_HEALTH_URL="http://127.0.0.1:$port/health?activation=1" \
       ATLAS_EXPECTED_RELEASE_TAG="$tag" \
       ATLAS_EXPECTED_RELEASE_SHA="$commit" \
       bash "$release_root/deploy/check-activation-health.sh" >/dev/null 2>&1; then
@@ -116,7 +116,7 @@ jq -e --arg tag "$tag" --arg sha "$commit" \
   '.atlas.process == true and .atlas.release.tag == $tag and .atlas.release.gitSha == $sha and
    .persistence.healthy == true and (has("openCode") | not)' >/dev/null <<<"$activation_response"
 if ATLAS_SHARED_TOKEN=fixture-secret \
-    ATLAS_HEALTH_URL="http://127.0.0.1:$port/health" \
+    ATLAS_HEALTH_URL="http://127.0.0.1:$port/health?activation=1" \
     ATLAS_EXPECTED_RELEASE_TAG="$tag" \
     ATLAS_EXPECTED_RELEASE_SHA="$(printf '0%.0s' {1..40})" \
     bash "$release_root/deploy/check-activation-health.sh" >/dev/null 2>&1; then
