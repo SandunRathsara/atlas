@@ -2,8 +2,6 @@ import type { RefreshState, Repository, Session, SessionState, Spec } from "../p
 import { escapeHtml, formatTime, safeExternalUrl } from "./html.ts";
 import { icon } from "./icons.ts";
 
-export type ActivePage = "repositories" | "new-repository" | "specs" | "spec" | "pull-requests" | "sessions";
-
 export const repositoryLink = (repository: Pick<Repository, "githubId">) =>
   `/repositories/${encodeURIComponent(repository.githubId)}/specs`;
 export const pullRequestsLink = (repository: Pick<Repository, "githubId">) =>

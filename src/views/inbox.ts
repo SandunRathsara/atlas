@@ -3,6 +3,7 @@ import { escapeHtml, safeExternalUrl } from "./html.ts";
 import { icon, type IconName } from "./icons.ts";
 import {
   emptyState,
+  accessLabel,
   pageHeader,
   pullRequestsLink,
   recordIdentity,
@@ -18,6 +19,7 @@ export type InboxContext = {
   filtered?: Repository;
   list: Inbox;
   currentPath: string;
+  selectedSpec?: { repositoryId: string; issueNumber: string };
   specsRefresh: Array<RefreshState | undefined>;
 };
 
@@ -38,7 +40,7 @@ const inboxHref = (row: InboxRow) =>
 const rowBadges = (row: InboxRow, inbox: InboxContext) => {
   const repository = inbox.repositories.find((item) => item.githubId === row.repositoryId);
   const access = repository && repository.accessStatus !== "available"
-    ? statusBadge("badge-error", "Access unavailable")
+    ? statusBadge(repository.accessStatus === "unknown" ? "badge-warning" : "badge-error", accessLabel(repository))
     : "";
   const state = row.session
     ? `${statusBadge(sessionBadgeClass(row.session.state), sessionStateLabel(row.session.state))}${
@@ -54,12 +56,12 @@ const specIdentity = (row: InboxRow) =>
 
 const unreadDot = (row: InboxRow) =>
   row.unread
-    ? `<span class="mt-1 size-2 shrink-0 rounded-full bg-brand-readable"><span class="sr-only">New</span></span>`
+    ? `<span class="mt-1 inline-block size-2 shrink-0 rounded-full bg-brand-readable"><span class="sr-only">New</span></span>`
     : "";
 
 const renderInboxRow = (row: InboxRow, inbox: InboxContext, unfiltered: boolean) => {
   const href = inboxHref(row);
-  const selected = inbox.currentPath === href;
+  const selected = inbox.selectedSpec?.repositoryId === row.repositoryId && inbox.selectedSpec.issueNumber === row.issueNumber;
   const waiting = row.group === "needs_you";
   const card = selected
     ? "rounded-box border border-edge bg-brand-tint p-3 border-l-2 border-l-brand-readable"
@@ -70,7 +72,7 @@ const renderInboxRow = (row: InboxRow, inbox: InboxContext, unfiltered: boolean)
     <div class="flex items-start gap-2">
       ${unreadDot(row)}
       <div class="min-w-0 flex-1">
-        <a id="inbox-${escapeHtml(row.repositoryId)}-${escapeHtml(row.issueNumber)}" class="text-sm font-medium text-brand-readable" href="${href}"${selected ? ' aria-current="page"' : ""}>${escapeHtml(row.title)}</a>
+        <a id="inbox-${escapeHtml(row.repositoryId)}-${escapeHtml(row.issueNumber)}" class="text-sm font-medium text-brand-readable" href="${escapeHtml(href)}"${selected ? ' aria-current="page"' : ""}>${escapeHtml(row.title)}</a>
         <p class="mt-1 font-mono text-xs text-faint">Spec #${escapeHtml(row.issueNumber)}</p>
         ${unfiltered ? `<p class="mt-1 text-xs text-muted">${escapeHtml(row.repositoryName)}</p>` : ""}
         <div class="mt-2 flex flex-wrap items-center gap-1">${rowBadges(row, inbox)}</div>
@@ -101,17 +103,18 @@ const renderInboxPageRecords = (rows: InboxRow[], inbox: InboxContext, unfiltere
     ),
   });
 
-const utilityLink = (href: string, current: boolean, glyph: IconName, label: string, extra = "") =>
-  `<a class="flex h-8 items-center gap-2 rounded-field border-l-2 ${current ? "border-l-brand-readable bg-brand-tint" : "border-transparent"} px-3 text-sm font-medium text-muted" href="${href}"${current ? ' aria-current="page"' : ""}${extra}>${icon(glyph, 20)}<span>${label}</span></a>`;
+const utilityLink = (href: string, current: boolean, glyph: IconName, label: string, extra = "", idPrefix = "inbox-") =>
+  `<a id="${idPrefix}utility-${label.toLocaleLowerCase().replaceAll(" ", "-")}" class="flex h-8 items-center gap-2 rounded-field border-l-2 ${current ? "border-l-brand-readable bg-brand-tint" : "border-transparent"} px-3 text-sm font-medium text-muted" href="${href}"${current ? ' aria-current="page"' : ""}${extra}>${icon(glyph, 20)}<span>${label}</span></a>`;
 
-const renderInboxUtility = (repository: Repository, currentPath: string) => {
+const renderInboxUtility = (repository: Repository, currentPath: string, layout: "sidebar" | "page" = "sidebar") => {
   const github = safeExternalUrl(repository.htmlUrl);
   const prs = pullRequestsLink(repository);
-  const sessions = sessionsLink(repository);
+  const sessions = `${sessionsLink(repository)}?status=all`;
+  const idPrefix = layout === "page" ? "inbox-page-" : "inbox-";
   return `<nav class="border-t border-edge p-2" aria-label="Filtered Repository">
-    ${utilityLink(prs, currentPath === prs, "code-bracket", "Pull requests")}
-    <div class="mt-1">${utilityLink(sessions, currentPath === sessions, "command-line", "All Sessions")}</div>
-    ${github ? `<div class="mt-1">${utilityLink(escapeHtml(github), false, "arrow-top-right-on-square", "Open on GitHub", ' target="_blank" rel="noopener noreferrer"')}</div>` : ""}
+    ${utilityLink(escapeHtml(prs), currentPath === prs, "code-bracket", "Pull requests", "", idPrefix)}
+    <div class="mt-1">${utilityLink(escapeHtml(sessions), currentPath === sessionsLink(repository), "command-line", "All Sessions", "", idPrefix)}</div>
+    ${github ? `<div class="mt-1">${utilityLink(escapeHtml(github), false, "arrow-top-right-on-square", "Open on GitHub", ' target="_blank" rel="noopener noreferrer"', idPrefix)}</div>` : ""}
   </nav>`;
 };
 
@@ -127,15 +130,7 @@ const renderInboxEmpty = (inbox: InboxContext, layout: "sidebar" | "page") => {
       : `<p class="px-3 py-2 text-sm text-muted"><a class="text-brand-readable underline underline-offset-4" href="/repositories/new">Add a Repository</a></p>`;
   }
   if (inbox.list.rows.length > 0) return "";
-  const blocked = inbox.specsRefresh.some((state) =>
-    !state || state.availability === "never" || (state.availability === "unavailable" && state.failureReason),
-  );
-  if (blocked) {
-    const reason = inbox.specsRefresh.find((state) => state?.failureReason)?.failureReason ?? "";
-    return page
-      ? emptyState("Specs unavailable", reason ? escapeHtml(reason) : "Specs have not synchronized yet.")
-      : `<p class="px-3 py-2 text-sm text-muted">Specs unavailable${reason ? `: ${escapeHtml(reason)}` : ""}</p>`;
-  }
+  if (inbox.specsRefresh.some(specsRefreshUnavailable)) return "";
   if (inbox.filtered) {
     return page
       ? emptyState(
@@ -150,6 +145,21 @@ const renderInboxEmpty = (inbox: InboxContext, layout: "sidebar" | "page") => {
     : `<p class="px-3 py-2 text-sm text-muted">No work yet</p>`;
 };
 
+const specsRefreshUnavailable = (state: RefreshState | undefined) =>
+  !state || state.availability === "never" || state.availability === "unavailable" || state.availability === "partial";
+
+const renderSpecsUnavailable = (inbox: InboxContext, layout: "sidebar" | "page") => {
+  const reasons = inbox.specsRefresh
+    .filter(specsRefreshUnavailable)
+    .map((state) => state?.failureReason?.trim() || "Specs have not synchronized yet.")
+    .filter((reason, index, values) => values.indexOf(reason) === index);
+  if (reasons.length === 0) return "";
+  const detail = reasons.map(escapeHtml).join(" ");
+  return layout === "page"
+    ? `<div class="alert alert-warning alert-soft mt-6 leading-normal" role="alert"><div><strong>Specs unavailable.</strong> ${detail}</div></div>`
+    : `<div class="px-3 py-2 text-sm text-warning"><p class="font-medium">Specs unavailable</p><p class="mt-1 leading-normal">${detail}</p></div>`;
+};
+
 export const renderInboxFilter = (inbox: InboxContext, layout: "sidebar" | "page" = "sidebar") => {
   const page = layout === "page";
   const disabled = inbox.repositories.length === 0;
@@ -162,10 +172,7 @@ export const renderInboxFilter = (inbox: InboxContext, layout: "sidebar" | "page
     ),
     `<option value="manage">Manage Repositories…</option>`,
   ].join("");
-  const attrs = page || inbox.currentPath === "/inbox"
-    ? `action="/inbox" method="get"`
-    : `action="/inbox" method="get" hx-get="/inbox/list" hx-target="#inbox-list-body" hx-select="#inbox-list-body" hx-swap="innerHTML" hx-push-url="false" hx-trigger="change"`;
-  return `<form class="${page ? "mt-6 max-w-2xl" : "p-2"}" ${attrs}>
+  return `<form class="${page ? "mt-6 max-w-2xl" : "p-2"}" action="/inbox" method="get">
     <div class="flex items-center gap-1">
       <label class="sr-only" for="${selectId}">Repository</label>
       <select id="${selectId}" class="select min-w-0 flex-1" name="repository"${disabled ? " disabled" : ""}>${options}</select>
@@ -180,22 +187,23 @@ export const renderInboxGroups = (inbox: InboxContext, layout: "sidebar" | "page
   if (empty) return empty;
 
   const unfiltered = inbox.filtered === undefined;
-  return GROUP_ORDER.map((group) => {
+  const groups = GROUP_ORDER.map((group) => {
     const rows = inbox.list.rows.filter((row) => row.group === group);
     if (rows.length === 0) return "";
     const label = group === "settled" && inbox.list.settledNew > 0
       ? `Settled · ${inbox.list.settledNew} new`
       : GROUP_LABEL[group];
-    const allSessions = group === "settled" && inbox.filtered
-      ? `<a class="mt-2 inline-block px-3 text-sm text-brand-readable underline underline-offset-4" href="${sessionsLink(inbox.filtered)}">View all Sessions</a>`
+    const allSessions = group === "settled"
+      ? `<a id="${layout === "page" ? "inbox-page-view-all-sessions" : "inbox-view-all-sessions"}" class="mt-2 inline-block px-3 text-sm text-brand-readable underline underline-offset-4" href="${inbox.filtered ? `${sessionsLink(inbox.filtered)}?status=all` : "/sessions?status=all"}">View all Sessions</a>`
       : "";
     const body = layout === "page"
       ? renderInboxPageRecords(rows, inbox, unfiltered, GROUP_LABEL[group])
       : `<div class="${group === "settled" ? "mt-2 " : ""}grid gap-2">${rows.map((row) => renderInboxRow(row, inbox, unfiltered)).join("")}</div>`;
     const heading = layout === "page" ? "text-base font-semibold" : "px-3 py-2 text-xs font-medium uppercase tracking-wide text-faint";
     if (group === "settled") {
-      return `<details class="${layout === "page" ? "mt-6" : "mt-4"}">
-        <summary class="cursor-pointer ${heading}">${escapeHtml(label)}</summary>
+      const settledId = layout === "page" ? "inbox-page-settled" : "inbox-settled";
+      return `<details id="${settledId}" class="${layout === "page" ? "mt-6" : "mt-4"}>
+        <summary id="${settledId}-summary" class="cursor-pointer ${heading}">${escapeHtml(label)}</summary>
         ${body}
         ${allSessions}
       </details>`;
@@ -205,18 +213,17 @@ export const renderInboxGroups = (inbox: InboxContext, layout: "sidebar" | "page
       ${body}
     </section>`;
   }).join("");
+  return `${renderSpecsUnavailable(inbox, layout)}${groups}`;
 };
 
 export const renderInboxList = (inbox: InboxContext) =>
-  `<div id="inbox-list" class="flex min-h-0 flex-1 flex-col" hx-get="/inbox/list" hx-trigger="every 30s" hx-target="#inbox-list-body" hx-select="#inbox-list-body" hx-swap="innerHTML" hx-push-url="false">
-    <div id="inbox-list-body" class="flex min-h-0 flex-1 flex-col">
-      <div class="min-h-0 flex-1 overflow-y-auto p-2">${renderInboxGroups(inbox)}</div>
-      ${inbox.filtered ? renderInboxUtility(inbox.filtered, inbox.currentPath) : ""}
-    </div>
+  `<div id="inbox-list" tabindex="-1" class="flex min-h-0 flex-1 flex-col" hx-get="/inbox/list" hx-trigger="every 30s" hx-swap="outerHTML" hx-push-url="false">
+    <div data-inbox-scroll class="min-h-0 flex-1 overflow-y-auto p-2">${renderInboxGroups(inbox)}</div>
+    ${inbox.filtered ? renderInboxUtility(inbox.filtered, inbox.currentPath) : ""}
   </div>`;
 
 export const renderInboxPage = (inbox: InboxContext) =>
   `${pageHeader({ title: "Inbox" })}
   ${renderInboxFilter(inbox, "page")}
   ${renderInboxGroups(inbox, "page")}
-  ${inbox.filtered ? renderInboxUtility(inbox.filtered, inbox.currentPath) : ""}`;
+  ${inbox.filtered ? renderInboxUtility(inbox.filtered, inbox.currentPath, "page") : ""}`;

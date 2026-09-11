@@ -90,8 +90,6 @@ export const renderSpecsPage = ({
 
   return renderShell({
     title: `${repository.fullName} Specs`,
-    active: "specs",
-    repository,
     csrfToken,
     inbox,
     content: `${renderRepositoryHeading(repository, "Specs", "Open, non-PR GitHub issues labelled exactly spec.", csrfToken)}
@@ -131,8 +129,6 @@ export const renderSpecDetailPage = ({
 
   return renderShell({
     title: `Spec #${spec.issueNumber}`,
-    active: "spec",
-    repository,
     csrfToken,
     inbox,
     content: `<a class="text-sm text-brand-readable underline underline-offset-4" href="${repositoryLink(repository)}">← Back to Specs</a>
@@ -198,8 +194,6 @@ export const renderSpecUnavailablePage = ({
   inbox?: InboxContext;
 }) => renderShell({
   title: `${repository.fullName} Specs unavailable`,
-  active: "specs",
-  repository,
   csrfToken,
   inbox,
   content: `${renderRepositoryHeading(repository, "Specs unavailable", "Atlas could not complete the first Specs read.", csrfToken)}

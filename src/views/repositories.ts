@@ -125,7 +125,6 @@ export const renderRepositoriesPage = (
 
   return renderShell({
     title: "Repositories",
-    active: "repositories",
     csrfToken,
     inbox,
     content: `${pageHeader({
@@ -238,7 +237,6 @@ export const renderAddRepositoryPage = ({
 
   return renderShell({
     title: "Add Repository",
-    active: "new-repository",
     csrfToken,
     inbox,
     content: `${pageHeader({

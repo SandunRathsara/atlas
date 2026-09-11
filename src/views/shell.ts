@@ -1,9 +1,8 @@
 import { readRecoveryStatus, type RecoveryStatus } from "../recovery-status.ts";
-import type { Repository } from "../persistence.ts";
 import { escapeHtml, formatTime, renderDocument, skipLink } from "./html.ts";
 import { icon } from "./icons.ts";
 import { renderInboxFilter, renderInboxList, type InboxContext } from "./inbox.ts";
-import { type ActivePage, alertSoft } from "./shared.ts";
+import { alertSoft } from "./shared.ts";
 
 export type { InboxContext };
 
@@ -130,8 +129,6 @@ export const renderShell = ({
   inbox = emptyInbox(),
 }: {
   title: string;
-  active: ActivePage;
-  repository?: Repository;
   csrfToken: string;
   historyDisabled?: boolean;
   content: string;

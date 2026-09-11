@@ -148,18 +148,21 @@ const seed = (db: Persistence) => {
 const assertShell = (body: string) => {
   assert(body.includes("lg:w-72"));
   assert(body.includes('name="repository"'));
+  assert(body.includes('action="/inbox" method="get"'));
   assert(body.includes('id="inbox-repository"'));
   assert(body.includes(">All Repositories</option>"));
   assert(body.includes(">Manage Repositories…</option>"));
   assert(body.includes('aria-label="Add a Repository"'));
   assert(body.includes('id="inbox-list"'));
-  assert(body.includes('id="inbox-list-body"'));
   assert(body.includes('hx-trigger="every 30s"'));
   assert(body.includes('hx-push-url="false"'));
   assert(body.includes('hx-get="/inbox/list"'));
-  assert(body.includes('hx-target="#inbox-list-body"'));
-  assert(body.includes('hx-select="#inbox-list-body"'));
-  assert(body.includes('hx-swap="innerHTML"'));
+  assert(body.includes('hx-swap="outerHTML"'));
+  assert(body.includes("data-inbox-scroll"));
+  assert(!body.includes("inbox-list-body"));
+  assert(!body.includes('hx-target="#inbox-list-body"'));
+  assert(!body.includes('hx-select="#inbox-list-body"'));
+  assert(!body.includes('hx-trigger="change"'));
   assert(!body.includes("data-focus-on-swap"));
   assert(!body.includes("No Repository selected"));
   assert(!body.includes('uppercase tracking-wide text-faint">Atlas</p>'));
@@ -180,6 +183,8 @@ const assertShell = (body: string) => {
   const app = mount(db);
   const page = await request(app, "/inbox", auth);
   assert.equal(page.status, 200);
+  assert.equal(page.headers.get("Cache-Control"), "private, no-store");
+  assert.equal(page.headers.get("Vary"), "HX-Request");
   const body = await page.text();
   assertShell(body);
   assert(body.includes("Add a Repository"));
@@ -208,8 +213,9 @@ const assertShell = (body: string) => {
   assert(body.includes(">alpha</p>"));
   assert(body.includes(">beta</p>"));
   assert(body.includes(">All Repositories</p>"));
-  assert(!body.includes("Pull requests"));
-  assert(!body.includes("View all Sessions"));
+  assert(body.includes("View all Sessions"));
+  assert(body.includes('id="inbox-view-all-sessions"'));
+  assert(body.includes('href="/sessions?status=all"'));
   assert(body.includes(`href="/sessions/${waitingId}"`));
   assert(body.includes("/repositories/1/specs/3"));
   assert(body.includes(`href="/sessions/${doneId}"`));
@@ -222,6 +228,8 @@ const assertShell = (body: string) => {
   const app = mount(db);
   const filtered = await request(app, "/inbox?repository=1", auth);
   assert.equal(filtered.status, 200);
+  assert.equal(filtered.headers.get("Cache-Control"), "private, no-store");
+  assert.equal(filtered.headers.get("Vary"), "HX-Request");
   assert.deepEqual(parsedCookies(filtered).atlas_inbox.value, { repositoryId: "1" });
   const body = await filtered.text();
   assert(body.includes(">Org/alpha</p>"));
@@ -233,7 +241,7 @@ const assertShell = (body: string) => {
   assert(body.includes("Open on GitHub"));
   assert(body.includes("View all Sessions"));
   assert(body.includes("/repositories/1/pull-requests"));
-  assert(body.includes("/repositories/1/sessions"));
+  assert(body.includes('href="/repositories/1/sessions?status=all"'));
   db.close();
 }
 
@@ -244,11 +252,46 @@ const assertShell = (body: string) => {
   const managed = await request(app, "/inbox?repository=manage", auth);
   assert.equal(managed.status, 303);
   assert.equal(managed.headers.get("Location"), "/repositories");
+  assert.equal(managed.headers.get("Cache-Control"), "private, no-store");
+  assert.equal(managed.headers.get("Vary"), "HX-Request");
   assert.equal(parsedCookies(managed).atlas_inbox, undefined);
 
   const hx = await request(app, "/inbox/list?repository=manage", { ...auth, "HX-Request": "true" });
   assert.equal(hx.status, 200);
   assert.equal(hx.headers.get("HX-Redirect"), "/repositories");
+  assert.equal(hx.headers.get("Cache-Control"), "private, no-store");
+  assert.equal(hx.headers.get("Vary"), "HX-Request");
+  db.close();
+}
+
+{
+  const db = persistence();
+  seed(db);
+  const app = mount(db);
+  const canonical = await request(app, "/inbox", {
+    ...auth,
+    Cookie: cookieJson("atlas_inbox", { repositoryId: "1" }),
+  });
+  assert.equal(canonical.status, 303);
+  assert.equal(canonical.headers.get("Location"), "/inbox?repository=1");
+  assert.equal(canonical.headers.get("Cache-Control"), "private, no-store");
+  assert.equal(canonical.headers.get("Vary"), "HX-Request");
+  db.close();
+}
+
+{
+  const db = persistence();
+  seed(db);
+  db.removeRepository("1");
+  const app = mount(db);
+  const fallback = await request(app, "/inbox", {
+    ...auth,
+    Cookie: cookieJson("atlas_inbox", { repositoryId: "1" }),
+  });
+  assert.equal(fallback.status, 200);
+  const body = await fallback.text();
+  assert(body.includes(">All Repositories</p>"));
+  assert(!body.includes(">Org/alpha</p>"));
   db.close();
 }
 
@@ -260,11 +303,12 @@ const assertShell = (body: string) => {
   assert.equal(fragment.status, 200);
   const body = await fragment.text();
   assert(body.includes('id="inbox-list"'));
-  assert(body.includes('id="inbox-list-body"'));
   assert(body.includes('hx-trigger="every 30s"'));
-  assert(body.includes('hx-target="#inbox-list-body"'));
-  assert(body.includes('hx-select="#inbox-list-body"'));
-  assert(body.includes('hx-swap="innerHTML"'));
+  assert(body.includes('hx-swap="outerHTML"'));
+  assert(body.includes("data-inbox-scroll"));
+  assert(!body.includes("inbox-list-body"));
+  assert(!body.includes('hx-target="#inbox-list-body"'));
+  assert(!body.includes('hx-select="#inbox-list-body"'));
   assert(body.includes('hx-push-url="false"'));
   assert(!body.includes("<!doctype html>"));
   assert(body.includes("Needs you"));
@@ -283,9 +327,31 @@ const assertShell = (body: string) => {
   const app = mount(db);
   const selected = await request(app, `/sessions/${waitingId}`, auth);
   const body = await selected.text();
-  assert(body.includes('aria-current="page"'));
+  assert(/id="inbox-1-1"[^>]*aria-current="page"/.test(body));
   assert(body.includes("bg-brand-tint"));
   assert(body.includes("border-l-brand-readable"));
+  db.close();
+}
+
+{
+  const db = persistence();
+  seed(db);
+  const app = mount(db);
+  for (const currentUrl of [
+    "/repositories/1/specs/1",
+    "/repositories/1/specs/1/sessions/new",
+    `/sessions/${waitingId}/target`,
+    `/sessions/${waitingId}/reservation/release`,
+    `/sessions/${waitingId}/view`,
+  ]) {
+    const response = await request(app, "/inbox/list", {
+      ...auth,
+      "HX-Request": "true",
+      "HX-Current-URL": `http://atlas.test${currentUrl}`,
+    });
+    assert.equal(response.status, 200);
+    assert(/id="inbox-1-1"[^>]*aria-current="page"/.test(await response.text()));
+  }
   db.close();
 }
 
@@ -299,6 +365,7 @@ const assertShell = (body: string) => {
   });
   const body = await visit.text();
   assert(body.includes("Settled · 1 new"));
+  assert(body.includes("inline-block size-2"));
   assert(body.includes("sr-only\">New</span>"));
   db.close();
 }
@@ -313,9 +380,45 @@ const assertShell = (body: string) => {
   });
   const body = await specs.text();
   assertShell(body);
-  assert(body.includes('hx-trigger="change"'));
+  assert(!body.includes('hx-trigger="change"'));
   assert(body.includes(">Org/alpha</p>"));
   assert(body.includes("Needs you"));
+
+  const scopedQuery = await request(app, "/repositories/1/specs?repository=2", {
+    ...auth,
+    Cookie: cookieJson("atlas_inbox", { repositoryId: "1" }),
+  });
+  const scopedBody = await scopedQuery.text();
+  assert(scopedBody.includes('<option value="1" selected>Org/alpha</option>'));
+  assert(!scopedBody.includes('<option value="2" selected>Org/beta</option>'));
+  db.close();
+}
+
+{
+  const db = persistence();
+  seed(db);
+  db.updateAccess("2", "unknown", "GitHub timed out");
+  const app = mount(db);
+  const page = await request(app, "/inbox", auth);
+  const body = await page.text();
+  assert(body.includes("Beta spec"));
+  assert(body.includes(">Access unknown</span>"));
+  assert(body.includes("badge-warning"));
+  assert(!body.includes(">Access unavailable</span>"));
+  db.close();
+}
+
+{
+  const db = persistence();
+  seed(db);
+  const app = mount(db);
+  const sessions = await request(app, "/sessions?status=all", auth);
+  assert.equal(sessions.status, 200);
+  const body = await sessions.text();
+  assert(body.includes("All Sessions"));
+  assert(body.includes("Org/alpha"));
+  assert(body.includes(`href="/sessions/${waitingId}"`));
+  assert(body.includes('href="/sessions?status=all"'));
   db.close();
 }
 

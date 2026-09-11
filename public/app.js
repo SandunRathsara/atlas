@@ -1,4 +1,6 @@
 (() => {
+  let inboxPollContext;
+
   const requestMessage = (status) => {
     if (status === 0) return "The request could not reach Atlas. Check the connection and try again.";
     if (status === 401) return "Your sign-in expired. Sign in again to retry.";
@@ -8,9 +10,12 @@
   };
 
   document.body.addEventListener("htmx:afterRequest", (event) => {
+    const element = event.detail.elt;
+    if (element instanceof Element && element.id === "inbox-list" && (event.detail.failed || event.detail.xhr?.status === 0)) {
+      inboxPollContext = undefined;
+    }
     if (!event.detail.failed && event.detail.xhr?.status !== 0) return;
 
-    const element = event.detail.elt;
     const form = element instanceof HTMLFormElement ? element : element.closest("form");
     const status = form?.querySelector("[data-form-status]");
     if (!status) return;
@@ -20,7 +25,24 @@
     status.textContent = requestMessage(event.detail.xhr?.status ?? 0);
   });
 
-  document.body.addEventListener("htmx:afterSwap", () => {
+  document.body.addEventListener("htmx:afterSwap", (event) => {
+    if (inboxPollContext && event.detail.elt instanceof Element && event.detail.elt.id === "inbox-list") {
+      const root = document.getElementById("inbox-list");
+      if (root instanceof HTMLElement) {
+        const scroll = root.querySelector("[data-inbox-scroll]");
+        if (scroll) scroll.scrollTop = inboxPollContext.scrollTop;
+        inboxPollContext.details.forEach(({ id, open }) => {
+          const detail = id ? document.getElementById(id) : null;
+          if (detail instanceof HTMLDetailsElement && root.contains(detail)) detail.open = open;
+        });
+        if (inboxPollContext.focused) {
+          const active = inboxPollContext.activeId ? document.getElementById(inboxPollContext.activeId) : null;
+          if (active instanceof HTMLElement && root.contains(active)) active.focus({ preventScroll: true });
+          else root.focus({ preventScroll: true });
+        }
+      }
+      inboxPollContext = undefined;
+    }
     requestAnimationFrame(() => {
       const target = document.querySelector("[data-focus-on-swap]");
       if (!target) return;
@@ -30,6 +52,20 @@
     startSessionViewer();
   });
 
+  document.body.addEventListener("htmx:beforeRequest", (event) => {
+    const element = event.detail.elt;
+    if (!(element instanceof HTMLElement) || element.id !== "inbox-list") return;
+    const active = document.activeElement instanceof HTMLElement && element.contains(document.activeElement)
+      ? document.activeElement
+      : null;
+    inboxPollContext = {
+      activeId: active?.id || null,
+      focused: Boolean(active),
+      details: [...element.querySelectorAll("details")].map((detail) => ({ id: detail.id, open: detail.open })),
+      scrollTop: element.querySelector("[data-inbox-scroll]")?.scrollTop ?? 0,
+    };
+  });
+
   document.body.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     const navigation = event.target instanceof Element ? event.target.closest("[data-mobile-navigation]") : null;
@@ -37,27 +73,6 @@
     event.preventDefault();
     navigation.open = false;
     navigation.querySelector("[data-mobile-navigation-trigger]")?.focus();
-  });
-
-  document.body.addEventListener("change", (event) => {
-    const select = event.target instanceof HTMLSelectElement && event.target.matches("[data-prototype-repository-filter]")
-      ? event.target
-      : null;
-    if (!select) return;
-    if (select.value === "manage") {
-      window.location.assign("/repositories");
-      return;
-    }
-    select.form?.requestSubmit();
-  });
-
-  document.body.addEventListener("keydown", (event) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLElement && event.target.isContentEditable) return;
-    const switcher = document.querySelector("[data-prototype-switcher]");
-    if (!switcher) return;
-    event.preventDefault();
-    switcher.querySelector(event.key === "ArrowLeft" ? "[data-prototype-previous]" : "[data-prototype-next]")?.click();
   });
 
   window.addEventListener("DOMContentLoaded", () => {

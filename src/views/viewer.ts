@@ -391,8 +391,6 @@ export const renderSessionDetailPage = ({
 
   return renderShell({
     title: `Session ${session.atlasId}`,
-    active: "sessions",
-    repository,
     csrfToken,
     historyDisabled: true,
     inbox,

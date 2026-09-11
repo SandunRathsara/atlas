@@ -171,6 +171,8 @@ const setState = (
   const response = await request(app, "/", auth);
   assert.equal(response.status, 303);
   assert.equal(response.headers.get("Location"), "/repositories/new");
+  assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+  assert.equal(response.headers.get("Vary"), "HX-Request");
   const cookies = parsedCookies(response);
   assert.deepEqual(cookies.atlas_visit.value, { lastVisitAt: NOW_ISO });
   assertCookieFlags(cookies.atlas_visit.header);
@@ -186,6 +188,8 @@ const setState = (
   const response = await request(app, "/", auth);
   assert.equal(response.status, 303);
   assert.equal(response.headers.get("Location"), "/inbox");
+  assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+  assert.equal(response.headers.get("Vary"), "HX-Request");
   const cookies = parsedCookies(response);
   assert.deepEqual(cookies.atlas_visit.value, { lastVisitAt: NOW_ISO });
   assert.equal(cookies.atlas_inbox, undefined);
@@ -289,6 +293,8 @@ const setState = (
   const app = mount(db);
   const page = await request(app, "/inbox", auth);
   assert.equal(page.status, 200);
+  assert.equal(page.headers.get("Cache-Control"), "private, no-store");
+  assert.equal(page.headers.get("Vary"), "HX-Request");
   const body = await page.text();
   assert(body.includes("Inbox | Atlas"));
   assert.equal(page.headers.get("Location"), null);
@@ -298,6 +304,15 @@ const setState = (
   const filteredCookies = parsedCookies(filtered);
   assert.deepEqual(filteredCookies.atlas_inbox.value, { repositoryId: "1" });
   assertCookieFlags(filteredCookies.atlas_inbox.header);
+
+  const canonical = await request(app, "/inbox", {
+    ...auth,
+    Cookie: cookieJson("atlas_inbox", { repositoryId: "1" }),
+  });
+  assert.equal(canonical.status, 303);
+  assert.equal(canonical.headers.get("Location"), "/inbox?repository=1");
+  assert.equal(canonical.headers.get("Cache-Control"), "private, no-store");
+  assert.equal(canonical.headers.get("Vary"), "HX-Request");
 
   const cleared = await request(app, "/inbox?repository=", auth);
   assert.equal(cleared.status, 200);

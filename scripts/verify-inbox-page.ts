@@ -102,6 +102,10 @@ const assertInboxPageChrome = (body: string) => {
   assert(!body.includes("data-mobile-navigation"));
   assert(body.includes('id="inbox-page-repository"'));
   assert(body.includes('id="inbox-repository"'));
+  assert(body.includes('action="/inbox" method="get"'));
+  assert(!body.includes('hx-trigger="change"'));
+  assert(body.includes('hx-swap="outerHTML"'));
+  assert(!body.includes("inbox-list-body"));
 };
 
 {
@@ -109,6 +113,8 @@ const assertInboxPageChrome = (body: string) => {
   const app = mount(db);
   const page = await request(app, "/inbox", auth);
   assert.equal(page.status, 200);
+  assert.equal(page.headers.get("Cache-Control"), "private, no-store");
+  assert.equal(page.headers.get("Vary"), "HX-Request");
   const body = await page.text();
   assertInboxPageChrome(body);
   assert(body.includes("Add a Repository"));
@@ -209,6 +215,39 @@ const assertInboxPageChrome = (body: string) => {
   const fragmentBody = await fragment.text();
   assert(!fragmentBody.includes("<!doctype html>"));
   assert(!fragmentBody.includes("data-mobile-navigation"));
+  assert(fragmentBody.includes('hx-swap="outerHTML"'));
+  assert(!fragmentBody.includes("inbox-list-body"));
+  db.close();
+}
+
+{
+  const db = persistence();
+  db.upsertRepository(repo("1", "alpha"));
+  db.upsertRepository(repo("2", "beta"));
+  db.replaceSpecs("1", [spec("spec-wait", "1", "Waiting spec")]);
+  db.markRefreshFailure("2", "specs", "GitHub returned <temporary failure>");
+  const app = mount(db);
+  const page = await request(app, "/inbox", auth);
+  const body = await page.text();
+  assert(body.includes("Waiting spec"));
+  assert(body.includes("Specs unavailable"));
+  assert(body.includes("GitHub returned &lt;temporary failure&gt;"));
+  assert(!body.includes("No work yet"));
+  db.close();
+}
+
+{
+  const db = persistence();
+  db.upsertRepository(repo("1", "alpha"));
+  db.replaceSpecs("1", [spec("spec-wait", "1", "Unknown access spec")]);
+  db.updateAccess("1", "unknown", "GitHub timed out");
+  const app = mount(db);
+  const page = await request(app, "/inbox", auth);
+  const body = await page.text();
+  assert(body.includes("Unknown access spec"));
+  assert(body.includes(">Access unknown</span>"));
+  assert(body.includes("badge-warning"));
+  assert(!body.includes(">Access unavailable</span>"));
   db.close();
 }
 

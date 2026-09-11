@@ -23,11 +23,6 @@ import {
   type SessionTarget,
 } from "./persistence.ts";
 import { createPreparationService } from "./preparation.ts";
-import {
-  renderInboxPrototype,
-  type InboxPrototypeRepository,
-  type InboxPrototypeVariant,
-} from "./prototype-inbox.ts";
 import type { CredentialBoundary } from "./credentials.ts";
 import { APPROVED_OPENCODE_VERSION, createOpenCodeHandoffService } from "./opencode.ts";
 import type { OpenCodeHandoffService } from "./opencode.ts";
@@ -184,6 +179,11 @@ const parseForm = async (request: Request): Promise<Record<string, unknown>> => 
 const setPrivateHtmlHeaders = (c: { header: (name: string, value: string) => void }) => {
   c.header("Cache-Control", "private, no-store");
   c.header("Vary", "HX-Request");
+};
+
+const privateHeaders: MiddlewareHandler = async (c, next) => {
+  setPrivateHtmlHeaders(c);
+  await next();
 };
 
 const securityHeaders: MiddlewareHandler = async (c, next) => {
@@ -568,7 +568,7 @@ export const createApp = (options: AppOptions) => {
     const current = c.req.header("HX-Current-URL");
     if (current) {
       try {
-        return new URL(current).pathname;
+        return new URL(current, c.req.url).pathname;
       } catch {
         return c.req.path;
       }
@@ -576,8 +576,21 @@ export const createApp = (options: AppOptions) => {
     return c.req.path;
   };
 
+  const selectedSpecForPath = (path: string) => {
+    const specMatch = /^\/repositories\/([1-9]\d{0,19})\/specs\/([1-9]\d{0,9})(?:\/sessions(?:\/new)?)?$/.exec(path);
+    if (specMatch) return { repositoryId: specMatch[1]!, issueNumber: specMatch[2]! };
+
+    const sessionMatch = /^\/sessions\/([^/]+)(?:\/target|\/reservation\/release|\/view)?$/.exec(path);
+    if (!sessionMatch || !sessionIdPattern.test(sessionMatch[1]!)) return undefined;
+    const session = persistence.getSession(sessionMatch[1]!);
+    return session
+      ? { repositoryId: session.repositoryId, issueNumber: session.specIssueNumber }
+      : undefined;
+  };
+
   const inboxFromRequest = (c: Context) => {
-    const query = c.req.query("repository");
+    const path = c.req.path;
+    const query = path === "/inbox" || path === "/inbox/list" ? c.req.query("repository") : undefined;
     const repositoryId = query !== undefined && query !== "manage"
       ? query
       : readInboxCookie(c.req.header("Cookie")).repositoryId;
@@ -588,14 +601,14 @@ export const createApp = (options: AppOptions) => {
       lastVisitAt: readVisitCookie(c.req.header("Cookie")).lastVisitAt,
     });
     const relevant = filtered ? [filtered] : repositories;
+    const currentPath = inboxPath(c);
     return {
       repositories,
       filtered,
       list,
-      currentPath: inboxPath(c),
-      specsRefresh: list.rows.length === 0
-        ? relevant.map((repository) => persistence.getRefreshState(repository.githubId, "specs"))
-        : [],
+      currentPath,
+      selectedSpec: selectedSpecForPath(currentPath),
+      specsRefresh: relevant.map((repository) => persistence.getRefreshState(repository.githubId, "specs")),
     };
   };
 
@@ -614,7 +627,7 @@ export const createApp = (options: AppOptions) => {
     return c.redirect("/repositories", 303);
   };
 
-  app.get("/", auth.middleware, (c) => {
+  app.get("/", privateHeaders, auth.middleware, (c) => {
     const visit = readVisitCookie(c.req.header("Cookie"));
     const session = persistence.findLandingSession(visit.lastVisitAt ?? "");
     const lastRepository = visit.lastRepositoryId
@@ -642,33 +655,33 @@ export const createApp = (options: AppOptions) => {
     return c.redirect(location, 303);
   });
 
-  app.get("/inbox", auth.middleware, (c) => {
+  app.get("/inbox", privateHeaders, auth.middleware, (c) => {
+    if (c.req.query("repository") === undefined) {
+      const remembered = enrolledInboxRepository(readInboxCookie(c.req.header("Cookie")).repositoryId);
+      if (remembered) return c.redirect(`/inbox?repository=${encodeURIComponent(remembered.githubId)}`, 303);
+    }
     const managed = manageInboxFilter(c);
     if (managed) return managed;
     rememberInboxFilter(c);
     const identity = c.get("auth");
     const inbox = inboxFromRequest(c);
-    setPrivateHtmlHeaders(c);
     return c.html(renderShell({
       title: "Inbox",
-      active: "repositories",
       csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
       inbox,
       content: renderInboxPage(inbox),
     }));
   });
 
-  app.get("/inbox/list", auth.middleware, (c) => {
+  app.get("/inbox/list", privateHeaders, auth.middleware, (c) => {
     const managed = manageInboxFilter(c);
     if (managed) return managed;
     rememberInboxFilter(c);
     const inbox = inboxFromRequest(c);
-    setPrivateHtmlHeaders(c);
     if (!isHtmx(c)) {
       const identity = c.get("auth");
       return c.html(renderShell({
         title: "Inbox",
-        active: "repositories",
         csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
         inbox,
         content: renderInboxPage(inbox),
@@ -807,21 +820,6 @@ export const createApp = (options: AppOptions) => {
   app.use("/sessions", auth.middleware);
   app.use("/sessions/*", auth.middleware);
   app.use("/events", auth.middleware);
-
-  if (Bun.env.NODE_ENV !== "production") {
-    app.use("/prototype/*", auth.middleware);
-    app.get("/prototype/inbox", (c) => {
-      const requestedVariant = c.req.query("variant")?.toUpperCase();
-      const variant: InboxPrototypeVariant = requestedVariant === "B" || requestedVariant === "C" ? requestedVariant : "A";
-      const requestedRepository = c.req.query("repository");
-      if (requestedRepository === "manage") return c.redirect("/repositories", 303);
-      const repository: InboxPrototypeRepository = requestedRepository === "atlas" || requestedRepository === "opencode" || requestedRepository === "bearings"
-        ? requestedRepository
-        : "all";
-      setPrivateHtmlHeaders(c);
-      return c.html(renderInboxPrototype({ variant, repository, selectedSpec: c.req.query("spec") }));
-    });
-  }
 
   app.get("/events", (c) => {
     const sessionId = c.req.query("session");
@@ -1446,6 +1444,29 @@ export const createApp = (options: AppOptions) => {
       sessions: persistence.listSessions(repositoryId, filter),
       filter,
       pullRequestsRefresh: persistence.getRefreshState(repositoryId, "pullRequests"),
+      inbox: inboxFromRequest(c),
+    }));
+  });
+
+  app.get("/sessions", (c) => {
+    const requestedFilter = c.req.query("status") ?? "active";
+    if (!sessionFilters.has(requestedFilter as SessionFilter)) return c.text("Invalid Session status filter", 400);
+    const filter = requestedFilter as SessionFilter;
+    const repositories = persistence.listRepositories();
+    const sessions = repositories
+      .flatMap((repository) => persistence.listSessions(repository.githubId, filter))
+      .sort((left, right) => right.submissionOrder - left.submissionOrder);
+    const pullRequestsRefreshByRepository = new Map(
+      repositories.map((repository) => [repository.githubId, persistence.getRefreshState(repository.githubId, "pullRequests")]),
+    );
+    const identity = c.get("auth");
+    setPrivateHtmlHeaders(c);
+    return c.html(renderSessionsPage({
+      csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
+      repositories,
+      sessions,
+      filter,
+      pullRequestsRefreshByRepository,
       inbox: inboxFromRequest(c),
     }));
   });

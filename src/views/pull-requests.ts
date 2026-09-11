@@ -237,8 +237,6 @@ export const renderPullRequestsPage = ({
 
   return renderShell({
     title: `${repository.fullName} Pull requests`,
-    active: "pull-requests",
-    repository,
     csrfToken,
     inbox,
     content: `${renderRepositoryHeading(repository, "Pull requests", "Active GitHub Pull requests, explicit native stack order, and read-only starting-target classification.", csrfToken)}

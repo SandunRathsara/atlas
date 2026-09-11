@@ -121,8 +121,6 @@ export const renderStartSessionPage = ({
 
   return renderShell({
     title: `Start Session · Spec #${spec.issueNumber}`,
-    active: "spec",
-    repository,
     csrfToken,
     inbox,
     content: `<a class="text-sm text-brand-readable underline underline-offset-4" href="${repositoryLink(repository)}">← Back to Specs</a>
@@ -170,8 +168,6 @@ export const renderTargetReconfirmationPage = ({
   const form = renderTargetReconfirmationForm({ action, csrfToken, targetOptions, error });
   return renderShell({
     title: `Reconfirm target · ${session.atlasId}`,
-    active: "sessions",
-    repository,
     csrfToken,
     inbox,
     content: `<a class="text-sm text-brand-readable underline underline-offset-4" href="/sessions/${encodeURIComponent(session.atlasId)}">← Back to Session</a>
@@ -241,9 +237,10 @@ export const renderPendingStartSessionPage = ({
   </main>`,
 );
 
-const sessionListRecord = (session: Session, pullRequestsRefresh?: RefreshState) => {
+const sessionListRecord = (session: Session, pullRequestsRefresh?: RefreshState, repository?: Repository) => {
   const href = `/sessions/${encodeURIComponent(session.atlasId)}`;
   const identity = `<a class="text-brand-readable underline decoration-brand-readable/50 underline-offset-4" href="${href}">Spec #${escapeHtml(session.specIssueNumber)}: ${escapeHtml(session.specTitle)}</a>
+    ${repository ? `<p class="mt-1 text-sm text-muted">${escapeHtml(repository.fullName)}</p>` : ""}
     <p class="mt-1 font-mono text-xs text-faint">Session ${escapeHtml(session.atlasId)}</p>`;
   const badges = `<span class="flex flex-wrap items-center gap-1">${statusBadge(sessionBadgeClass(session.state), sessionStateLabel(session.state))}${sessionFreshnessMarkup(session)}</span>`;
   const extra = `${session.stateReason ? `<p class="mt-2 max-w-prose text-sm leading-normal text-muted">${escapeHtml(session.stateReason)}</p>` : ""}
@@ -289,36 +286,51 @@ const sessionListRecord = (session: Session, pullRequestsRefresh?: RefreshState)
 export const renderSessionsPage = ({
   csrfToken,
   repository,
+  repositories = [],
   sessions,
   filter,
   pullRequestsRefresh,
+  pullRequestsRefreshByRepository,
   inbox,
 }: {
   csrfToken: string;
-  repository: Repository;
+  repository?: Repository;
+  repositories?: readonly Repository[];
   sessions: Session[];
   filter: SessionFilter;
   pullRequestsRefresh?: RefreshState;
+  pullRequestsRefreshByRepository?: ReadonlyMap<string, RefreshState | undefined>;
   inbox?: InboxContext;
 }) => {
   const filters: SessionFilter[] = ["active", "all", "queued", "preparing", "running", "waiting", "idle", "succeeded", "failed", "interrupted", "failed_setup"];
-  const heading = filter === "active" ? "Active Sessions" : filter === "all" ? "Sessions" : `${sessionFilterLabel(filter)} Sessions`;
+  const global = !repository;
+  const repositoryById = new Map(repositories.map((item) => [item.githubId, item]));
+  const heading = filter === "active" ? "Active Sessions" : filter === "all" ? (global ? "All Sessions" : "Sessions") : `${sessionFilterLabel(filter)} Sessions`;
   const emptyText = filter === "active"
-    ? "No unfinished Sessions are present in this Repository."
+    ? `No unfinished Sessions are present in ${global ? "enrolled Repositories" : "this Repository"}.`
     : filter === "all"
-      ? "No Atlas Sessions have been submitted for this Repository."
+      ? `No Atlas Sessions have been submitted for ${global ? "enrolled Repositories" : "this Repository"}.`
       : `No Sessions currently have the ${sessionFilterLabel(filter)} state.`;
-  const records = sessions.map((session) => sessionListRecord(session, pullRequestsRefresh));
+  const description = global
+    ? "Atlas implementation attempts across all enrolled Repositories. Active includes every unfinished Session, including Queued."
+    : "Atlas implementation attempts for this Repository. Active includes every unfinished Session, including Queued.";
+  const headingMarkup = repository
+    ? renderRepositoryHeading(repository, heading, description, csrfToken)
+    : pageHeader({ eyebrow: "Sessions", title: escapeHtml(heading), description: escapeHtml(description) });
+  const records = sessions.map((session) => sessionListRecord(
+    session,
+    repository ? pullRequestsRefresh : pullRequestsRefreshByRepository?.get(session.repositoryId),
+    global ? repositoryById.get(session.repositoryId) : undefined,
+  ));
+  const sessionsBase = repository ? sessionsLink(repository) : "/sessions";
 
   return renderShell({
-    title: `${repository.fullName} Sessions`,
-    active: "sessions",
-    repository,
+    title: repository ? `${repository.fullName} Sessions` : "All Sessions",
     csrfToken,
     inbox,
-    content: `${renderRepositoryHeading(repository, heading, "Atlas implementation attempts for this Repository. Active includes every unfinished Session, including Queued.", csrfToken)}
+    content: `${headingMarkup}
       <nav class="mt-6 flex flex-wrap gap-2" aria-label="Session status filters">
-        ${filters.map((value) => `<a class="btn ${value === filter ? "btn-primary" : "btn-ghost"}" href="${value === "active" ? sessionsLink(repository) : `${sessionsLink(repository)}?status=${encodeURIComponent(value)}`}"${value === filter ? ' aria-current="page"' : ""}>${escapeHtml(sessionFilterLabel(value))}</a>`).join("")}
+        ${filters.map((value) => `<a class="btn ${value === filter ? "btn-primary" : "btn-ghost"}" href="${value === "active" ? sessionsBase : `${sessionsBase}?status=${encodeURIComponent(value)}`}"${value === filter ? ' aria-current="page"' : ""}>${escapeHtml(sessionFilterLabel(value))}</a>`).join("")}
       </nav>
       ${sessions.length > 0
         ? recordTable({
@@ -352,8 +364,6 @@ export const renderReservationReleasePage = ({
 }) => {
   return renderShell({
     title: `Release reservation · ${session.atlasId}`,
-    active: "sessions",
-    repository,
     csrfToken,
     inbox,
     content: `<a class="text-sm text-brand-readable underline underline-offset-4" href="/sessions/${encodeURIComponent(session.atlasId)}">← Back to Session</a>
