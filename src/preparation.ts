@@ -220,11 +220,12 @@ const canonicalRemote = (value: string) => {
   }
 };
 
-const preparationScope = (session: Session, repository: Repository): CredentialScope => ({
+const preparationScope = (session: Session, repository: Repository, helperPaths: string[]): CredentialScope => ({
   atlasId: session.atlasId,
   directory: session.directory!,
   repositoryId: repository.githubId,
   fullName: repository.fullName,
+  helperPaths,
 });
 
 export const createPreparationService = (options: PreparationOptions) => {
@@ -711,7 +712,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       failSetup(session.atlasId, "Preparation intent was incomplete before local work.");
       return;
     }
-    const scope = preparationScope(session, repository);
+    const scope = preparationScope(session, repository, [bunBinary, helperPath]);
     try {
       await credentials.start();
       credentials.registerScope(scope);

@@ -4,11 +4,11 @@ Answers: how is the system technically shaped? Populated and kept current by `/r
 
 ## System Boundary
 
-Inside this repository: the Atlas TypeScript process (private UI + loopback webhook), SQLite persistence, GitHub read client, credential supplier, Session clone/preparation, OpenCode handoff and viewer, server-rendered UI, and inert host deploy assets.
+Inside this repository: the Atlas TypeScript UI/webhook process, an independent TypeScript credential-supplier process, SQLite persistence, GitHub read client, Session clone/preparation, OpenCode handoff and viewer, server-rendered UI, and inert host deploy assets.
 
 Outside: GitHub (App, inventory, issues, PRs, native stacks, signed webhooks); an independently running OpenCode V2 process selected by the operator through `/opt/atlas/tools/opencode/current`; the private host (systemd, Btrfs, Tailscale Serve/Funnel, pinned Bun/Git/gh binaries); operator-managed paths under `/opt/atlas`, `/var/lib/atlas`, `/etc/atlas`, `/var/backups/atlas`, and `/run/atlas`.
 
-`deploy/` does not provision the host, enable units, move OpenCode data, or change Tailscale/firewall.
+`deploy/` is inert until operator action. Its bootstrap installs/enables only the independent credential service and updated unit files; it does not fully provision the host, move OpenCode data, or change Tailscale/firewall.
 
 ## Primary Stack
 
@@ -32,7 +32,7 @@ Dependencies flow downward. Views do not call GitHub or OpenCode. The webhook ap
 
 ```
 src/server.ts
-  → src/credentials.ts#createCredentialBoundary
+  → src/credentials.ts#createCredentialBoundary (non-serving client)
   → src/config.ts#loadGitHubEnv
   → src/persistence.ts#createPersistence
   → src/github.ts#createGitHubClient
@@ -43,11 +43,14 @@ src/server.ts
        → src/inbox-state.ts
        → src/preparation.ts#createPreparationService
        → src/opencode.ts#createOpenCodeHandoffService
-       → src/session-viewer.ts#createSessionViewerService
-       → src/views.ts → src/views/*
+        → src/session-viewer.ts#createSessionViewerService
+        → src/views.ts → src/views/*
+
+src/credential-server.ts
+  → src/credentials.ts#createCredentialBoundary (socket owner/supplier)
 ```
 
-`createApp` starts preparation and OpenCode after wiring `onSlotReleased` / `onTerminal`; it also assembles the inbox context from persistence and browser cookies for every authenticated page. `src/views/inbox.ts` renders the filter, grouped Spec rows, and full-page records without calling GitHub or OpenCode. Preparation may read `src/recovery-status.ts#readRecoveryStatus`. OpenCode notifies the viewer through events; the viewer does not write SQLite.
+`createApp` starts preparation and OpenCode after wiring `onSlotReleased` / `onTerminal`; it also assembles the inbox context from persistence and browser cookies for every authenticated page. `src/views/inbox.ts` renders the filter, grouped Spec rows, and full-page records without calling GitHub or OpenCode. Preparation registers scopes and requests credentials through the independent supplier without owning its lifecycle, and may read `src/recovery-status.ts#readRecoveryStatus`. OpenCode notifies the viewer through events; the viewer does not write SQLite.
 
 ## Integrations and State Ownership
 
@@ -59,8 +62,8 @@ src/server.ts
 | Session, history, reservations | persistence; preparation/handoff update checkpoints | SQLite `sessions`, `session_history`, `stack_reservations`, `reservation_prs`, `reservation_conflict_holds` |
 | Schema versions | persistence | SQLite `schema_migrations` |
 | Session clones | preparation | `ATLAS_SESSION_ROOT` (prod `/var/lib/atlas/sessions`) |
-| Session→Repository scopes | credentials | `ATLAS_CREDENTIAL_REGISTRY_PATH` |
-| Supplier socket and key | credentials | `ATLAS_SUPPLIER_SOCKET`, `ATLAS_SUPPLIER_KEY_PATH` |
+| Session→Repository scopes and helper references | Atlas credential client writes; independent supplier reads | `ATLAS_CREDENTIAL_REGISTRY_PATH` |
+| Supplier socket and key | `atlas-credentials.service` | `ATLAS_SUPPLIER_SOCKET`, `ATLAS_SUPPLIER_KEY_PATH` |
 | GitHub App ID / installation / PEM | operator file | `github.env` (`0600`) |
 | OpenCode session/events/transcript | OpenCode process | OpenCode XDG; Atlas stores IDs and checkpoints only |
 | Space/backup status | host scripts; Atlas reads | `ATLAS_RECOVERY_STATUS_PATH` |
@@ -73,14 +76,14 @@ GitHub remains source of truth for inventory, Specs, PRs, and stacks. Browse may
 
 Two loopback listeners (`src/server.ts`): UI `127.0.0.1:ATLAS_PORT` (default 3000) and webhook `127.0.0.1:ATLAS_WEBHOOK_PORT` (default 3001). Ports must differ. Tailscale Serve fronts the UI; Funnel must target only the webhook port.
 
-Production (`deploy/README.md`): user `omega`; read-only release at `/opt/atlas/current`; data on `/var/lib/atlas`; secrets in `/etc/atlas`; runtime sockets in `/run/atlas`. Units: `atlas.service` (loads `atlas.env`), independent `opencode.service` (does not load Atlas secrets and follows the operator-controlled OpenCode `current` symlink), `atlas-snapshot.timer`, `atlas-space-check.timer`. Exact-version OpenCode staging verifies registry integrity but does not install, select, or restart the server. Restarting Atlas must not stop OpenCode.
+Production (`deploy/README.md`): user `omega`; read-only release at `/opt/atlas/current`; stable credential supplier source at `/opt/atlas/services/atlas-credentials`; data on `/var/lib/atlas`; secrets in `/etc/atlas`; runtime sockets in `/run/atlas`. Units: `atlas-credentials.service` (owns `/run/atlas` and loads only credential inputs), `atlas.service` (loads `atlas.env`), independent `opencode.service` (does not load Atlas secrets and follows the operator-controlled OpenCode `current` symlink), `atlas-snapshot.timer`, `atlas-space-check.timer`. `deploy/bootstrap.sh` installs/enables the credential service and updated units without restarting OpenCode. Exact-version OpenCode staging verifies registry integrity but does not install, select, or restart the server. Restarting Atlas must not stop either independent service.
 
 Required to boot: `ATLAS_SHARED_TOKEN` and `ATLAS_GITHUB_WEBHOOK_SECRET`. Origin `ATLAS_ORIGIN` is the private HTTPS URL, not the Funnel URL.
 
 ## Development Environment
 
 - Install: `bun install --frozen-lockfile`
-- Run: `just` or `just dev` (bootstraps GitHub scope, then `bun run dev`); or `bun run dev` / `bun run start` after env is set
+- Run: `just` or `just dev` (bootstraps GitHub scope and runs the credential supplier beside the watched UI); or run `bun run credentials` separately before `bun run dev` / `bun run start`
 - Typecheck: `bun run check` (`tsc --noEmit`)
 - CSS: `bun run build:css`
 - Checklist previewer: `just checklist`
@@ -100,11 +103,11 @@ Accepted decisions are indexed in `docs/adr/INDEX.md`; ADR-0001 makes OpenCode s
 - The `/inbox/list` fragment owns its 30-second `outerHTML` poll boundary; `public/app.js` must restore focus, open details, and scroll after a successful swap without adding history.
 - GitHub client is read-only (GET plus one GraphQL merge-state query). Atlas never creates, changes, or submits PRs or stacks.
 - Atlas uses its release-installed OpenCode client and discovers the independent service without a server-version filter. Endpoint/health/event validation and conservative API-failure behavior remain; Atlas does not own OpenCode lifecycle.
-- Credential supplier mints one-Repository App tokens over a unix socket. Tokens never appear in HTML, URLs, arguments, prompts, or logs.
+- The independent credential supplier mints one-Repository App tokens over a unix socket from a stable support tree. Atlas registers scopes through the existing registry but never owns the supplier socket/runtime lifecycle. Canonical helper references remain available for release retention. Tokens never appear in HTML, URLs, arguments, prompts, or logs.
 - SQLite: foreign keys, WAL (except in-memory), `synchronous=FULL`. One writer; unfinished Session ownership restored at startup.
 - One unfinished Session per Spec (unique partial index).
 - Default global preparation capacity is one. Pause new preparation when Session storage is unavailable, below `ATLAS_MIN_FREE_BYTES`, or host space status is missing/stale/paused.
 - Managed Git invocations must match `deploy/pins.env`.
 - Theme tokens live in `src/styles.css` / `DESIGN.md`. Do not copy hex values into templates.
 
-<!-- repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2 -->
+<!-- repo-map-synced: 60d5a38df21d5b840c768b36ce37aacecf90e059 -->

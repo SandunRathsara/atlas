@@ -1,7 +1,7 @@
 [Unit]
 Description=OpenCode V2 private service
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target atlas-credentials.service
+After=network-online.target atlas-credentials.service
 RequiresMountsFor=/opt/atlas/current /opt/atlas/tools /var/lib/atlas /etc/atlas /home/omega
 StartLimitIntervalSec=5min
 StartLimitBurst=5
