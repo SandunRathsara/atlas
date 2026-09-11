@@ -2,6 +2,7 @@ import { readRecoveryStatus, type RecoveryStatus } from "../recovery-status.ts";
 import type { Repository } from "../persistence.ts";
 import { escapeHtml, formatTime, renderDocument, skipLink } from "./html.ts";
 import { icon } from "./icons.ts";
+import { renderInboxList, type InboxContext } from "./inbox.ts";
 import {
   type ActivePage,
   alertSoft,
@@ -9,6 +10,8 @@ import {
   repositoryLink,
   sessionsLink,
 } from "./shared.ts";
+
+export type { InboxContext };
 
 export type PendingStartSession = {
   action: string;
@@ -123,12 +126,31 @@ const navItem = (href: string, label: string, active: boolean, glyph: Parameters
     active ? "border-brand-readable bg-brand-tint text-base-content" : "border-transparent text-muted"
   }" href="${href}"${active ? ' aria-current="page"' : ""}>${icon(glyph, 20)}<span>${label}</span></a>`;
 
-const renderRepositoryNav = (repository: Repository, active: ActivePage) => `<div class="mt-4">
-  <p class="px-3 py-2 text-xs font-medium uppercase tracking-wide text-faint">Repository</p>
-  ${navItem(repositoryLink(repository), "Specs", active === "specs" || active === "spec", "document-text")}
-  <div class="mt-1">${navItem(pullRequestsLink(repository), "Pull requests", active === "pull-requests", "code-bracket")}</div>
-  <div class="mt-1">${navItem(sessionsLink(repository), "Sessions", active === "sessions", "command-line")}</div>
-</div>`;
+const emptyInbox = (): InboxContext => ({
+  repositories: [],
+  list: { rows: [], settledTotal: 0, settledNew: 0 },
+  currentPath: "",
+});
+
+const renderInboxFilter = (inbox: InboxContext) => {
+  const disabled = inbox.repositories.length === 0;
+  const selected = inbox.filtered?.githubId ?? "";
+  const options = [
+    `<option value=""${selected === "" ? " selected" : ""}>All Repositories</option>`,
+    ...inbox.repositories.map((repository) =>
+      `<option value="${escapeHtml(repository.githubId)}"${repository.githubId === selected ? " selected" : ""}>${escapeHtml(repository.fullName)}</option>`,
+    ),
+    `<option value="manage">Manage Repositories…</option>`,
+  ].join("");
+  return `<form class="p-2" action="/inbox" method="get" hx-get="/inbox/list" hx-target="#inbox-list" hx-swap="outerHTML" hx-push-url="false" hx-trigger="change">
+    <div class="flex items-center gap-1">
+      <label class="sr-only" for="inbox-repository">Repository</label>
+      <select id="inbox-repository" class="select min-w-0 flex-1" name="repository"${disabled ? " disabled" : ""}>${options}</select>
+      <a class="btn btn-ghost" href="/repositories/new" aria-label="Add a Repository">${icon("plus", 16)}</a>
+    </div>
+    <button class="btn mt-2 w-full" type="submit">Filter</button>
+  </form>`;
+};
 
 export const renderShell = ({
   title,
@@ -137,6 +159,7 @@ export const renderShell = ({
   csrfToken,
   historyDisabled,
   content,
+  inbox = emptyInbox(),
 }: {
   title: string;
   active: ActivePage;
@@ -144,8 +167,9 @@ export const renderShell = ({
   csrfToken: string;
   historyDisabled?: boolean;
   content: string;
+  inbox?: InboxContext;
 }) => {
-  const repositoryName = repository?.fullName ?? "No Repository selected";
+  const headerName = inbox.filtered?.fullName ?? "All Repositories";
   const repositoriesActive = active === "repositories" || active === "new-repository";
   const specsActive = active === "specs" || active === "spec";
   const pullRequestsActive = active === "pull-requests";
@@ -163,18 +187,15 @@ export const renderShell = ({
     title,
     `${skipLink}
     <div class="min-h-screen lg:flex">
-      <aside class="hidden bg-base-300 lg:flex lg:w-56 lg:shrink-0 lg:flex-col" aria-label="Primary navigation">
+      <aside class="hidden bg-base-300 lg:flex lg:w-72 lg:shrink-0 lg:flex-col" aria-label="Primary navigation">
         ${brandBand("/repositories")}
-        <nav class="p-2">
-          <p class="px-3 py-2 text-xs font-medium uppercase tracking-wide text-faint">Atlas</p>
-          ${navItem("/repositories", "Repositories", repositoriesActive, "rectangle-stack")}
-          ${repository ? renderRepositoryNav(repository, active) : ""}
-        </nav>
+        ${renderInboxFilter(inbox)}
+        ${renderInboxList(inbox)}
       </aside>
       <div class="min-w-0 flex-1">
         <header class="atlas-glass sticky top-0 z-20">
           <div class="relative flex h-12 items-center justify-between gap-3 px-4 sm:px-6">
-            <p class="min-w-0 truncate text-sm text-muted" title="${escapeHtml(repositoryName)}">${escapeHtml(repositoryName)}</p>
+            <p class="min-w-0 truncate text-sm text-muted" title="${escapeHtml(headerName)}">${escapeHtml(headerName)}</p>
             <div class="flex shrink-0 flex-wrap items-center gap-2">
               <details class="lg:hidden" data-mobile-navigation>
                 <summary class="btn btn-ghost list-none" data-mobile-navigation-trigger aria-label="Open primary navigation">${icon("bars-3", 16)} Navigation</summary>
