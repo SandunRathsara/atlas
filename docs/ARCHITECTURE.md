@@ -4,11 +4,11 @@ Answers: how is the system technically shaped? Populated and kept current by `/r
 
 ## System Boundary
 
-Inside this repository: the Atlas TypeScript UI/webhook process, independent TypeScript credential-supplier and release-staging updater processes, SQLite persistence, GitHub read clients, Release discovery, Session clone/preparation, OpenCode handoff and viewer, the coordinated preparation/handoff update pause, server-rendered UI, tag-driven GitHub Release publishing, and inert host deploy assets.
+Inside this repository: the Atlas TypeScript UI/webhook process, independent TypeScript credential-supplier and surviving staging/activation/recovery updater processes, SQLite persistence, GitHub read clients, Release discovery, Session clone/preparation, OpenCode handoff and viewer, the coordinated preparation/handoff update pause, server-rendered UI, tag-driven GitHub Release publishing, and inert host deploy assets.
 
 Outside: GitHub (App, inventory, issues, PRs, native stacks, signed webhooks, public Releases); an independently running OpenCode V2 process selected by the operator through `/opt/atlas/tools/opencode/current`; the private host (systemd, Btrfs, Tailscale Serve/Funnel, pinned Bun/Git/gh binaries); operator-managed paths under `/opt/atlas`, `/var/lib/atlas`, `/etc/atlas`, `/var/backups/atlas`, and `/run`.
 
-`deploy/` is inert until operator action. Its bootstrap installs/enables the independent credential and release-staging services plus updated unit files; it does not activate a Release, fully provision the host, move OpenCode data, or change Tailscale/firewall.
+`deploy/` is inert until operator action. Its bootstrap installs/enables the independent credential and updater services, stable Atlas-only health support, and updated unit files; the bootstrap itself does not activate a Release, fully provision the host, move OpenCode data, or change Tailscale/firewall.
 
 ## Primary Stack
 
@@ -54,11 +54,11 @@ src/credential-server.ts
   → src/credentials.ts#createCredentialBoundary (socket owner/supplier)
 
 src/updater-server.ts
-  → src/updater.ts#createUpdaterService (socket owner/stager)
+  → src/updater.ts#createUpdaterService (socket owner/stager/activator/recovery authority)
   → src/release.ts (metadata validation)
 ```
 
-`createApp` starts preparation and OpenCode after wiring `onSlotReleased` / `onTerminal`, exposes their coordinated update pause as `AtlasApp.updatePause`, and serves authenticated Updates status/check routes; it also assembles the inbox context from persistence and browser cookies for every authenticated page. `src/release.ts` validates generated release metadata; `server.ts` injects its identity into authenticated health and starts Release discovery independently of Session admission. Discovery writes known metadata to SQLite and requests staging from the surviving updater client. The updater owns its socket, durable status, downloads, verification, and atomic read-only staging without selecting a Release. `src/views/inbox.ts` renders the filter, grouped Spec rows, and full-page records without calling GitHub or OpenCode. Preparation registers scopes and requests credentials through the independent supplier without owning its lifecycle, and may read `src/recovery-status.ts#readRecoveryStatus`. OpenCode notifies the viewer through events; the viewer does not write SQLite.
+`createApp` starts preparation and OpenCode after wiring `onSlotReleased` / `onTerminal`, exposes their coordinated update pause as `AtlasApp.updatePause`, may restore that pause during host activation, and serves authenticated Updates status/check/Install/Retry routes; it also assembles the inbox context from persistence and browser cookies for every authenticated page. `src/release.ts` validates generated release metadata; `server.ts` injects its identity into authenticated health, omits OpenCode evaluation for activation health, and starts Release discovery independently of Session admission. Discovery writes known metadata to SQLite and requests staging from the surviving updater client. Approval is durably recorded through that same boundary before the safe pause; after checkpoint confirmation the updater owns Atlas stop/restart, atomic Release selection, identity/storage validation, rollback, and durable results. `src/views/inbox.ts` renders the filter, grouped Spec rows, and full-page records without calling GitHub or OpenCode. Preparation registers scopes and requests credentials through the independent supplier without owning its lifecycle, and may read `src/recovery-status.ts#readRecoveryStatus`. OpenCode notifies the viewer through events; the viewer does not write SQLite.
 
 ## Integrations and State Ownership
 
@@ -70,8 +70,8 @@ src/updater-server.ts
 | Session, history, reservations | persistence; preparation/handoff update checkpoints | SQLite `sessions`, `session_history`, `stack_reservations`, `reservation_prs`, `reservation_conflict_holds` |
 | Schema versions | persistence | SQLite `schema_migrations` |
 | Known Release candidates and discovery/request failures | update discovery via persistence | SQLite `update_discovery` |
-| Staging request, progress, requirements, path, and latest result | independent updater | Atomic `/var/lib/atlas/update-state.json` |
-| Inactive complete Release trees | independent updater | Read-only `/opt/atlas/releases/atlas-<tag>` directories |
+| Staging plus activation target, previous Release, progress/result, health deadline, and failed-tag suppression | independent updater | Atomic additive schema-1 `/var/lib/atlas/update-state.json` |
+| Complete Release trees and active code selection | independent updater after approval | Read-only `/opt/atlas/releases/atlas-<tag>` directories; atomic `/opt/atlas/current` symlink |
 | Session clones | preparation | `ATLAS_SESSION_ROOT` (prod `/var/lib/atlas/sessions`) |
 | Session→Repository scopes and helper references | Atlas credential client writes; independent supplier reads | `ATLAS_CREDENTIAL_REGISTRY_PATH` |
 | Supplier socket and key | `atlas-credentials.service` | `ATLAS_SUPPLIER_SOCKET`, `ATLAS_SUPPLIER_KEY_PATH` |
@@ -80,7 +80,7 @@ src/updater-server.ts
 | Space/backup status | host scripts; Atlas reads | `ATLAS_RECOVERY_STATUS_PATH` |
 | Inbox filter and last visit | UI app sets; browser holds | Cookies `atlas_inbox`, `atlas_visit` (`Path=/; Secure; HttpOnly; SameSite=Strict`) |
 | Inbox poll continuity | `public/app.js`; browser DOM holds | Active element, open `<details>`, and scroll position are transient and restored after list swaps |
-| Safe update pause | `src/update-pause.ts`; preparation/handoff report drain completion | Process memory; Session/checkpoint/reservation truth remains in SQLite |
+| Safe update pause | `src/update-pause.ts`; preparation/handoff report drain completion; `src/server.ts` restores during host activation | Process memory derived at startup from durable updater status; Session/checkpoint/reservation truth remains in SQLite |
 | Release identity and artifact contract | Git tag + release workflow | Generated `RELEASE_METADATA.json`; published `atlas-release.json`, archive, checksum |
 
 GitHub remains source of truth for inventory, Specs, PRs, and stacks. Browse may use `ATLAS_GITHUB_INSTALLATION_TOKEN` if App minting fails; preparation never uses that fallback.
@@ -89,9 +89,9 @@ GitHub remains source of truth for inventory, Specs, PRs, and stacks. Browse may
 
 Two loopback listeners (`src/server.ts`): UI `127.0.0.1:ATLAS_PORT` (default 3000) and webhook `127.0.0.1:ATLAS_WEBHOOK_PORT` (default 3001). Ports must differ. Tailscale Serve fronts the UI; Funnel must target only the webhook port.
 
-Production (`deploy/README.md`): user `omega`; read-only release at `/opt/atlas/current`; stable credential/updater sources at `/opt/atlas/services/atlas-credentials` and `/opt/atlas/services/atlas-updater`; data on `/var/lib/atlas`; secrets in `/etc/atlas`; runtime sockets in `/run/atlas` and `/run/atlas-updater`. An authoritative `vMAJOR.MINOR.PATCH+build.BUILD` tag drives the serialized `.github/workflows/release.yml`, which builds the exact frozen tagged tree and publishes immutable Linux x64 metadata/checksum/archive assets with production dependencies and built CSS. Units: `atlas-credentials.service` (owns `/run/atlas` and loads only credential inputs), `atlas-updater.service` (downloads/verifies/stages public Releases and owns `/run/atlas-updater`), `atlas.service` (loads `atlas.env`), independent `opencode.service` (does not load Atlas secrets and follows the operator-controlled OpenCode `current` symlink), `atlas-snapshot.timer`, `atlas-space-check.timer`. `deploy/bootstrap.sh` installs/enables both surviving Atlas services and updated units without restarting OpenCode. Exact-version OpenCode staging verifies registry integrity but does not install, select, or restart the server. Restarting Atlas must not stop any independent service.
+Production (`deploy/README.md`): user `omega`; read-only release selected at `/opt/atlas/current`; stable credential/updater sources at `/opt/atlas/services/atlas-credentials` and `/opt/atlas/services/atlas-updater`; data on `/var/lib/atlas`; secrets in `/etc/atlas`; runtime sockets in `/run/atlas` and `/run/atlas-updater`. An authoritative `vMAJOR.MINOR.PATCH+build.BUILD` tag drives the serialized `.github/workflows/release.yml`, which builds the exact frozen tagged tree and publishes immutable Linux x64 metadata/checksum/archive assets with production dependencies and built CSS. Units: `atlas-credentials.service` (owns `/run/atlas` and loads only credential inputs), root `atlas-updater.service` (owns `/run/atlas-updater`, stages public Releases, atomically selects `current`, and controls only `atlas.service` through shipped code), `atlas.service` (loads `atlas.env`), independent `opencode.service` (does not load Atlas secrets and follows the operator-controlled OpenCode `current` symlink), `atlas-snapshot.timer`, `atlas-space-check.timer`. The updater unit does not import or execute `atlas.env`; candidate validation parses only its shared token/UI port as data and passes them to stable `check-health.sh`. `deploy/bootstrap.sh` installs/enables both surviving Atlas services and updated units without restarting OpenCode. Exact-version OpenCode staging verifies registry integrity but does not install, select, or restart the server. Restarting Atlas must not stop any independent service.
 
-`AtlasApp.updatePause.pause()` synchronously holds both preparation and handoff admission, then returns `paused` only after their in-flight external operations settle at existing durable checkpoints. Its result owns an idempotent scoped `resume`. The coordinator returns `timed_out` after five minutes and resumes normal eligibility without aborting work. OpenCode execution reconciliation is outside the drain. Release discovery and staging do not invoke this prerequisite; activation UI and orchestration have not shipped.
+`AtlasApp.updatePause.pause()` synchronously holds both preparation and handoff admission, then returns `paused` only after their in-flight external operations settle at existing durable checkpoints. Its result owns an idempotent scoped `resume`. The coordinator returns `timed_out` after five minutes and resumes normal eligibility without aborting work. OpenCode execution reconciliation is outside the drain. Release discovery/staging do not invoke this prerequisite; authenticated Install/Retry records approval first, then invokes it and either records timeout abandonment or confirms the checkpoint to the surviving updater. Candidate/rollback Atlas processes start held while updater status is active and resume on its terminal result.
 
 Required to boot: `ATLAS_SHARED_TOKEN` and `ATLAS_GITHUB_WEBHOOK_SECRET`. Origin `ATLAS_ORIGIN` is the private HTTPS URL, not the Funnel URL.
 
@@ -104,7 +104,7 @@ Required to boot: `ATLAS_SHARED_TOKEN` and `ATLAS_GITHUB_WEBHOOK_SECRET`. Origin
 - Checklist previewer: `just checklist`
 - Version-looking `v*` tag pushes run the release-only GitHub Actions workflow, which rejects malformed release identities; there is no general branch/PR CI workflow
 - No formatter or linter configured
-- No unified test runner; scoped regressions are `bun run verify:*` (including `verify:issue56` for safe update pause and `verify:issue58` for Release discovery/staging), `bun scripts/verify-clone-scope.ts`, `bun scripts/verify-repository-filter.ts`, `bash deploy/verify-opencode-commands.sh`, `bash deploy/verify-assets.sh`
+- No unified test runner; scoped regressions are `bun run verify:*` (including `verify:issue56` for safe update pause, `verify:issue58` for Release discovery/staging, and `verify:issue59` for activation/recovery), `bun scripts/verify-clone-scope.ts`, `bun scripts/verify-repository-filter.ts`, `bash deploy/verify-opencode-commands.sh`, `bash deploy/verify-assets.sh`
 
 Local `justfile` defaults: token/webhook secret, `data/atlas.sqlite`, `~/.local/share/atlas/sessions`, 1 GiB free-space floor. GitHub settings may live in `~/.config/atlas/github.env` (regular file, mode `0600`).
 
@@ -138,5 +138,12 @@ Accepted decisions are indexed in `docs/adr/INDEX.md`; ADR-0001 makes OpenCode s
   newest eligible Release through the authenticated updater socket. Staging is
   serialized, durable across process restarts, read-only, and never changes
   `/opt/atlas/current`, pauses Session admission, or operates OpenCode.
+- Install/Retry uses the existing authenticated updater socket and an additive
+  schema-1 state readable by the previous Atlas Release. The host updater
+  serializes activation, validates complete staging/runtime/rollback before
+  pause, atomically selects only `current`, controls only Atlas, verifies exact
+  identity and persistence through `/health?activation=1` within 60 seconds,
+  and durably distinguishes success, abandonment, recovered rollback, and
+  rollback failure. OpenCode is neither evaluated nor controlled.
 
-<!-- repo-map-synced: 61f971f790060ad0d19e1a356120f299b9136e40 -->
+<!-- repo-map-synced: beb8cc194167a5e203714a7d5e2b3b58069761cb -->
