@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <title>Checklist library</title>
+  <link rel="stylesheet" href="./viewer.css">
+</head>
+<body>
+  <header class="masthead">
+    <div class="masthead-inner">
+      <p class="eyebrow">Bearings / local checklist library</p>
+      <h1 id="title">Choose a checklist</h1>
+      <p id="summary" class="summary">Browse the checklists generated from this repository.</p>
+    </div>
+  </header>
+  <div class="toolbar">
+    <div class="toolbar-inner">
+      <label class="picker-label" for="checklist-picker">Checklist</label>
+      <select id="checklist-picker"><option value="">Loading...</option></select>
+      <div class="progress" aria-live="polite">
+        <span id="progress-copy">0 / 0 resolved</span>
+        <span class="progress-track" aria-hidden="true"><span id="progress-fill"></span></span>
+      </div>
+      <button id="export-progress" type="button">Export</button>
+      <button id="import-progress" type="button">Import</button>
+      <input id="import-file" type="file" accept="application/json,.json" hidden>
+      <button id="reset-progress" type="button">Reset</button>
+    </div>
+  </div>
+  <p id="storage-warning" class="storage-warning" role="status" hidden></p>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+  <main id="content"></main>
+  <script src="./data.generated.js"></script>
+  <script src="./viewer.js"></script>
+</body>
+</html>

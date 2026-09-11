@@ -63,3 +63,7 @@ dev:
       echo "GitHub    ${ATLAS_GITHUB_ORGANIZATION} / installation ${ATLAS_GITHUB_INSTALLATION_ID:-from github.env}"
     fi
     bun run dev
+
+# Build the checklist payload and open the static previewer
+checklist:
+    npx bearings checklist

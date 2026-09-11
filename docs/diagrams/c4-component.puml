@@ -1,0 +1,64 @@
+@startuml c4-component
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Atlas — C4 Component
+
+Person(team, "Team member", "Shared-token operator of Repositories, Specs, and Sessions")
+Person(operator, "Operator", "Host, pins, secrets, admission")
+
+System_Boundary(atlas, "Atlas process") {
+  Component(server, "Process host", "src/server.ts", "Wires env, two loopback listeners, shutdown")
+  Component(ui, "UI app", "src/app.ts#createApp", "Private HTML/HTMX/JSON routes")
+  Component(webhook, "Webhook app", "src/webhook.ts#createWebhookApp", "POST /webhooks/github only")
+  Component(auth, "Auth", "src/auth.ts#createAuth", "Shared token, cookie session, CSRF")
+  Component(views, "Views", "src/views.ts", "Server-rendered HTML")
+  Component(persistence, "Persistence", "src/persistence.ts#createPersistence", "SQLite projections and Session records")
+  Component(githubClient, "GitHub client", "src/github.ts#createGitHubClient", "Read-only inventory, issues, PRs, stacks")
+  Component(sync, "Refresh coordinator", "src/sync.ts#createRefreshCoordinator", "Background GitHub projection refresh")
+  Component(credentials, "Credential boundary", "src/credentials.ts#createCredentialBoundary", "Unix-socket App token supplier")
+  Component(preparation, "Preparation", "src/preparation.ts#createPreparationService", "Clone Session directory, execution slot")
+  Component(handoff, "OpenCode handoff", "src/opencode.ts#createOpenCodeHandoffService", "Create, associate, one prompt, reconcile")
+  Component(viewer, "Session viewer", "src/session-viewer.ts#createSessionViewerService", "Hydrate OpenCode tree for display")
+}
+
+System_Ext(github, "GitHub", "App, issues labelled spec, PRs, native stacks, webhooks")
+System_Ext(opencode, "OpenCode V2", "Pinned 0.0.0-beta-19135; independent process")
+SystemDb_Ext(sqlite, "SQLite", "WAL file; Atlas-owned projections")
+Container_Ext(sessionDirs, "Session directories", "ATLAS_SESSION_ROOT clones")
+
+Rel(team, ui, "HTTPS via Tailscale Serve")
+Rel(github, webhook, "Signed webhook to Funnel/webhook port")
+Rel(operator, credentials, "github.env, supplier key, registry")
+
+Rel(server, credentials, "start supplier")
+Rel(server, persistence, "open database")
+Rel(server, githubClient, "construct")
+Rel(server, sync, "construct")
+Rel(server, webhook, "serve :ATLAS_WEBHOOK_PORT")
+Rel(server, ui, "serve :ATLAS_PORT")
+
+Rel(ui, auth, "authenticate mutations")
+Rel(ui, views, "render")
+Rel(ui, persistence, "read/write records")
+Rel(ui, sync, "request refresh")
+Rel(ui, preparation, "enqueue Session")
+Rel(ui, handoff, "start / events")
+Rel(ui, viewer, "hydrate")
+Rel(webhook, persistence, "accept delivery")
+Rel(webhook, sync, "wake")
+
+Rel(sync, githubClient, "GET projections")
+Rel(sync, persistence, "write projections")
+Rel(preparation, persistence, "claim / checkpoints")
+Rel(preparation, credentials, "register scope, mint token")
+Rel(preparation, githubClient, "refresh before clone")
+Rel(preparation, sessionDirs, "git clone")
+Rel(handoff, persistence, "handoff checkpoints")
+Rel(handoff, opencode, "discover, create, prompt, events")
+Rel(viewer, opencode, "session.get / events")
+Rel(credentials, github, "mint installation tokens")
+Rel(githubClient, github, "read API")
+Rel(persistence, sqlite, "WAL")
+
+' repo-map-synced: e64cae76bc7bc138c532617bac116b08c4c4b5d0
+@enduml

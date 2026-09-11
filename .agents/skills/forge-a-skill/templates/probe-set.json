@@ -1,0 +1,45 @@
+{
+  "skill_name": "<skill-name>",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Plan a change that touches <anchor> and explain the approach before editing.",
+      "expected_output": "The <skill-name> guardrail loads before the plan is written."
+    },
+    {
+      "id": 2,
+      "prompt": "Design a new <rule-subject> for <anchor>.",
+      "expected_output": "The <skill-name> guardrail loads while the design is prepared."
+    },
+    {
+      "id": 3,
+      "prompt": "Review the proposed work in <anchor> for compliance with repository patterns.",
+      "expected_output": "The <skill-name> guardrail loads for the review."
+    },
+    {
+      "id": 4,
+      "prompt": "Update <anchor> to support <rule-related-change>.",
+      "expected_output": "The <skill-name> guardrail loads before files are changed."
+    },
+    {
+      "id": 5,
+      "prompt": "Refactor the <rule-subject> implementation in <anchor>.",
+      "expected_output": "The <skill-name> guardrail loads for the edit."
+    },
+    {
+      "id": 6,
+      "prompt": "Plan an unrelated change in <outside-anchor>.",
+      "expected_output": "The <skill-name> guardrail does not load."
+    },
+    {
+      "id": 7,
+      "prompt": "Edit <outside-anchor> to update <unrelated-concern>.",
+      "expected_output": "The <skill-name> guardrail does not load."
+    },
+    {
+      "id": 8,
+      "prompt": "Explain <neighboring-concern> without changing repository files.",
+      "expected_output": "The <skill-name> guardrail does not load."
+    }
+  ]
+}

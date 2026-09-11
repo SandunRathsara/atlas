@@ -1,0 +1,197 @@
+{
+  "version": 2,
+  "bearingsVersion": "0.5.2",
+  "harnesses": [
+    "claude",
+    "opencode"
+  ],
+  "exposure": "symlink",
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "template": "AGENTS.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:561b9565fbb4cb9439a03639388ab5cabb4790a61d41588bfef895329df92313",
+      "owner": "agent"
+    },
+    {
+      "path": "CLAUDE.md",
+      "template": "CLAUDE.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:336cc4fbf19beaada7ccf9986414fa91851a8d7a07dfb3ccbe800a69eed0ab49",
+      "owner": "bearings"
+    },
+    {
+      "path": "docs/DOMAIN.md",
+      "template": "docs/DOMAIN.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:ce09c9a0f26bece06002eec2d1cc1831c3458d5c5ee211d07d4dfbef5a1b679b",
+      "owner": "agent"
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "template": "docs/ARCHITECTURE.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:e77ed482f489f7d11eae7ea40bb940f0f148e8d702243df92185deb611b0a51c",
+      "owner": "agent"
+    },
+    {
+      "path": "docs/CODEBASE_MAP.md",
+      "template": "docs/CODEBASE_MAP.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:ae7a31711ba65191c0a283b02b5a7a3a5f94b625cf841e74de22173cce492388",
+      "owner": "agent"
+    },
+    {
+      "path": "docs/adr/INDEX.md",
+      "template": "docs/adr/INDEX.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:86bff6cf0c5ea5e401c48bcc894c705435c82a35c18dbf117bcc39884fad914b",
+      "owner": "agent"
+    },
+    {
+      "path": "docs/adr/0000-template.md",
+      "template": "docs/adr/0000-template.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:ed71cd171e32bddbca0e1ba6365515deefec4916ab215d00a89f6ec69a04dee8",
+      "owner": "bearings"
+    },
+    {
+      "path": "docs/deferred/INDEX.md",
+      "template": "docs/deferred/INDEX.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:bdd7e296b2e5acefe322133ecb48845a617b5e1349039a495bfed13777a070f8",
+      "owner": "agent"
+    },
+    {
+      "path": ".agents/commands/refresh-repo-map.md",
+      "template": "agents/commands/refresh-repo-map.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:935297b0f4ab760c1eac9e6330c83d0619955fa024b366bc45c712c8da1ad651",
+      "owner": "bearings"
+    },
+    {
+      "path": ".agents/commands/setup-repo.md",
+      "template": "agents/commands/setup-repo.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:1e83b8ae977335e9139b04eeba98bcdb18748f77b2386de5882cda6763840e4b",
+      "owner": "bearings"
+    },
+    {
+      "path": ".agents/skills/commit-convention/SKILL.md",
+      "template": "agents/skills/commit-convention/SKILL.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:f8b10151a27ec0abcfc61b6f519a81936fe5cd12d24bf56be324b1ebbbd06c43",
+      "owner": "agent",
+      "lastTemplateHash": "sha256:6d712d57a1a5f6438fe3b8b46a4cc08e7fc8f9ba5567c540ee10054d56d6cde2"
+    },
+    {
+      "path": ".agents/skills/defer-work/SKILL.md",
+      "template": "agents/skills/defer-work/SKILL.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:0c64418b905e3d72b159db2d92c4f8b116879f0da16629d6d3432160c560e33f",
+      "owner": "agent",
+      "lastTemplateHash": "sha256:bf3e8509255051789a92f5752f24d33c744e0555efa7b4e0dcf77eb6f221c1ba"
+    },
+    {
+      "path": ".agents/skills/resurface-deferred-work/SKILL.md",
+      "template": "agents/skills/resurface-deferred-work/SKILL.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:e7a477fce76262fed6621e614d5671d31f79be5d98b5d2d789332ae7085971a8",
+      "owner": "agent",
+      "lastTemplateHash": "sha256:2f71619894f374e5d363b9299c6ee7da1d3b11550fbc4a238bfaa3153de81030"
+    },
+    {
+      "path": ".agents/skills/recording-decisions/SKILL.md",
+      "template": "agents/skills/recording-decisions/SKILL.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:253c49de594e9b442dc5736838d33516e61709d6c77bc1ce1dc6240254c2b949",
+      "owner": "agent",
+      "lastTemplateHash": "sha256:541536f3157e7c3d58d0d5a5e3077e84a335e6a71837cac24c356018af579d8d"
+    },
+    {
+      "path": ".agents/skills/manual-testplan/SKILL.md",
+      "template": "agents/skills/manual-testplan/SKILL.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:47682b8e8eea74c876950798caeeeb381802e4956f5c16d52688eae77c7a32cc",
+      "owner": "bearings"
+    },
+    {
+      "path": ".agents/skills/orchestrate/SKILL.md",
+      "template": "agents/skills/orchestrate/SKILL.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:5eed5f82ea277e3ee351de7f0575735912d0225b6eb9a262cd250caccf830925",
+      "owner": "bearings"
+    },
+    {
+      "path": ".agents/skills/forge-a-skill/SKILL.md",
+      "template": "agents/skills/forge-a-skill/SKILL.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:9fea591fe21f9b8fb4b7fe72432a73d64f08f3d39523153b9eabd8453e25a2c8",
+      "owner": "bearings"
+    },
+    {
+      "path": ".agents/skills/forge-a-skill/templates/guardrail.md",
+      "template": "agents/skills/forge-a-skill/templates/guardrail.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:bfa9cec77695b7369b46dfa09aa654121afad0112fa353c999c80a5d8083e1c6",
+      "owner": "bearings"
+    },
+    {
+      "path": ".agents/skills/forge-a-skill/templates/probe-set.json",
+      "template": "agents/skills/forge-a-skill/templates/probe-set.json",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:3b60925a5d6f2407e6001daf6fe1a5678e51b489c1742505fa3f302f6be6010d",
+      "owner": "bearings"
+    },
+    {
+      "path": ".agents/skills/checklist/SKILL.md",
+      "template": "agents/skills/checklist/SKILL.md",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:f4f5a8c6cde4ebc252d96c04ca6dcf703fe3748f6ec6cd38f7458a7bc6bbb12c",
+      "owner": "bearings"
+    },
+    {
+      "path": ".agents/skills/checklist/schema.reference.json",
+      "template": "agents/skills/checklist/schema.reference.json",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:35898e932796530b5445e18808ed832c5a474eaa44f99ce360ec260c141e568c",
+      "owner": "bearings"
+    },
+    {
+      "path": ".agents/skills/checklist/scripts/validate.mjs",
+      "template": "agents/skills/checklist/scripts/validate.mjs",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:d130b0917dbf195316dab349cd2f2476805dadc4efde1661105225a2ff70bab5",
+      "owner": "bearings"
+    },
+    {
+      "path": ".agents/skills/checklist/scripts/build.mjs",
+      "template": "agents/skills/checklist/scripts/build.mjs",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:e3ba2c2c78812f67ce873df06d5c01927387ee83cc8fd78e06516d0010e9561d",
+      "owner": "bearings"
+    },
+    {
+      "path": ".agents/skills/checklist/previewer/index.html",
+      "template": "agents/skills/checklist/previewer/index.html",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:001fbe019922b8c4f03ffda76712ff5c41f2d9e161e6617708585834a93503f8",
+      "owner": "bearings"
+    },
+    {
+      "path": ".agents/skills/checklist/previewer/viewer.css",
+      "template": "agents/skills/checklist/previewer/viewer.css",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:d1a9a67c32cb83bce207c8b24909bb07ec1bc93e329118daf9c62bae1166250b",
+      "owner": "bearings"
+    },
+    {
+      "path": ".agents/skills/checklist/previewer/viewer.js",
+      "template": "agents/skills/checklist/previewer/viewer.js",
+      "templateVersion": "0.5.2",
+      "hash": "sha256:e47908c9eb9131945a1768d5fedbaab82301bb904890b97a121d12f3986b881d",
+      "owner": "bearings"
+    }
+  ]
+}
