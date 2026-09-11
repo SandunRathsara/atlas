@@ -24,7 +24,7 @@ import {
   sessionTargetLabel,
   statusBadge,
 } from "./shared.ts";
-import { renderShell, type PendingStartSession } from "./shell.ts";
+import { renderShell, type InboxContext, type PendingStartSession } from "./shell.ts";
 import { renderStartTargetOptions } from "./targets.ts";
 
 const sessionFilterLabel = (filter: SessionFilter) => {
@@ -95,6 +95,7 @@ export const renderStartSessionPage = ({
   pullRequestsRefresh,
   target,
   targetInvalid = false,
+  inbox,
 }: {
   action?: string;
   csrfToken: string;
@@ -112,6 +113,7 @@ export const renderStartSessionPage = ({
   pullRequestsRefresh?: RefreshState;
   target?: string;
   targetInvalid?: boolean;
+  inbox?: InboxContext;
 }) => {
   const formAction = action ?? `/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(spec.issueNumber)}/sessions`;
   const githubUrl = safeExternalUrl(spec.htmlUrl);
@@ -122,6 +124,7 @@ export const renderStartSessionPage = ({
     active: "spec",
     repository,
     csrfToken,
+    inbox,
     content: `<a class="text-sm text-brand-readable underline underline-offset-4" href="${repositoryLink(repository)}">← Back to Specs</a>
       <div class="mt-6">
         ${pageHeader({
@@ -154,12 +157,14 @@ export const renderTargetReconfirmationPage = ({
   session,
   targetOptions,
   error,
+  inbox,
 }: {
   csrfToken: string;
   repository: Repository;
   session: Session;
   targetOptions: string;
   error?: string;
+  inbox?: InboxContext;
 }) => {
   const action = `/sessions/${encodeURIComponent(session.atlasId)}/target`;
   const form = renderTargetReconfirmationForm({ action, csrfToken, targetOptions, error });
@@ -168,6 +173,7 @@ export const renderTargetReconfirmationPage = ({
     active: "sessions",
     repository,
     csrfToken,
+    inbox,
     content: `<a class="text-sm text-brand-readable underline underline-offset-4" href="/sessions/${encodeURIComponent(session.atlasId)}">← Back to Session</a>
       ${pageHeader({
         title: "Reconfirm queued target",
@@ -286,12 +292,14 @@ export const renderSessionsPage = ({
   sessions,
   filter,
   pullRequestsRefresh,
+  inbox,
 }: {
   csrfToken: string;
   repository: Repository;
   sessions: Session[];
   filter: SessionFilter;
   pullRequestsRefresh?: RefreshState;
+  inbox?: InboxContext;
 }) => {
   const filters: SessionFilter[] = ["active", "all", "queued", "preparing", "running", "waiting", "idle", "succeeded", "failed", "interrupted", "failed_setup"];
   const heading = filter === "active" ? "Active Sessions" : filter === "all" ? "Sessions" : `${sessionFilterLabel(filter)} Sessions`;
@@ -307,6 +315,7 @@ export const renderSessionsPage = ({
     active: "sessions",
     repository,
     csrfToken,
+    inbox,
     content: `${renderRepositoryHeading(repository, heading, "Atlas implementation attempts for this Repository. Active includes every unfinished Session, including Queued.", csrfToken)}
       <nav class="mt-6 flex flex-wrap gap-2" aria-label="Session status filters">
         ${filters.map((value) => `<a class="btn ${value === filter ? "btn-primary" : "btn-ghost"}" href="${value === "active" ? sessionsLink(repository) : `${sessionsLink(repository)}?status=${encodeURIComponent(value)}`}"${value === filter ? ' aria-current="page"' : ""}>${escapeHtml(sessionFilterLabel(value))}</a>`).join("")}
@@ -332,18 +341,21 @@ export const renderReservationReleasePage = ({
   session,
   pullRequestsRefresh,
   error,
+  inbox,
 }: {
   csrfToken: string;
   repository: Repository;
   session: Session;
   pullRequestsRefresh?: RefreshState;
   error?: string;
+  inbox?: InboxContext;
 }) => {
   return renderShell({
     title: `Release reservation · ${session.atlasId}`,
     active: "sessions",
     repository,
     csrfToken,
+    inbox,
     content: `<a class="text-sm text-brand-readable underline underline-offset-4" href="/sessions/${encodeURIComponent(session.atlasId)}">← Back to Session</a>
       ${pageHeader({
         title: "Release stack reservation",

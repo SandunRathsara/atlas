@@ -7,7 +7,7 @@ import {
   safeReturnTo,
   type AuthEnv,
 } from "./auth.ts";
-import { inboxCookie, readVisitCookie, visitCookie } from "./inbox-state.ts";
+import { inboxCookie, readInboxCookie, readVisitCookie, visitCookie } from "./inbox-state.ts";
 import {
   createGitHubClient,
   type GitHubClient,
@@ -60,6 +60,7 @@ import {
   targetObservation,
   type PendingStartSession,
 } from "./views.ts";
+import { renderInboxList } from "./views/inbox.ts";
 import { renderShell } from "./views/shell.ts";
 
 const MAX_FORM_BYTES = 512 * 1024;
@@ -552,6 +553,56 @@ export const createApp = (options: AppOptions) => {
     }),
   );
 
+  const enrolledInboxRepository = (repositoryId: string | undefined) => {
+    if (!repositoryId) return undefined;
+    const repository = persistence.getRepository(repositoryId);
+    return repository && !repository.removedAt ? repository : undefined;
+  };
+
+  const inboxPath = (c: Context) => {
+    const current = c.req.header("HX-Current-URL");
+    if (current) {
+      try {
+        return new URL(current).pathname;
+      } catch {
+        return c.req.path;
+      }
+    }
+    return c.req.path;
+  };
+
+  const inboxFromRequest = (c: Context) => {
+    const query = c.req.query("repository");
+    const repositoryId = query !== undefined && query !== "manage"
+      ? query
+      : readInboxCookie(c.req.header("Cookie")).repositoryId;
+    const filtered = enrolledInboxRepository(repositoryId);
+    return {
+      repositories: persistence.listRepositories(),
+      filtered,
+      list: persistence.listInbox({
+        repositoryId: filtered?.githubId,
+        lastVisitAt: readVisitCookie(c.req.header("Cookie")).lastVisitAt,
+      }),
+      currentPath: inboxPath(c),
+    };
+  };
+
+  const rememberInboxFilter = (c: Context) => {
+    const query = c.req.query("repository");
+    if (query === undefined || query === "manage") return;
+    c.header("Set-Cookie", inboxCookie(enrolledInboxRepository(query)?.githubId));
+  };
+
+  const manageInboxFilter = (c: Context) => {
+    if (c.req.query("repository") !== "manage") return undefined;
+    if (isHtmx(c)) {
+      c.header("HX-Redirect", "/repositories");
+      return c.body(null, 200);
+    }
+    return c.redirect("/repositories", 303);
+  };
+
   app.get("/", auth.middleware, (c) => {
     const visit = readVisitCookie(c.req.header("Cookie"));
     const session = persistence.findLandingSession(visit.lastVisitAt ?? "");
@@ -581,18 +632,37 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.get("/inbox", auth.middleware, (c) => {
-    const repository = c.req.query("repository");
-    if (repository !== undefined) {
-      c.header("Set-Cookie", inboxCookie(repository || undefined));
-    }
+    const managed = manageInboxFilter(c);
+    if (managed) return managed;
+    rememberInboxFilter(c);
     const identity = c.get("auth");
     setPrivateHtmlHeaders(c);
     return c.html(renderShell({
       title: "Inbox",
       active: "repositories",
       csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
+      inbox: inboxFromRequest(c),
       content: '<h1 id="page-title" tabindex="-1" data-page-heading>Inbox</h1>',
     }));
+  });
+
+  app.get("/inbox/list", auth.middleware, (c) => {
+    const managed = manageInboxFilter(c);
+    if (managed) return managed;
+    rememberInboxFilter(c);
+    const inbox = inboxFromRequest(c);
+    setPrivateHtmlHeaders(c);
+    if (!isHtmx(c)) {
+      const identity = c.get("auth");
+      return c.html(renderShell({
+        title: "Inbox",
+        active: "repositories",
+        csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
+        inbox,
+        content: '<h1 id="page-title" tabindex="-1" data-page-heading>Inbox</h1>',
+      }));
+    }
+    return c.html(renderInboxList(inbox));
   });
 
   app.get("/login", (c) => {
@@ -668,6 +738,7 @@ export const createApp = (options: AppOptions) => {
           stacks,
           pullRequestsRefresh,
           target: pending.target,
+          inbox: inboxFromRequest(c),
         }), 200);
       }
       return c.html(renderPendingStartSessionPage(retryOptions), 200);
@@ -830,7 +901,7 @@ export const createApp = (options: AppOptions) => {
     }));
     const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
     setPrivateHtmlHeaders(c);
-    return c.html(renderRepositoriesPage(csrfToken, repositories, includeRemoved));
+    return c.html(renderRepositoriesPage(csrfToken, repositories, includeRemoved, inboxFromRequest(c)));
   });
 
   app.get("/repositories/new", async (c) => {
@@ -855,7 +926,7 @@ export const createApp = (options: AppOptions) => {
     }));
 
     setPrivateHtmlHeaders(c);
-    return c.html(renderAddRepositoryPage({ csrfToken, available: repositoryForms, error, query }));
+    return c.html(renderAddRepositoryPage({ csrfToken, available: repositoryForms, error, query, inbox: inboxFromRequest(c) }));
   });
 
   app.post("/repositories", async (c) => {
@@ -974,6 +1045,7 @@ export const createApp = (options: AppOptions) => {
       sessionsBySpec,
       accessRefresh,
       specsRefresh,
+      inbox: inboxFromRequest(c),
     }));
   });
 
@@ -999,6 +1071,7 @@ export const createApp = (options: AppOptions) => {
       stacks,
       accessRefresh,
       refresh,
+      inbox: inboxFromRequest(c),
     }));
   });
 
@@ -1027,6 +1100,7 @@ export const createApp = (options: AppOptions) => {
           repository,
           accessRefresh,
           specsRefresh,
+          inbox: inboxFromRequest(c),
         }), 503);
       }
       return c.text("Spec not found", 404);
@@ -1039,6 +1113,7 @@ export const createApp = (options: AppOptions) => {
       sessions,
       accessRefresh,
       specsRefresh,
+      inbox: inboxFromRequest(c),
     }));
   });
 
@@ -1069,6 +1144,7 @@ export const createApp = (options: AppOptions) => {
         repository,
         accessRefresh,
         specsRefresh,
+        inbox: inboxFromRequest(c),
       }), 503);
     }
 
@@ -1081,6 +1157,7 @@ export const createApp = (options: AppOptions) => {
         sessions: persistence.listSessionsForSpec(repositoryId, issueNumber),
         accessRefresh,
         specsRefresh,
+        inbox: inboxFromRequest(c),
       }), 409);
     }
 
@@ -1104,6 +1181,7 @@ export const createApp = (options: AppOptions) => {
       prompt: "",
       accessRefresh,
       specsRefresh,
+      inbox: inboxFromRequest(c),
       pullRequests,
       stacks,
       pullRequestsRefresh,
@@ -1181,6 +1259,7 @@ export const createApp = (options: AppOptions) => {
         stacks: targetStacks,
         pullRequestsRefresh: targetPullRequestsRefresh,
         targetInvalid,
+        inbox: inboxFromRequest(c),
       }), status);
     };
 
@@ -1340,6 +1419,7 @@ export const createApp = (options: AppOptions) => {
       sessions: persistence.listSessions(repositoryId, filter),
       filter,
       pullRequestsRefresh: persistence.getRefreshState(repositoryId, "pullRequests"),
+      inbox: inboxFromRequest(c),
     }));
   });
 
@@ -1369,6 +1449,7 @@ export const createApp = (options: AppOptions) => {
       openCodeReadiness: currentOpenCodeReadiness(),
       persistenceHealth: persistence.getHealth(),
       sessionDirectoryAvailable: sessionDirectoryAvailable(session),
+      inbox: inboxFromRequest(c),
     }));
   });
 
@@ -1426,6 +1507,7 @@ export const createApp = (options: AppOptions) => {
         sessionTargetSelection(session),
       ),
       error,
+      inbox: inboxFromRequest(c),
     }), status as 200 | 409 | 503);
   });
 
@@ -1475,6 +1557,7 @@ export const createApp = (options: AppOptions) => {
         session: currentSession,
         targetOptions,
         error: message,
+        inbox: inboxFromRequest(c),
       }), status);
     };
 
@@ -1563,6 +1646,7 @@ export const createApp = (options: AppOptions) => {
       repository,
       session,
       pullRequestsRefresh,
+      inbox: inboxFromRequest(c),
     }), session.reservationState !== "held" || ["succeeded", "failed", "interrupted"].includes(session.state) ? 200 : 409);
   });
 
@@ -1606,6 +1690,7 @@ export const createApp = (options: AppOptions) => {
         session: currentSession,
         pullRequestsRefresh,
         error,
+        inbox: inboxFromRequest(c),
       }), status);
     };
 
@@ -1678,6 +1763,7 @@ export const createApp = (options: AppOptions) => {
         openCodeReadiness: currentOpenCodeReadiness(),
         persistenceHealth: persistence.getHealth(),
         sessionDirectoryAvailable: sessionDirectoryAvailable(session),
+        inbox: inboxFromRequest(c),
       }));
     }
     return c.html(renderSessionViewerFragment({

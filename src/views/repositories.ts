@@ -18,7 +18,7 @@ import {
   repositoryLink,
   statusBadge,
 } from "./shared.ts";
-import { renderShell } from "./shell.ts";
+import { renderShell, type InboxContext } from "./shell.ts";
 
 type RepositoryListEntry = {
   repository: Repository;
@@ -64,6 +64,7 @@ export const renderRepositoriesPage = (
   csrfToken: string,
   repositories: RepositoryListEntry[] = [],
   includeRemoved = false,
+  inbox?: InboxContext,
 ) => {
   const list = repositories.length === 0
     ? emptyState(
@@ -126,6 +127,7 @@ export const renderRepositoriesPage = (
     title: "Repositories",
     active: "repositories",
     csrfToken,
+    inbox,
     content: `${pageHeader({
       eyebrow: "Operations",
       title: "Repositories",
@@ -151,11 +153,13 @@ export const renderAddRepositoryPage = ({
   available,
   error,
   query = "",
+  inbox,
 }: {
   csrfToken: string;
   available: AvailableRepository[];
   error?: string;
   query?: string;
+  inbox?: InboxContext;
 }) => {
   const filterQuery = query.trim();
   const visible = filterQuery
@@ -236,6 +240,7 @@ export const renderAddRepositoryPage = ({
     title: "Add Repository",
     active: "new-repository",
     csrfToken,
+    inbox,
     content: `${pageHeader({
       eyebrow: "GitHub App access",
       title: "Add a Repository",
