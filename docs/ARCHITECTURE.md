@@ -86,7 +86,7 @@ Required to boot: `ATLAS_SHARED_TOKEN` and `ATLAS_GITHUB_WEBHOOK_SECRET`. Origin
 - Typecheck: `bun run check` (`tsc --noEmit`)
 - CSS: `bun run build:css`
 - Checklist previewer: `just checklist`
-- Tag pushes matching the Atlas release shape run the release-only GitHub Actions workflow; there is no general branch/PR CI workflow
+- Version-looking `v*` tag pushes run the release-only GitHub Actions workflow, which rejects malformed release identities; there is no general branch/PR CI workflow
 - No formatter or linter configured
 - No unified test runner; scoped regressions are `bun run verify:*`, `bun scripts/verify-clone-scope.ts`, `bun scripts/verify-repository-filter.ts`, `bash deploy/verify-opencode-commands.sh`, `bash deploy/verify-assets.sh`
 

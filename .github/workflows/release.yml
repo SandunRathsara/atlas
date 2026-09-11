@@ -3,7 +3,7 @@ name: Publish Atlas release
 on:
   push:
     tags:
-      - "v*+build.*"
+      - "v*"
 
 permissions:
   contents: write
