@@ -15,6 +15,8 @@ Answers: where is today's shipped implementation? Organized by capability and co
 | `scripts/atlas-git-credential.ts` | Git credential helper used by preparation and `deploy/bin/git-credential-atlas`. |
 | `deploy/stage-release.sh`, `deploy/stage-opencode.sh`, `deploy/atlas-snapshot.sh`, `deploy/restore-rehearsal.sh`, `deploy/check-health.sh`, `deploy/check-opencode.sh`, `deploy/check-space.sh`, `deploy/capture-recovery-config.sh`, `deploy/verify-assets.sh`, `deploy/verify-sqlite-wal.sh` | Operator-facing host scripts. Inert until applied on the host. |
 
+The implemented inbox lives in `src/views/inbox.ts`; the deleted `src/prototype-inbox.ts` is not a runtime entry point.
+
 UI binds `127.0.0.1:$ATLAS_PORT` (default 3000). Webhook binds `127.0.0.1:$ATLAS_WEBHOOK_PORT` (default 3001). Ports must differ.
 
 ## Capabilities and Concerns
@@ -28,8 +30,8 @@ Returns `AtlasApp`. Options: `AppOptions`.
 | GET | `/health` | Authenticated persistence + OpenCode pin JSON. UI app only. |
 | GET | `/assets/app.css`, `/assets/app.js`, `/assets/htmx.min.js` | Static assets. |
 | GET | `/` | Landing: `findLandingSession` + `atlas_visit` / `atlas_inbox`; 303 to Session, Spec list, `/inbox`, or `/repositories/new`. |
-| GET | `/inbox` | Inbox page. `?repository=` sets `atlas_inbox`. |
-| GET | `/inbox/list` | Inbox list fragment when `HX-Request`; full page otherwise. Poll `every 30s`. |
+| GET | `/inbox` | Inbox page. `?repository=` is the canonical filter URL and sets/clears `atlas_inbox`; a remembered valid filter redirects a bare `/inbox` here. |
+| GET | `/inbox/list` | Inbox list fragment when `HX-Request`; full page otherwise. The fragment swaps its own outerHTML every 30s with `hx-push-url="false"`. |
 | GET/POST | `/login` | Shared-token sign-in. |
 | POST | `/logout` | Sign-out. |
 | GET | `/events` | SSE for Session or Repository scope. |
@@ -44,12 +46,13 @@ Returns `AtlasApp`. Options: `AppOptions`.
 | POST | `.../sessions` | Queue Session. |
 | GET | `/repositories/:repositoryId/pull-requests` | PRs + native stacks. |
 | GET | `/repositories/:repositoryId/sessions` | Session list (`?status=`). |
+| GET | `/sessions` | Session list across all enrolled, non-removed Repositories (`?status=`, including `?status=all`). |
 | GET | `/sessions/:sessionId` | Session detail + viewer. |
 | GET/POST | `/sessions/:sessionId/target` | Target reconfirmation. |
 | GET/POST | `/sessions/:sessionId/reservation/release` | Explicit reservation release. |
 | GET | `/sessions/:sessionId/view` | Viewer fragment or page. |
 
-Internal (not exported): `isCurrentSpec`, `isEligibleRepository`, `parseForm`, `securityHeaders`, `saveCandidate`, `refreshRepository`, `refreshPullRequests`, `inboxFromRequest`, `rememberInboxFilter`.
+Internal (not exported): `isCurrentSpec`, `isEligibleRepository`, `parseForm`, `securityHeaders`, `saveCandidate`, `refreshRepository`, `refreshPullRequests`, `enrolledInboxRepository`, `inboxPath`, `selectedSpecForPath`, `inboxFromRequest`, `rememberInboxFilter`, `manageInboxFilter`.
 
 ### Auth — `src/auth.ts#createAuth`
 
@@ -59,7 +62,7 @@ Cookie `atlas_session`: `Secure; HttpOnly; SameSite=Strict`. Bearer `Authorizati
 
 ### Inbox cookies — `src/inbox-state.ts`
 
-`readInboxCookie`, `readVisitCookie`, `inboxCookie`, `visitCookie`. Cookies `atlas_inbox` (`repositoryId`) and `atlas_visit` (`lastVisitAt`, `lastRepositoryId`): `Path=/; Secure; HttpOnly; SameSite=Strict`.
+`readInboxCookie`, `readVisitCookie`, `inboxCookie`, `visitCookie`. Cookies `atlas_inbox` (`repositoryId`) and `atlas_visit` (`lastVisitAt`, `lastRepositoryId`) use `Path=/; Secure; HttpOnly; SameSite=Strict` and have no max age.
 
 ### Persistence — `src/persistence.ts#createPersistence`
 
@@ -67,7 +70,9 @@ Returns `Persistence`. WAL + `synchronous=FULL` + foreign keys. Migrations 1–1
 
 Public methods: `database`, `close`, `restoreStartup`, `checkHealth`, `getHealth`, `isHealthy`, `markUnhealthy`, `getRepository`, `listRepositories`, `upsertRepository`, `removeRepository`, `restoreRepository`, `saveRepositoryObservation`, `updateAccess`, `markAccessObservation`, `markAccessFailure`, `requestRefresh`, `acceptWebhookDelivery`, `markRefreshSuccess`, `markRefreshFailure`, `isRefreshGenerationCurrent`, `getRefreshState`, `replaceSpecs`, `replacePullRequests`, `listPullRequests`, `listPrStacks`, `listSpecs`, `getSpec`, `getSession`, `getSessionBySubmissionId`, `queueSession`, `listQueuedSessions`, `listPreparingSessions`, `reconfirmQueuedTarget`, `claimPreparation`, `setPreparationCheckpoint`, `setQueuedSessionReason`, `blockQueuedPreparation`, `requeuePreparation`, `failPreparation`, `setHandoffIntent`, `setHandoffCheckpoint`, `setHandoffCreated`, `confirmHandoffAssociation`, `recordPromptAccepted`, `markHandoffUnconfirmed`, `markOpenCodeStale`, `reconcileOpenCode`, `releaseReservation`, `listOpenCodeSessions`, `getSessionByOpenCodeSessionId`, `listSessions`, `listSessionsForSpec`, `listInbox`, `findLandingSession`.
 
-Types: `Repository`, `Spec`, `PullRequest`, `PrStack`, `Session`, `SessionState`, `Inbox`, `InboxRow`, `PreparationCheckpoint`, `HandoffCheckpoint`, `TargetKind`, `SessionTarget`, `ResolvedTarget`, `PublicationStatus`, `AccessStatus`, `RefreshState`, `QueueSessionResult` (`created` \| `existing` \| `conflict` \| `unfinished`), `ReservationReleaseResult` (`released` \| `already_released` \| `not_found` \| `not_terminal`).
+Types: `Repository`, `Spec`, `PullRequest`, `PrStack`, `Session`, `SessionState`, `SessionFilter`, `Inbox`, `InboxRow`, `PreparationCheckpoint`, `HandoffCheckpoint`, `TargetKind`, `SessionTarget`, `ResolvedTarget`, `PublicationStatus`, `AccessStatus`, `RefreshState`, `QueueSessionResult` (`created` \| `existing` \| `conflict` \| `unfinished`), `ReservationReleaseResult` (`released` \| `already_released` \| `not_found` \| `not_terminal`).
+
+`listInbox` selects current open exact-label Specs from enrolled Repositories, joins each latest Session by submission order, assigns Needs you/In progress/Not started/Settled groups, ranks In progress as Running → Queued → Preparing → Idle, orders by `updatedAt`, caps the displayed Settled group at 10, and computes terminal unread time from `session_history` with an `updatedAt` fallback. `findLandingSession` selects the earliest new terminal Session after `lastVisitAt`, otherwise the earliest unfinished Session with Waiting first; removed Repositories are excluded from both.
 
 ### GitHub reads — `src/github.ts#createGitHubClient`
 
@@ -108,7 +113,7 @@ Returns `{ hydrate }`. Also `createViewerEventReducer`, `ViewerScopeError`. Type
 | Symbol | Owner |
 |---|---|
 | `renderLoginForm`, `renderLoginPage`, `PendingStartSession` | `src/views/shell.ts` |
-| `renderInboxGroups`, `renderInboxList`, `renderInboxPage` | `src/views/inbox.ts` |
+| `InboxContext`, `renderInboxFilter`, `renderInboxGroups`, `renderInboxList`, `renderInboxPage` | `src/views/inbox.ts` |
 | `renderRepositoriesPage`, `renderAddRepositoryPage`, `repositoryMatchesQuery` | `src/views/repositories.ts` |
 | `renderSpecsPage`, `renderSpecDetailPage`, `renderSpecUnavailablePage` | `src/views/specs.ts` |
 | `renderStartTargetOptions`, `startTargetOptions`, `targetObservation` | `src/views/targets.ts` |
@@ -116,7 +121,7 @@ Returns `{ hydrate }`. Also `createViewerEventReducer`, `ViewerScopeError`. Type
 | `renderStartSessionForm`, `renderStartSessionPage`, `renderSessionsPage`, `renderPendingStartSessionPage`, `renderPendingStartSessionFragment`, `renderTargetReconfirmationPage`, `renderTargetReconfirmationForm`, `renderReservationReleasePage`, `renderReservationReleaseForm` | `src/views/sessions.ts` |
 | `renderSessionDetailPage`, `renderSessionViewerFragment` | `src/views/viewer.ts` |
 
-Shared markup: `src/views/html.ts` (`escapeHtml`, `safeExternalUrl`, `renderDocument`), `src/views/shared.ts` (`pageHeader`, `recordTable`, access/session/publication badges), `src/views/icons.ts#icon`. Theme: `src/styles.css` → `public/app.css`. Client glue: `public/app.js`.
+Shared markup: `src/views/html.ts` (`escapeHtml`, `safeExternalUrl`, `renderDocument`), `src/views/shared.ts` (`pageHeader`, `recordTable`, access labels/badges, refresh warnings, session/publication markup), `src/views/icons.ts#icon`. Theme: `src/styles.css` → `public/app.css`. Client glue: `public/app.js` preserves inbox poll focus, open details, and scroll position after outerHTML swaps.
 
 ### Recovery status — `src/recovery-status.ts#readRecoveryStatus`
 
@@ -124,9 +129,9 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 
 ## Critical Flows
 
-**Land on `/`.** `src/app.ts#createApp` GET `/` → `src/inbox-state.ts#readVisitCookie` → `Persistence.findLandingSession` → 303 Session (new terminal, else unfinished Waiting-first) or Spec list or `/inbox` or `/repositories/new`. Sets `atlas_visit`; sets `atlas_inbox` when a Repository is chosen.
+**Land on `/`.** `src/app.ts#createApp` GET `/` → `src/inbox-state.ts#readVisitCookie` → `Persistence.findLandingSession` → 303 to the earliest new terminal Session, otherwise the earliest unfinished Session with Waiting first, otherwise the remembered enrolled Repository's Spec list, `/inbox` when Repositories exist, or `/repositories/new`. Every redirect writes `atlas_visit`; a selected Session/Repository also writes `atlas_inbox`.
 
-**Inbox.** GET `/inbox` → `inboxFromRequest` (`listInbox`, cookie/query filter) → `src/views/inbox.ts#renderInboxPage` in `renderShell`. GET `/inbox/list` with `HX-Request` → `renderInboxList` (30s poll, `hx-push-url="false"`). Direct visit returns the full page.
+**Inbox.** GET `/inbox` → `inboxFromRequest` (`listInbox`, cookie/query filter) → `src/views/inbox.ts#renderInboxPage` in `renderShell`; a valid remembered filter makes bare `/inbox` redirect to the canonical `?repository=` URL. GET `/inbox/list` with `HX-Request` → `renderInboxList` (self-swapping outerHTML, 30s poll, `hx-push-url="false"`). `inboxPath` reads `HX-Current-URL`; `selectedSpecForPath` keeps the Spec row selected across Spec, Start Session, Session target/release/view paths. `renderSpecsUnavailable` warns for mixed `never`/`partial`/`unavailable` Specs refresh states without replacing cached rows or showing a false empty state. `public/app.js` restores focus, `<details>` state, and scroll after a successful poll swap. Direct visit returns the full page.
 
 **Login.** `src/app.ts#createApp` GET `/login` → `src/auth.ts#createAuth.issueCsrf` → `src/views/shell.ts#renderLoginPage`. POST `/login` → `validateLogin` / `matchesSharedToken` → `createSession`. Unauthenticated start POSTs go through `preserveUnauthenticatedStart`.
 
@@ -135,6 +140,8 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 **Spec list/detail.** GET specs → `refreshRepository` → `Persistence.listSpecs` / `getSpec` → `src/views/specs.ts#renderSpecsPage` or `renderSpecDetailPage`. Current Spec: `isCurrentSpec` (open, `spec` label, not a PR).
 
 **Start Session.** GET `.../sessions/new` → refresh access/specs/PRs → `src/views/sessions.ts#renderStartSessionPage` + `src/views/targets.ts#startTargetOptions`. POST → CSRF + target observation match → `Persistence.queueSession` → `PreparationService.enqueue`. Duplicate unfinished Spec → 409. `createPreparationService.prepareNext` → `claimPreparation` → clone via `cloneGitEnvironment` → checkpoints through `prepared`. `createOpenCodeHandoffService` then intent → events → create → associate → one prompt → `Persistence.reconcileOpenCode`. Terminal → `refreshPullRequests` + `preparation.enqueue`.
+
+**All Sessions.** GET `/sessions` → `persistence.listRepositories()` → `listSessions(repositoryId, filter)` for every enrolled, non-removed Repository → flatten and sort by submission order → `renderSessionsPage` in global mode. `?status=all` includes terminal history; default `active` includes every unfinished state.
 
 **Webhook → refresh.** `src/server.ts` webhook listener → `createWebhookApp` POST `/webhooks/github` → `verifyGitHubSignature` → `Persistence.acceptWebhookDelivery` → `RefreshCoordinator.wake`.
 
@@ -148,10 +155,10 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 
 - `src/inbox-state.ts` — `atlas_inbox` / `atlas_visit` cookie parse and set.
 - `src/views/html.ts` — HTML escaping, document shell, HTMX includes.
-- `src/views/shared.ts` — layout primitives and Session/Repository status markup.
+- `src/views/shared.ts` — layout primitives, access labels/badges, refresh warnings, and Session/Repository status markup.
 - `src/views/icons.ts` — Heroicons paths.
 - `src/styles.css` / `public/app.css` — Tailwind + daisyUI `atlas` theme.
-- `public/app.js` — client HTMX glue.
+- `public/app.js` — client HTMX glue; preserves inbox poll focus, open `<details>`, and scroll position.
 - `src/recovery-status.ts` — read-only host status.
 - `src/config.ts#loadGitHubEnv` and `src/credentials.ts#loadGithubEnv` — two github.env loaders (browse keys vs App key path).
 
@@ -160,6 +167,8 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 **SQLite tables:** `schema_migrations`, `repositories`, `specs`, `refresh_state`, `pull_requests`, `pr_stacks`, `stack_members`, `sessions`, `webhook_deliveries`, `stack_reservations`, `reservation_prs`, `reservation_conflict_holds`, `session_history`.
 
 **Session identity:** Atlas IDs `ses_<uuid>`. Unfinished states unique per Spec (`sessions_unfinished_spec_idx`).
+
+**Inbox identity:** `InboxRow` represents one current Spec and its latest Session; `Inbox` also carries the Settled total/new counts. Browser-held `atlas_inbox` and `atlas_visit` cookies carry filter and landing state; poll continuity is transient DOM state, not SQLite state.
 
 **GitHub:** installation token from `CredentialBoundary.installationToken`; browse may fall back to `ATLAS_GITHUB_INSTALLATION_TOKEN`.
 
@@ -178,6 +187,8 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 - **WAL SQLite.** Required except in-memory. One writer. `restoreStartup` reclaims unfinished ownership; do not skip health restore.
 - **One unfinished Session per Spec.** Unique index plus `queueSession` `unfinished` result. Do not add a second-start path that bypasses it.
 - **Capacity and disk.** Default capacity 1. Pause on low free space or stale/paused recovery status. `ATLAS_ADMISSION_PAUSED` is operator-controlled.
+- **Inbox refresh and selection.** `/inbox/list` replaces the whole list root every 30 seconds; keep the stable `data-inbox-scroll`/focus restoration contract, `HX-Current-URL` selection mapping, and `hx-push-url="false"` behavior together.
+- **Inbox truthfulness.** `listInbox` keeps only current Specs and the latest Session, ranks groups/states before `updatedAt`, uses terminal history for unread time, and must not turn mixed Specs refresh failures or unknown access into an empty list or a revoked-access claim.
 
 ## Verification Map
 
@@ -192,14 +203,14 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 | `bun run verify:issue27-fixes` | Preparation free space, App token mint, clone admission. |
 | `bun run verify:issue32` | Refresh coordinator retry backoff. |
 | `bun run verify:issue29` | Session viewer hydrate, SSE (no transcript leak). |
-| `bun run verify:inbox` | Inbox Spec projection (`listInbox`, `findLandingSession`). |
-| `bun run verify:landing` | GET `/` landing redirects and `atlas_visit` / `atlas_inbox`. |
-| `bun run verify:inbox-shell` | Desktop sidebar inbox, filter cookie, `/inbox/list` fragment. |
-| `bun run verify:inbox-page` | `/inbox` page, phone Inbox link, empty/error states. |
+| `bun run verify:inbox` | Inbox Spec projection, latest Session, group/state ordering, Settled cap, terminal unread time, and landing selection. |
+| `bun run verify:landing` | GET `/` landing redirects, per-browser `atlas_visit` / `atlas_inbox`, and canonical `/inbox` filter URL. |
+| `bun run verify:inbox-shell` | Desktop sidebar, canonical/filter cookie behavior, selected Spec identity, `/inbox/list` fragment contract, access semantics, and global `/sessions?status=all`. |
+| `bun run verify:inbox-page` | `/inbox` full/fragment pages, phone Inbox link, mixed refresh warnings, access badges, and empty/error states. |
 | `bun scripts/verify-clone-scope.ts` | Clone git env + credential helper isolation. |
 | `bun scripts/verify-repository-filter.ts` | `repositoryMatchesQuery` + add-repo UI. |
 | `bun scripts/check-restored-state.ts` | Restore DB/schema/registry. |
 | `bash deploy/verify-assets.sh` | Deploy file set + syntax. Does not enable services. |
 | `bash deploy/verify-sqlite-wal.sh` | Bun/OpenCode SQLite WAL pin. |
 
-<!-- repo-map-synced: 4b188a3fa180e349011dd02434ec69bf7792b02f -->
+<!-- repo-map-synced: 7d9e6454ba65aeef70d1ec7bf877807bb3e23a28 -->
