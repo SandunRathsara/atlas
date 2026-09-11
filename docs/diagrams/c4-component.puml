@@ -20,7 +20,7 @@ System_Boundary(atlas, "Atlas UI process") {
   Component(updatePause, "Safe update pause", "src/update-pause.ts#createUpdatePauseCoordinator", "Drain preparation/handoff without waiting for Agent execution")
   Component(viewer, "Session viewer", "src/session-viewer.ts#createSessionViewerService", "Hydrate OpenCode tree for display")
   Component(releaseIdentity, "Release identity", "src/release.ts", "Validate tag-derived metadata for health")
-  Component(updateDiscovery, "Release updates", "src/update-discovery.ts#createUpdateService", "Public checks, staging, approval, safe-pause orchestration")
+  Component(updateDiscovery, "Release updates", "src/update-discovery.ts#createUpdateService", "Public checks, policy selection, staging, safe-pause orchestration")
 }
 
 System_Boundary(credentialService, "Atlas credential service") {
@@ -28,7 +28,7 @@ System_Boundary(credentialService, "Atlas credential service") {
 }
 
 System_Boundary(updaterService, "Atlas updater service") {
-  Component(updater, "Host updater", "src/updater-server.ts → src/updater.ts", "Independent authenticated staging, activation, health validation, rollback")
+  Component(updater, "Host updater", "src/updater-server.ts → src/updater.ts", "Independent authenticated policy, staging, activation, health validation, rollback")
 }
 
 System_Ext(github, "GitHub", "App, issues labelled spec, PRs, native stacks, webhooks, public Releases")
@@ -60,7 +60,7 @@ Rel(ui, handoff, "start / events")
 Rel(ui, updatePause, "expose activation prerequisite")
 Rel(ui, viewer, "hydrate")
 Rel(ui, releaseIdentity, "report identity in health")
-Rel(ui, updateDiscovery, "check / status / Install / Retry")
+Rel(ui, updateDiscovery, "check / status / policy / Install / Retry")
 Rel(webhook, persistence, "accept delivery")
 Rel(webhook, sync, "wake")
 
@@ -68,7 +68,7 @@ Rel(sync, githubClient, "GET projections")
 Rel(sync, persistence, "write projections")
 Rel(updateDiscovery, github, "list public Releases and metadata")
 Rel(updateDiscovery, persistence, "write/read known candidates")
-Rel(updateDiscovery, updater, "stage/status/approval/checkpoint over authenticated Unix socket")
+Rel(updateDiscovery, updater, "policy/stage/status/activation over authenticated Unix socket")
 Rel(preparation, persistence, "claim / checkpoints")
 Rel(preparation, credentials, "register scope, request token")
 Rel(preparation, githubClient, "refresh before clone")
@@ -83,8 +83,8 @@ Rel(githubClient, github, "read API")
 Rel(persistence, sqlite, "WAL")
 Rel(updater, github, "download public archive/checksum")
 Rel(updater, releaseDirs, "atomic read-only staging and current selection")
-Rel(updater, updateState, "atomic staging/activation/recovery writes")
+Rel(updater, updateState, "atomic policy/staging/activation/recovery writes")
 Rel(updater, server, "stop/restart Atlas only; validate authenticated Atlas-only health")
 
-' repo-map-synced: beb8cc194167a5e203714a7d5e2b3b58069761cb
+' repo-map-synced: 9b60e1b8c34c2a3a01ba322985f138990db1454e
 @enduml

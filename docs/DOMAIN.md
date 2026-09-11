@@ -6,7 +6,7 @@ Answers: why does this system exist? Populated and kept current by `/refresh-rep
 
 Atlas is an internal control plane for a team that already writes work as GitHub issues. It lets that team triage Specs across onboarded GitHub Repositories and start autonomous OpenCode Sessions from team-authored Specs, then observe those Sessions without Atlas itself publishing GitHub Pull requests or stacks.
 
-Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; an inbox of current Specs with landing on `/`; read-only Pull request and native-stack browsing; authenticated Session directory preparation backed by credential serving that survives Atlas UI restarts; a guarded OpenCode handoff; an awaitable safe update pause for preparation/handoff; Session viewing; Atlas-side stack reservation hold and release; immutable numbered Linux x64 Releases built from authoritative tags; public Release discovery, durable host staging, approval-driven activation, and automatic code rollback.
+Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; an inbox of current Specs with landing on `/`; read-only Pull request and native-stack browsing; authenticated Session directory preparation backed by credential serving that survives Atlas UI restarts; a guarded OpenCode handoff; an awaitable safe update pause for preparation/handoff; Session viewing; Atlas-side stack reservation hold and release; immutable numbered Linux x64 Releases built from authoritative tags; public Release discovery, durable host staging, approval-required or same-SemVer automatic activation, and automatic code rollback.
 
 ## Actors
 
@@ -34,7 +34,7 @@ Shipped outcomes: private sign-in; durable Repository, Spec, and Session records
 - Accept signed GitHub webhooks that wake background refresh of enrolled Repositories.
 - Publish a numbered ready-to-run Linux x64 Release from a reviewed tag without changing dependencies during publishing.
 - Check public Releases and observe durable staging without changing the active Release or Session admission.
-- Approve a fully staged Release, observe activation/recovery through a brief Atlas outage, and explicitly Retry a failed candidate.
+- Choose the installation's update policy, approve a fully staged Release when required, observe activation/recovery through a brief Atlas outage, and explicitly Retry a failed candidate.
 
 ## Workflows
 
@@ -125,17 +125,21 @@ Repeated requests coalesce or reuse the completed tree. `/opt/atlas/current`
 and Session admission remain unchanged. The Updates page shows
 rollback-incompatible manual-maintenance instructions and unmet Bun, Git, or gh
 requirements, but neither Atlas process upgrades those host tools or manages
-OpenCode. Approval is required; staging alone never changes the active Release.
+OpenCode. Approval required is the persistent default. Automatic policy prefers
+only the highest newer numeric build of the exact installed SemVer, even when a
+newer SemVer is also known; patch, minor, and major changes remain staged for
+explicit approval. Staging alone never changes the active Release.
 
-### Approve and activate Release
+### Activate and recover Release
 
-A user with existing Atlas web access may choose **Install** only for the exact
-available Release after staging is complete, host runtime requirements are met,
-and metadata guarantees code-only rollback. Approval is durably recorded before
-Atlas pauses new preparation and create/associate/prompt handoff work. Existing
-work reaches safe checkpoints for at most five minutes; Running, Waiting, and
-Idle Sessions do not block. Timeout abandons activation, leaves the current
-Release selected, and removes only the update-owned pause.
+A user with existing Atlas web access may choose **Install** or configure the
+installation policy. Explicit approval remains required for every SemVer
+change. Automatic policy may select only a higher numeric build of the exact
+installed SemVer. Both paths require complete staging, met host runtimes, and
+metadata guaranteeing code-only rollback, then use the same durable activation
+and safe pause. Existing work reaches safe checkpoints for at most five minutes;
+Running, Waiting, and Idle Sessions do not block. Timeout abandons activation,
+leaves the current Release selected, and removes only the update-owned pause.
 
 After the checkpoint, the surviving updater stops only Atlas, atomically selects
 the complete candidate, restarts Atlas, and allows 60 seconds for the expected
@@ -144,12 +148,15 @@ continue; OpenCode readiness, availability, and version are neither queried nor
 used by activation health. Atlas processes started during host work remain
 update-paused until the durable result is terminal.
 
-Candidate failure suppresses that exact tag and automatically selects, restarts,
-and verifies the previous working Release against unchanged shared data. Atlas
-reports **Recovered** only after previous identity/storage health succeeds;
-otherwise it reports **Recovery failed**. Explicit **Retry** permits the failed
-tag again, while a later eligible Release is unaffected. Manual-maintenance
-Releases cannot use this path. No old Release trees are deleted in this slice.
+Candidate failure suppresses that exact tag from automatic activation and
+automatically selects, restarts, and verifies the previous working Release
+against unchanged shared data. Atlas reports **Recovered** only after previous
+identity/storage health succeeds; otherwise it reports **Recovery failed**.
+Explicit **Retry** permits the failed tag again, while a later eligible build is
+unaffected. Policy and suppression survive Atlas/updater restart and rollback,
+and each installation owns its own state and four-hour schedule.
+Manual-maintenance Releases cannot use this path. No old Release trees are
+deleted in this slice.
 
 ## Ubiquitous Language
 
@@ -235,11 +242,13 @@ _Avoid_: moving build, source snapshot
   Failed checks retain the last successful candidate set. Staging is durable,
   read-only, and inactive; it neither pauses Session admission nor changes
   `/opt/atlas/current`.
-- Release activation requires explicit web approval, a complete exact staged
-  tree, met host runtimes, and declared code-only rollback compatibility. It
-  durably serializes target/progress/result, checks exact Atlas identity and
-  healthy persistence within 60 seconds, and never gates on or controls OpenCode.
-  Failed tags require Retry; rollback success requires verified previous health.
+- Release activation requires either explicit web approval or automatic policy
+  applied to a newer numeric build of the exact installed SemVer. Both require a
+  complete exact staged tree, met host runtimes, and declared code-only rollback
+  compatibility. Activation durably serializes target/progress/result, checks
+  exact Atlas identity and healthy persistence within 60 seconds, and never
+  gates on or controls OpenCode. Failed tags require Retry; rollback success
+  requires verified previous health. Policy and scheduling are installation-local.
 
 ## Boundaries and Non-Goals
 
@@ -248,8 +257,9 @@ _Avoid_: moving build, source snapshot
 - Does not automatically provision the host, move OpenCode data, or change Tailscale/firewall. The operator-run bootstrap is limited to the independent credential/updater services and updated unit files.
 - Does not own OpenCode lifecycle, configuration, or transcripts.
 - Release discovery/staging alone does not invoke the safe update pause or
-  activate a Release. Automatic policy selection and old-Release cleanup remain
-  later work; Install/Retry are approval-driven only.
+  activate a Release. Automatic policy applies only to newer builds of the
+  installed SemVer; unattended SemVer changes and old-Release cleanup remain
+  later work.
 - Viewer does not reply to, cancel, or resume OpenCode permissions, forms, or inbox items.
 - Does not create GitHub labels.
 - Design guidelines do not introduce features or change business rules.
@@ -257,4 +267,4 @@ _Avoid_: moving build, source snapshot
   and automatic selection/upgrading of Bun, Git, gh, OS packages, or OpenCode.
 - Phase 1 has no off-site backup. Snapshots cannot undo GitHub effects. Shared host identity `omega` is not hostile-agent isolation.
 
-<!-- repo-map-synced: beb8cc194167a5e203714a7d5e2b3b58069761cb -->
+<!-- repo-map-synced: 9b60e1b8c34c2a3a01ba322985f138990db1454e -->
