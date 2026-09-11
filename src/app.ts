@@ -564,16 +564,13 @@ export const createApp = (options: AppOptions) => {
     return repository && !repository.removedAt ? repository : undefined;
   };
 
-  const inboxPath = (c: Context) => {
+  const inboxLocation = (c: Context) => {
     const current = c.req.header("HX-Current-URL");
-    if (current) {
-      try {
-        return new URL(current, c.req.url).pathname;
-      } catch {
-        return c.req.path;
-      }
+    try {
+      return new URL(current ?? c.req.url, c.req.url);
+    } catch {
+      return new URL(c.req.url);
     }
-    return c.req.path;
   };
 
   const selectedSpecForPath = (path: string) => {
@@ -601,12 +598,14 @@ export const createApp = (options: AppOptions) => {
       lastVisitAt: readVisitCookie(c.req.header("Cookie")).lastVisitAt,
     });
     const relevant = filtered ? [filtered] : repositories;
-    const currentPath = inboxPath(c);
+    const currentLocation = inboxLocation(c);
+    const currentPath = currentLocation.pathname;
     return {
       repositories,
       filtered,
       list,
       currentPath,
+      currentSessionFilter: currentLocation.searchParams.get("status") ?? "active",
       selectedSpec: selectedSpecForPath(currentPath),
       specsRefresh: relevant.map((repository) => persistence.getRefreshState(repository.githubId, "specs")),
     };

@@ -159,6 +159,7 @@ const assertShell = (body: string) => {
   assert(body.includes('hx-get="/inbox/list"'));
   assert(body.includes('hx-swap="outerHTML"'));
   assert(body.includes("data-inbox-scroll"));
+  assert(body.includes('<nav aria-label="Spec inbox">'));
   assert(!body.includes("inbox-list-body"));
   assert(!body.includes('hx-target="#inbox-list-body"'));
   assert(!body.includes('hx-select="#inbox-list-body"'));
@@ -434,6 +435,24 @@ const assertShell = (body: string) => {
   assert(body.includes('aria-current="page"'));
   assert(body.includes("/repositories/1/pull-requests"));
   assert(body.includes("bg-brand-tint"));
+  db.close();
+}
+
+{
+  const db = persistence();
+  seed(db);
+  const app = mount(db);
+  const active = await request(app, "/repositories/1/sessions", {
+    ...auth,
+    Cookie: cookieJson("atlas_inbox", { repositoryId: "1" }),
+  });
+  assert(!/id="inbox-utility-all-sessions"[^>]*aria-current="page"/.test(await active.text()));
+
+  const all = await request(app, "/repositories/1/sessions?status=all", {
+    ...auth,
+    Cookie: cookieJson("atlas_inbox", { repositoryId: "1" }),
+  });
+  assert(/id="inbox-utility-all-sessions"[^>]*aria-current="page"/.test(await all.text()));
   db.close();
 }
 

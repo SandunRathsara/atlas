@@ -19,6 +19,7 @@ export type InboxContext = {
   filtered?: Repository;
   list: Inbox;
   currentPath: string;
+  currentSessionFilter?: string;
   selectedSpec?: { repositoryId: string; issueNumber: string };
   specsRefresh: Array<RefreshState | undefined>;
 };
@@ -106,14 +107,14 @@ const renderInboxPageRecords = (rows: InboxRow[], inbox: InboxContext, unfiltere
 const utilityLink = (href: string, current: boolean, glyph: IconName, label: string, extra = "", idPrefix = "inbox-") =>
   `<a id="${idPrefix}utility-${label.toLocaleLowerCase().replaceAll(" ", "-")}" class="flex h-8 items-center gap-2 rounded-field border-l-2 ${current ? "border-l-brand-readable bg-brand-tint" : "border-transparent"} px-3 text-sm font-medium text-muted" href="${href}"${current ? ' aria-current="page"' : ""}${extra}>${icon(glyph, 20)}<span>${label}</span></a>`;
 
-const renderInboxUtility = (repository: Repository, currentPath: string, layout: "sidebar" | "page" = "sidebar") => {
+const renderInboxUtility = (repository: Repository, currentPath: string, currentSessionFilter: string | undefined, layout: "sidebar" | "page" = "sidebar") => {
   const github = safeExternalUrl(repository.htmlUrl);
   const prs = pullRequestsLink(repository);
   const sessions = `${sessionsLink(repository)}?status=all`;
   const idPrefix = layout === "page" ? "inbox-page-" : "inbox-";
   return `<nav class="border-t border-edge p-2" aria-label="Filtered Repository">
     ${utilityLink(escapeHtml(prs), currentPath === prs, "code-bracket", "Pull requests", "", idPrefix)}
-    <div class="mt-1">${utilityLink(escapeHtml(sessions), currentPath === sessionsLink(repository), "command-line", "All Sessions", "", idPrefix)}</div>
+    <div class="mt-1">${utilityLink(escapeHtml(sessions), currentPath === sessionsLink(repository) && currentSessionFilter === "all", "command-line", "All Sessions", "", idPrefix)}</div>
     ${github ? `<div class="mt-1">${utilityLink(escapeHtml(github), false, "arrow-top-right-on-square", "Open on GitHub", ' target="_blank" rel="noopener noreferrer"', idPrefix)}</div>` : ""}
   </nav>`;
 };
@@ -208,8 +209,11 @@ export const renderInboxGroups = (inbox: InboxContext, layout: "sidebar" | "page
         ${allSessions}
       </details>`;
     }
-    return `<section class="${layout === "page" ? "mt-6" : "mt-4"}">
-      <h2 class="${heading}">${GROUP_LABEL[group]}</h2>
+    const groupHeading = layout === "page"
+      ? `<h2 class="${heading}">${GROUP_LABEL[group]}</h2>`
+      : `<p class="${heading}">${GROUP_LABEL[group]}</p>`;
+    return `<section class="${layout === "page" ? "mt-6" : "mt-4"}" aria-label="${GROUP_LABEL[group]}">
+      ${groupHeading}
       ${body}
     </section>`;
   }).join("");
@@ -218,12 +222,12 @@ export const renderInboxGroups = (inbox: InboxContext, layout: "sidebar" | "page
 
 export const renderInboxList = (inbox: InboxContext) =>
   `<div id="inbox-list" tabindex="-1" class="flex min-h-0 flex-1 flex-col" hx-get="/inbox/list" hx-trigger="every 30s" hx-swap="outerHTML" hx-push-url="false">
-    <div data-inbox-scroll class="min-h-0 flex-1 overflow-y-auto p-2">${renderInboxGroups(inbox)}</div>
-    ${inbox.filtered ? renderInboxUtility(inbox.filtered, inbox.currentPath) : ""}
+    <div data-inbox-scroll class="min-h-0 flex-1 overflow-y-auto p-2"><nav aria-label="Spec inbox">${renderInboxGroups(inbox)}</nav></div>
+    ${inbox.filtered ? renderInboxUtility(inbox.filtered, inbox.currentPath, inbox.currentSessionFilter) : ""}
   </div>`;
 
 export const renderInboxPage = (inbox: InboxContext) =>
   `${pageHeader({ title: "Inbox" })}
   ${renderInboxFilter(inbox, "page")}
   ${renderInboxGroups(inbox, "page")}
-  ${inbox.filtered ? renderInboxUtility(inbox.filtered, inbox.currentPath, "page") : ""}`;
+  ${inbox.filtered ? renderInboxUtility(inbox.filtered, inbox.currentPath, inbox.currentSessionFilter, "page") : ""}`;
