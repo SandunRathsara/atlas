@@ -22,6 +22,11 @@ import {
   type SessionTarget,
 } from "./persistence.ts";
 import { createPreparationService } from "./preparation.ts";
+import {
+  renderInboxPrototype,
+  type InboxPrototypeRepository,
+  type InboxPrototypeVariant,
+} from "./prototype-inbox.ts";
 import type { CredentialBoundary } from "./credentials.ts";
 import { APPROVED_OPENCODE_VERSION, createOpenCodeHandoffService } from "./opencode.ts";
 import type { OpenCodeHandoffService } from "./opencode.ts";
@@ -681,6 +686,21 @@ export const createApp = (options: AppOptions) => {
   app.use("/sessions", auth.middleware);
   app.use("/sessions/*", auth.middleware);
   app.use("/events", auth.middleware);
+
+  if (Bun.env.NODE_ENV !== "production") {
+    app.use("/prototype/*", auth.middleware);
+    app.get("/prototype/inbox", (c) => {
+      const requestedVariant = c.req.query("variant")?.toUpperCase();
+      const variant: InboxPrototypeVariant = requestedVariant === "B" || requestedVariant === "C" ? requestedVariant : "A";
+      const requestedRepository = c.req.query("repository");
+      if (requestedRepository === "manage") return c.redirect("/repositories", 303);
+      const repository: InboxPrototypeRepository = requestedRepository === "atlas" || requestedRepository === "opencode" || requestedRepository === "bearings"
+        ? requestedRepository
+        : "all";
+      setPrivateHtmlHeaders(c);
+      return c.html(renderInboxPrototype({ variant, repository, selectedSpec: c.req.query("spec") }));
+    });
+  }
 
   app.get("/events", (c) => {
     const sessionId = c.req.query("session");

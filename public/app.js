@@ -39,6 +39,27 @@
     navigation.querySelector("[data-mobile-navigation-trigger]")?.focus();
   });
 
+  document.body.addEventListener("change", (event) => {
+    const select = event.target instanceof HTMLSelectElement && event.target.matches("[data-prototype-repository-filter]")
+      ? event.target
+      : null;
+    if (!select) return;
+    if (select.value === "manage") {
+      window.location.assign("/repositories");
+      return;
+    }
+    select.form?.requestSubmit();
+  });
+
+  document.body.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLElement && event.target.isContentEditable) return;
+    const switcher = document.querySelector("[data-prototype-switcher]");
+    if (!switcher) return;
+    event.preventDefault();
+    switcher.querySelector(event.key === "ArrowLeft" ? "[data-prototype-previous]" : "[data-prototype-next]")?.click();
+  });
+
   window.addEventListener("DOMContentLoaded", () => {
     const swap = document.querySelector("[data-focus-on-swap]");
     if (swap instanceof HTMLElement) {
