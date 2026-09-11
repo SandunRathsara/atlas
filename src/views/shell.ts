@@ -2,13 +2,10 @@ import { readRecoveryStatus, type RecoveryStatus } from "../recovery-status.ts";
 import type { Repository } from "../persistence.ts";
 import { escapeHtml, formatTime, renderDocument, skipLink } from "./html.ts";
 import { icon } from "./icons.ts";
-import {
-  type ActivePage,
-  alertSoft,
-  pullRequestsLink,
-  repositoryLink,
-  sessionsLink,
-} from "./shared.ts";
+import { renderInboxFilter, renderInboxList, type InboxContext } from "./inbox.ts";
+import { type ActivePage, alertSoft } from "./shared.ts";
+
+export type { InboxContext };
 
 export type PendingStartSession = {
   action: string;
@@ -118,25 +115,19 @@ const renderRecoveryNotices = (status: RecoveryStatus) => {
   return `<section class="mb-6 grid gap-3" aria-label="Recovery and storage status">${backup}${space}</section>`;
 };
 
-const navItem = (href: string, label: string, active: boolean, glyph: Parameters<typeof icon>[0]) =>
-  `<a class="flex h-8 items-center gap-2 rounded-field border-l-2 px-3 text-sm font-medium ${
-    active ? "border-brand-readable bg-brand-tint text-base-content" : "border-transparent text-muted"
-  }" href="${href}"${active ? ' aria-current="page"' : ""}>${icon(glyph, 20)}<span>${label}</span></a>`;
-
-const renderRepositoryNav = (repository: Repository, active: ActivePage) => `<div class="mt-4">
-  <p class="px-3 py-2 text-xs font-medium uppercase tracking-wide text-faint">Repository</p>
-  ${navItem(repositoryLink(repository), "Specs", active === "specs" || active === "spec", "document-text")}
-  <div class="mt-1">${navItem(pullRequestsLink(repository), "Pull requests", active === "pull-requests", "code-bracket")}</div>
-  <div class="mt-1">${navItem(sessionsLink(repository), "Sessions", active === "sessions", "command-line")}</div>
-</div>`;
+const emptyInbox = (): InboxContext => ({
+  repositories: [],
+  list: { rows: [], settledTotal: 0, settledNew: 0 },
+  currentPath: "",
+  specsRefresh: [],
+});
 
 export const renderShell = ({
   title,
-  active,
-  repository,
   csrfToken,
   historyDisabled,
   content,
+  inbox = emptyInbox(),
 }: {
   title: string;
   active: ActivePage;
@@ -144,44 +135,26 @@ export const renderShell = ({
   csrfToken: string;
   historyDisabled?: boolean;
   content: string;
+  inbox?: InboxContext;
 }) => {
-  const repositoryName = repository?.fullName ?? "No Repository selected";
-  const repositoriesActive = active === "repositories" || active === "new-repository";
-  const specsActive = active === "specs" || active === "spec";
-  const pullRequestsActive = active === "pull-requests";
-  const sessionsActive = active === "sessions";
+  const headerName = inbox.filtered?.fullName ?? "All Repositories";
   const recoveryNotices = renderRecoveryNotices(readRecoveryStatus());
-  const mobileLinks = `${brandBand()}
-    <nav class="p-2" aria-label="Primary navigation">
-      ${navItem("/repositories", "Repositories", repositoriesActive, "rectangle-stack")}
-      ${repository ? `<div class="mt-1">${navItem(repositoryLink(repository), "Specs", specsActive, "document-text")}</div>
-      <div class="mt-1">${navItem(pullRequestsLink(repository), "Pull requests", pullRequestsActive, "code-bracket")}</div>
-      <div class="mt-1">${navItem(sessionsLink(repository), "Sessions", sessionsActive, "command-line")}</div>` : ""}
-    </nav>`;
 
   return renderDocument(
     title,
     `${skipLink}
     <div class="min-h-screen lg:flex">
-      <aside class="hidden bg-base-300 lg:flex lg:w-56 lg:shrink-0 lg:flex-col" aria-label="Primary navigation">
+      <aside class="hidden bg-base-300 lg:flex lg:w-72 lg:shrink-0 lg:flex-col" aria-label="Primary navigation">
         ${brandBand("/repositories")}
-        <nav class="p-2">
-          <p class="px-3 py-2 text-xs font-medium uppercase tracking-wide text-faint">Atlas</p>
-          ${navItem("/repositories", "Repositories", repositoriesActive, "rectangle-stack")}
-          ${repository ? renderRepositoryNav(repository, active) : ""}
-        </nav>
+        ${renderInboxFilter(inbox)}
+        ${renderInboxList(inbox)}
       </aside>
       <div class="min-w-0 flex-1">
         <header class="atlas-glass sticky top-0 z-20">
           <div class="relative flex h-12 items-center justify-between gap-3 px-4 sm:px-6">
-            <p class="min-w-0 truncate text-sm text-muted" title="${escapeHtml(repositoryName)}">${escapeHtml(repositoryName)}</p>
+            <p class="min-w-0 truncate text-sm text-muted" title="${escapeHtml(headerName)}">${escapeHtml(headerName)}</p>
             <div class="flex shrink-0 flex-wrap items-center gap-2">
-              <details class="lg:hidden" data-mobile-navigation>
-                <summary class="btn btn-ghost list-none" data-mobile-navigation-trigger aria-label="Open primary navigation">${icon("bars-3", 16)} Navigation</summary>
-                <nav class="atlas-float absolute right-4 top-full z-30 mt-1 w-56 max-w-[calc(100vw-2rem)] overflow-hidden rounded-box border border-edge bg-base-100" aria-label="Primary navigation">
-                  ${mobileLinks}
-                </nav>
-              </details>
+              <a class="btn btn-ghost lg:hidden" href="/inbox">${icon("rectangle-stack", 16)} Inbox</a>
               ${renderLogoutForm(csrfToken)}
             </div>
           </div>

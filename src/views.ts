@@ -1,5 +1,6 @@
-export type { PendingStartSession } from "./views/shell.ts";
+export type { InboxContext, PendingStartSession } from "./views/shell.ts";
 export { renderLoginForm, renderLoginPage } from "./views/shell.ts";
+export { renderInboxGroups, renderInboxList, renderInboxPage } from "./views/inbox.ts";
 export { renderAddRepositoryPage, renderRepositoriesPage, repositoryMatchesQuery } from "./views/repositories.ts";
 export { renderSpecDetailPage, renderSpecUnavailablePage, renderSpecsPage } from "./views/specs.ts";
 export { renderStartTargetOptions, startTargetOptions, targetObservation } from "./views/targets.ts";

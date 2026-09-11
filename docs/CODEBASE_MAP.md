@@ -27,7 +27,9 @@ Returns `AtlasApp`. Options: `AppOptions`.
 |---|---|---|
 | GET | `/health` | Authenticated persistence + OpenCode pin JSON. UI app only. |
 | GET | `/assets/app.css`, `/assets/app.js`, `/assets/htmx.min.js` | Static assets. |
-| GET | `/` | 303 `/repositories`. |
+| GET | `/` | Landing: `findLandingSession` + `atlas_visit` / `atlas_inbox`; 303 to Session, Spec list, `/inbox`, or `/repositories/new`. |
+| GET | `/inbox` | Inbox page. `?repository=` sets `atlas_inbox`. |
+| GET | `/inbox/list` | Inbox list fragment when `HX-Request`; full page otherwise. Poll `every 30s`. |
 | GET/POST | `/login` | Shared-token sign-in. |
 | POST | `/logout` | Sign-out. |
 | GET | `/events` | SSE for Session or Repository scope. |
@@ -47,7 +49,7 @@ Returns `AtlasApp`. Options: `AppOptions`.
 | GET/POST | `/sessions/:sessionId/reservation/release` | Explicit reservation release. |
 | GET | `/sessions/:sessionId/view` | Viewer fragment or page. |
 
-Internal (not exported): `isCurrentSpec`, `isEligibleRepository`, `parseForm`, `securityHeaders`, `saveCandidate`, `refreshRepository`, `refreshPullRequests`.
+Internal (not exported): `isCurrentSpec`, `isEligibleRepository`, `parseForm`, `securityHeaders`, `saveCandidate`, `refreshRepository`, `refreshPullRequests`, `inboxFromRequest`, `rememberInboxFilter`.
 
 ### Auth — `src/auth.ts#createAuth`
 
@@ -55,13 +57,17 @@ Returns `{ authenticate, clearSessionCookie, createSession, endSession, isSameOr
 
 Cookie `atlas_session`: `Secure; HttpOnly; SameSite=Strict`. Bearer `Authorization` accepted. Browser mutations need same-origin + CSRF.
 
+### Inbox cookies — `src/inbox-state.ts`
+
+`readInboxCookie`, `readVisitCookie`, `inboxCookie`, `visitCookie`. Cookies `atlas_inbox` (`repositoryId`) and `atlas_visit` (`lastVisitAt`, `lastRepositoryId`): `Path=/; Secure; HttpOnly; SameSite=Strict`.
+
 ### Persistence — `src/persistence.ts#createPersistence`
 
 Returns `Persistence`. WAL + `synchronous=FULL` + foreign keys. Migrations 1–12.
 
-Public methods: `database`, `close`, `restoreStartup`, `checkHealth`, `getHealth`, `isHealthy`, `markUnhealthy`, `getRepository`, `listRepositories`, `upsertRepository`, `removeRepository`, `restoreRepository`, `saveRepositoryObservation`, `updateAccess`, `markAccessObservation`, `markAccessFailure`, `requestRefresh`, `acceptWebhookDelivery`, `markRefreshSuccess`, `markRefreshFailure`, `isRefreshGenerationCurrent`, `getRefreshState`, `replaceSpecs`, `replacePullRequests`, `listPullRequests`, `listPrStacks`, `listSpecs`, `getSpec`, `getSession`, `getSessionBySubmissionId`, `queueSession`, `listQueuedSessions`, `listPreparingSessions`, `reconfirmQueuedTarget`, `claimPreparation`, `setPreparationCheckpoint`, `setQueuedSessionReason`, `blockQueuedPreparation`, `requeuePreparation`, `failPreparation`, `setHandoffIntent`, `setHandoffCheckpoint`, `setHandoffCreated`, `confirmHandoffAssociation`, `recordPromptAccepted`, `markHandoffUnconfirmed`, `markOpenCodeStale`, `reconcileOpenCode`, `releaseReservation`, `listOpenCodeSessions`, `getSessionByOpenCodeSessionId`, `listSessions`, `listSessionsForSpec`.
+Public methods: `database`, `close`, `restoreStartup`, `checkHealth`, `getHealth`, `isHealthy`, `markUnhealthy`, `getRepository`, `listRepositories`, `upsertRepository`, `removeRepository`, `restoreRepository`, `saveRepositoryObservation`, `updateAccess`, `markAccessObservation`, `markAccessFailure`, `requestRefresh`, `acceptWebhookDelivery`, `markRefreshSuccess`, `markRefreshFailure`, `isRefreshGenerationCurrent`, `getRefreshState`, `replaceSpecs`, `replacePullRequests`, `listPullRequests`, `listPrStacks`, `listSpecs`, `getSpec`, `getSession`, `getSessionBySubmissionId`, `queueSession`, `listQueuedSessions`, `listPreparingSessions`, `reconfirmQueuedTarget`, `claimPreparation`, `setPreparationCheckpoint`, `setQueuedSessionReason`, `blockQueuedPreparation`, `requeuePreparation`, `failPreparation`, `setHandoffIntent`, `setHandoffCheckpoint`, `setHandoffCreated`, `confirmHandoffAssociation`, `recordPromptAccepted`, `markHandoffUnconfirmed`, `markOpenCodeStale`, `reconcileOpenCode`, `releaseReservation`, `listOpenCodeSessions`, `getSessionByOpenCodeSessionId`, `listSessions`, `listSessionsForSpec`, `listInbox`, `findLandingSession`.
 
-Types: `Repository`, `Spec`, `PullRequest`, `PrStack`, `Session`, `SessionState`, `PreparationCheckpoint`, `HandoffCheckpoint`, `TargetKind`, `SessionTarget`, `ResolvedTarget`, `PublicationStatus`, `AccessStatus`, `RefreshState`, `QueueSessionResult` (`created` \| `existing` \| `conflict` \| `unfinished`), `ReservationReleaseResult` (`released` \| `already_released` \| `not_found` \| `not_terminal`).
+Types: `Repository`, `Spec`, `PullRequest`, `PrStack`, `Session`, `SessionState`, `Inbox`, `InboxRow`, `PreparationCheckpoint`, `HandoffCheckpoint`, `TargetKind`, `SessionTarget`, `ResolvedTarget`, `PublicationStatus`, `AccessStatus`, `RefreshState`, `QueueSessionResult` (`created` \| `existing` \| `conflict` \| `unfinished`), `ReservationReleaseResult` (`released` \| `already_released` \| `not_found` \| `not_terminal`).
 
 ### GitHub reads — `src/github.ts#createGitHubClient`
 
@@ -102,6 +108,7 @@ Returns `{ hydrate }`. Also `createViewerEventReducer`, `ViewerScopeError`. Type
 | Symbol | Owner |
 |---|---|
 | `renderLoginForm`, `renderLoginPage`, `PendingStartSession` | `src/views/shell.ts` |
+| `renderInboxGroups`, `renderInboxList`, `renderInboxPage` | `src/views/inbox.ts` |
 | `renderRepositoriesPage`, `renderAddRepositoryPage`, `repositoryMatchesQuery` | `src/views/repositories.ts` |
 | `renderSpecsPage`, `renderSpecDetailPage`, `renderSpecUnavailablePage` | `src/views/specs.ts` |
 | `renderStartTargetOptions`, `startTargetOptions`, `targetObservation` | `src/views/targets.ts` |
@@ -116,6 +123,10 @@ Shared markup: `src/views/html.ts` (`escapeHtml`, `safeExternalUrl`, `renderDocu
 Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas reads host-written status; it does not take snapshots.
 
 ## Critical Flows
+
+**Land on `/`.** `src/app.ts#createApp` GET `/` → `src/inbox-state.ts#readVisitCookie` → `Persistence.findLandingSession` → 303 Session (new terminal, else unfinished Waiting-first) or Spec list or `/inbox` or `/repositories/new`. Sets `atlas_visit`; sets `atlas_inbox` when a Repository is chosen.
+
+**Inbox.** GET `/inbox` → `inboxFromRequest` (`listInbox`, cookie/query filter) → `src/views/inbox.ts#renderInboxPage` in `renderShell`. GET `/inbox/list` with `HX-Request` → `renderInboxList` (30s poll, `hx-push-url="false"`). Direct visit returns the full page.
 
 **Login.** `src/app.ts#createApp` GET `/login` → `src/auth.ts#createAuth.issueCsrf` → `src/views/shell.ts#renderLoginPage`. POST `/login` → `validateLogin` / `matchesSharedToken` → `createSession`. Unauthenticated start POSTs go through `preserveUnauthenticatedStart`.
 
@@ -135,6 +146,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 
 ## Shared Utilities and Infrastructure
 
+- `src/inbox-state.ts` — `atlas_inbox` / `atlas_visit` cookie parse and set.
 - `src/views/html.ts` — HTML escaping, document shell, HTMX includes.
 - `src/views/shared.ts` — layout primitives and Session/Repository status markup.
 - `src/views/icons.ts` — Heroicons paths.
@@ -180,10 +192,14 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 | `bun run verify:issue27-fixes` | Preparation free space, App token mint, clone admission. |
 | `bun run verify:issue32` | Refresh coordinator retry backoff. |
 | `bun run verify:issue29` | Session viewer hydrate, SSE (no transcript leak). |
+| `bun run verify:inbox` | Inbox Spec projection (`listInbox`, `findLandingSession`). |
+| `bun run verify:landing` | GET `/` landing redirects and `atlas_visit` / `atlas_inbox`. |
+| `bun run verify:inbox-shell` | Desktop sidebar inbox, filter cookie, `/inbox/list` fragment. |
+| `bun run verify:inbox-page` | `/inbox` page, phone Inbox link, empty/error states. |
 | `bun scripts/verify-clone-scope.ts` | Clone git env + credential helper isolation. |
 | `bun scripts/verify-repository-filter.ts` | `repositoryMatchesQuery` + add-repo UI. |
 | `bun scripts/check-restored-state.ts` | Restore DB/schema/registry. |
 | `bash deploy/verify-assets.sh` | Deploy file set + syntax. Does not enable services. |
 | `bash deploy/verify-sqlite-wal.sh` | Bun/OpenCode SQLite WAL pin. |
 
-<!-- repo-map-synced: e64cae76bc7bc138c532617bac116b08c4c4b5d0 -->
+<!-- repo-map-synced: 4b188a3fa180e349011dd02434ec69bf7792b02f -->

@@ -10,7 +10,7 @@ import {
   renderRepositoryHeading,
   statusBadge,
 } from "./shared.ts";
-import { renderShell } from "./shell.ts";
+import { renderShell, type InboxContext } from "./shell.ts";
 import {
   pullRequestStateBadge,
   stackStatus,
@@ -169,6 +169,7 @@ export const renderPullRequestsPage = ({
   stacks,
   accessRefresh,
   refresh,
+  inbox,
 }: {
   csrfToken: string;
   repository: Repository;
@@ -176,6 +177,7 @@ export const renderPullRequestsPage = ({
   stacks: PrStack[];
   accessRefresh?: RefreshState;
   refresh?: RefreshState;
+  inbox?: InboxContext;
 }) => {
   const activePullRequests = pullRequests.filter((pullRequest) => pullRequest.isCurrent && pullRequest.state === "open");
   const pullRequestMap = new Map(pullRequests.map((pullRequest) => [pullRequest.githubId, pullRequest]));
@@ -238,6 +240,7 @@ export const renderPullRequestsPage = ({
     active: "pull-requests",
     repository,
     csrfToken,
+    inbox,
     content: `${renderRepositoryHeading(repository, "Pull requests", "Active GitHub Pull requests, explicit native stack order, and read-only starting-target classification.", csrfToken)}
       ${accessNotice(repository)}
       ${refreshWarning("Access", accessRefresh)}

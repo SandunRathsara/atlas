@@ -60,5 +60,5 @@ Rel(credentials, github, "mint installation tokens")
 Rel(githubClient, github, "read API")
 Rel(persistence, sqlite, "WAL")
 
-' repo-map-synced: e64cae76bc7bc138c532617bac116b08c4c4b5d0
+' repo-map-synced: 4b188a3fa180e349011dd02434ec69bf7792b02f
 @enduml
