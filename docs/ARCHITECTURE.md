@@ -12,7 +12,7 @@ Outside: GitHub (App, inventory, issues, PRs, native stacks, signed webhooks); a
 
 ## Primary Stack
 
-Bun `1.3.14`, TypeScript `7.0.2`, Hono `4.13.7`, HTMX `2.0.10`, Tailwind CSS `4.3.3` + daisyUI `5.7.28`, SQLite via `bun:sqlite`. Package manager: Bun (`package.json#packageManager`). OpenCode client/binary pin: `0.0.0-beta-19135`. Host Git `2.55.0` and gh `2.100.0` (`deploy/pins.env`).
+Bun `1.3.14`, TypeScript `7.0.2`, Hono `4.13.7`, HTMX `2.0.10`, Tailwind CSS `4.3.3` + daisyUI `5.7.28`, SQLite via `bun:sqlite`. Package manager: Bun (`package.json#packageManager`). Atlas installs OpenCode client `0.0.0-beta-19135`; the host server is independently selected through `/opt/atlas/tools/opencode/current`. Host Git `2.55.0` and gh `2.100.0` (`deploy/pins.env`).
 
 ## Significant Dependencies
 
@@ -73,7 +73,7 @@ GitHub remains source of truth for inventory, Specs, PRs, and stacks. Browse may
 
 Two loopback listeners (`src/server.ts`): UI `127.0.0.1:ATLAS_PORT` (default 3000) and webhook `127.0.0.1:ATLAS_WEBHOOK_PORT` (default 3001). Ports must differ. Tailscale Serve fronts the UI; Funnel must target only the webhook port.
 
-Production (`deploy/README.md`): user `omega`; read-only release at `/opt/atlas/current`; data on `/var/lib/atlas`; secrets in `/etc/atlas`; runtime sockets in `/run/atlas`. Units: `atlas.service` (loads `atlas.env`), independent `opencode.service` (does not load Atlas secrets), `atlas-snapshot.timer`, `atlas-space-check.timer`. Restarting Atlas must not stop OpenCode.
+Production (`deploy/README.md`): user `omega`; read-only release at `/opt/atlas/current`; data on `/var/lib/atlas`; secrets in `/etc/atlas`; runtime sockets in `/run/atlas`. Units: `atlas.service` (loads `atlas.env`), independent `opencode.service` (does not load Atlas secrets and follows the operator-controlled OpenCode `current` symlink), `atlas-snapshot.timer`, `atlas-space-check.timer`. Exact-version OpenCode staging verifies registry integrity but does not install, select, or restart the server. Restarting Atlas must not stop OpenCode.
 
 Required to boot: `ATLAS_SHARED_TOKEN` and `ATLAS_GITHUB_WEBHOOK_SECRET`. Origin `ATLAS_ORIGIN` is the private HTTPS URL, not the Funnel URL.
 
@@ -86,7 +86,7 @@ Required to boot: `ATLAS_SHARED_TOKEN` and `ATLAS_GITHUB_WEBHOOK_SECRET`. Origin
 - Checklist previewer: `just checklist`
 - No CI workflow in this repository
 - No formatter or linter configured
-- No unified test runner; scoped regressions are `bun run verify:*`, `bun scripts/verify-clone-scope.ts`, `bun scripts/verify-repository-filter.ts`, `bash deploy/verify-assets.sh`
+- No unified test runner; scoped regressions are `bun run verify:*`, `bun scripts/verify-clone-scope.ts`, `bun scripts/verify-repository-filter.ts`, `bash deploy/verify-opencode-commands.sh`, `bash deploy/verify-assets.sh`
 
 Local `justfile` defaults: token/webhook secret, `data/atlas.sqlite`, `~/.local/share/atlas/sessions`, 1 GiB free-space floor. GitHub settings may live in `~/.config/atlas/github.env` (regular file, mode `0600`).
 
@@ -107,4 +107,4 @@ No accepted ADRs (`docs/adr/INDEX.md` is empty). Constraints from shipped code a
 - Managed Git invocations must match `deploy/pins.env`.
 - Theme tokens live in `src/styles.css` / `DESIGN.md`. Do not copy hex values into templates.
 
-<!-- repo-map-synced: 1546f2d1ed3c9c58dca279e24a0b66d1de784525 -->
+<!-- repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2 -->

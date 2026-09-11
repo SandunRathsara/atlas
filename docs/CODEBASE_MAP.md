@@ -13,7 +13,7 @@ Answers: where is today's shipped implementation? Organized by capability and co
 | `src/webhook.ts#createWebhookApp` | Webhook-only Hono app. |
 | `scripts/atlas-gh.ts` | Scoped `gh` wrapper used by `deploy/bin/gh`. |
 | `scripts/atlas-git-credential.ts` | Git credential helper used by preparation and `deploy/bin/git-credential-atlas`. |
-| `deploy/stage-release.sh`, `deploy/stage-opencode.sh`, `deploy/atlas-snapshot.sh`, `deploy/restore-rehearsal.sh`, `deploy/check-health.sh`, `deploy/check-opencode.sh`, `deploy/check-space.sh`, `deploy/capture-recovery-config.sh`, `deploy/verify-assets.sh`, `deploy/verify-sqlite-wal.sh` | Operator-facing host scripts. Inert until applied on the host. |
+| `deploy/stage-release.sh`, `deploy/stage-opencode.sh`, `deploy/atlas-snapshot.sh`, `deploy/restore-rehearsal.sh`, `deploy/check-health.sh`, `deploy/check-opencode.sh`, `deploy/check-space.sh`, `deploy/capture-recovery-config.sh`, `deploy/verify-assets.sh`, `deploy/verify-opencode-commands.sh`, `deploy/verify-sqlite-wal.sh` | Operator-facing host scripts. OpenCode staging is exact-version, registry-integrity-verified, and server-only; selection follows the operator-controlled `current` symlink. Inert until applied on the host. |
 
 The implemented inbox lives in `src/views/inbox.ts`; the deleted `src/prototype-inbox.ts` is not a runtime entry point.
 
@@ -182,7 +182,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 
 - **Credential leakage.** `cloneGitEnvironment` strips inherited tokens. Supplier socket `0600`. `scripts/atlas-gh.ts` forbids `auth token` / login. Never log tokens, keys, prompts, or auth headers.
 - **Webhook surface.** Signature required. Empty secret fails boot. Webhook app has no UI, login, Session, health, or OpenCode routes.
-- **OpenCode pin.** `APPROVED_OPENCODE_VERSION`, `package.json` `@opencode-ai/client`, and `deploy/pins.env` must match. Mismatch → handoff not ready.
+- **OpenCode version split.** Atlas's installed client and runtime approval gate remain in `src/opencode.ts` / `package.json`; deployment independently selects the host executable through `/opt/atlas/tools/opencode/current`. Staging must not pair or replace Atlas client packages and never activates the selected server.
 - **No GitHub mutation from Atlas.** `GitHubClient` is read-only. Reservation release and target reconfirmation change SQLite only. Agent may publish via scoped git/gh; Atlas must not grow write APIs.
 - **Theme tokens.** Hex and radii live in `src/styles.css` / `DESIGN.md`. Rebuild with `bun run build:css`.
 - **Two ports.** `ATLAS_WEBHOOK_PORT !== ATLAS_PORT`. Both `127.0.0.1`. Funnel webhook only.
@@ -213,6 +213,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 | `bun scripts/verify-repository-filter.ts` | `repositoryMatchesQuery` + add-repo UI. |
 | `bun scripts/check-restored-state.ts` | Restore DB/schema/registry. |
 | `bash deploy/verify-assets.sh` | Deploy file set + syntax. Does not enable services. |
-| `bash deploy/verify-sqlite-wal.sh` | Bun/OpenCode SQLite WAL pin. |
+| `bash deploy/verify-opencode-commands.sh` | Isolated server-only staging/integrity, `current` preflight selection, no-activation, and observed-version WAL command regressions. |
+| `bash deploy/verify-sqlite-wal.sh` | Pinned Bun and selected OpenCode embedded-SQLite WAL safeguards. |
 
-<!-- repo-map-synced: 1546f2d1ed3c9c58dca279e24a0b66d1de784525 -->
+<!-- repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2 -->

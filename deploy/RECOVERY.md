@@ -43,8 +43,9 @@ release automatically.
    sudo ATLAS_WRITERS_STOPPED=YES /opt/atlas/current/deploy/verify-sqlite-wal.sh
    ```
 
-   This records the actual SQLite versions embedded in pinned Bun and pinned
-   OpenCode only if they include SQLite's accepted WAL-reset fix. Host
+   This records the actual SQLite versions embedded in pinned Bun and the
+   currently selected OpenCode executable, plus that executable's observed
+   version, only if they include SQLite's accepted WAL-reset fix. Host
    `sqlite3`, WAL mode, and FULL/NORMAL synchronous settings are not substitutes.
 4. Enable and start only the timers after reviewing them:
 
@@ -87,7 +88,8 @@ chmod 0600 /root/atlas-recovery/files.sha256 /root/atlas-recovery/history.tsv
 Then stop Atlas/OpenCode and all Agent writers, set `ATLAS_ADMISSION_PAUSED=1`
 in the live Atlas environment, and restart Atlas only if a private read-only UI
 is needed to confirm the pause. Do not restart OpenCode. Confirm encryption and
-recovery-key access, the selected release, and pinned tools. Run against an
+recovery-key access, the selected release, pinned tools, and the selected
+OpenCode server. Run against an
 empty direct child of a dedicated same-filesystem rehearsal root:
 
 ```bash

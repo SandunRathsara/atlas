@@ -6,37 +6,48 @@ Tailscale/firewall state.
 
 ## Pins
 
-`pins.env` pins Bun `1.3.14`, the validated Atlas client/OpenCode pairing
-`0.0.0-beta-19135`, Git `2.55.0`, and gh `2.100.0`. Bun, Git, and gh paths are
+`pins.env` pins Bun `1.3.14`, Git `2.55.0`, and gh `2.100.0`. Their paths are
 absolute and versioned; the Git wrapper loads this manifest and rejects a
-version drift on every managed Git invocation and service start. It also pins
-the official Linux x64 OpenCode binary and client/schema/protocol package
-integrities. The operator must verify release checksums privately before
-cutover. The live host's currently running OpenCode beta is not evidence for
-this pin.
+version drift on every managed Git invocation and service start. OpenCode is
+different: `ATLAS_OPENCODE_BINARY` follows the operator-controlled
+`/opt/atlas/tools/opencode/current` selection. Its server version is not an
+Atlas release pin. The Atlas release still installs the exact
+`@opencode-ai/client` dependency in `package.json`; staging a server does not
+replace or pair that client.
 
 `stage-release.sh` archives a clean committed checkout into a new release,
 installs the frozen lockfile, builds CSS, records `RELEASE_COMMIT`, makes the
 tree read-only, and atomically renames the staging directory. It never
 overwrites `/opt/atlas/current` or an existing release.
 
-`stage-opencode.sh <directory>` downloads only the pinned official Linux x64
-OpenCode beta and its matching client/schema/protocol packages, verifies npm
-integrity and versions, imports the client with pinned Bun, runs only
-`opencode2 --version`, records SHA-256 values, and leaves one immutable isolated
-tree. It does not start a server or write an OpenCode service registration. Use
-a disposable directory during safe setup; production `/opt/atlas/tools` remains
-a human-only install target.
+`stage-opencode.sh <exact-server-version> <directory>` queries npm registry
+metadata for that exact `@opencode-ai/cli-linux-x64` version, requires its
+SHA-512 integrity and secure tarball URL, verifies the download, runs only
+`opencode2 --version`, and leaves an immutable server-only tree. Its
+`OPENCODE_ARTIFACTS` manifest records the chosen version, registry integrity,
+and binary SHA-256. There is no default or latest lookup, and no Atlas
+client/schema/protocol package is downloaded.
+
+Staging never installs the version, changes `current`, or restarts OpenCode.
+After inspecting the isolated tree, the operator separately installs its
+`tools/opencode/<version>` directory under `/opt/atlas/tools/opencode`,
+atomically points `current` at that installed version, and explicitly restarts
+`opencode.service` in an approved window. Run `check-opencode.sh` before restart
+to confirm that `current` is executable and to print the version it actually
+reports. A successful Atlas release staging also leaves `current` and the
+OpenCode service untouched.
 
 ## Units and listeners
 
 - `systemd/atlas.service` runs Atlas as `omega` with explicit Bun, pinned Git,
   `HOME`, `PATH`, working directory, crash restart, bounded journal rate, and
   `/etc/atlas/atlas.env`.
-- `systemd/opencode.service` independently runs the pinned V2 server as
+- `systemd/opencode.service` independently runs the operator-selected V2 server as
   `omega`, bound to `127.0.0.1` with a dynamic port and `--service` discovery.
-  It validates the binary/client pins, uses `--log-level WARN`, bounds journal
-  rate, and deliberately does **not** load Atlas's secret environment file.
+  Its preflight follows `current`, validates the executable, and reports its
+  observed version without inspecting Atlas client packages. The unit uses
+  `--log-level WARN`, bounds journal rate, and deliberately does **not** load
+  Atlas's secret environment file.
 - Atlas's private app listener and loopback webhook listener remain separate;
   their ports come from `atlas.env`. Funnel must target only the webhook port.
 - `check-health.sh` checks the private, authenticated `/health` route. A
@@ -51,7 +62,8 @@ The webhook app has no health, login, Session, event, or OpenCode routes.
 | --- | --- |
 | `/opt/atlas/releases/<release>` | Read-only versioned Atlas release |
 | `/opt/atlas/current` | Operator-selected release symlink |
-| `/opt/atlas/tools/<tool>/<version>` | Pinned Bun, Git, GitHub CLI, and OpenCode binaries |
+| `/opt/atlas/tools/<tool>/<version>` | Pinned Bun, Git, and GitHub CLI binaries; installed OpenCode server versions |
+| `/opt/atlas/tools/opencode/current` | Operator-selected OpenCode server symlink used by the independent service |
 | `/var/lib/atlas` | One ordinary-directory Btrfs subvolume |
 | `/var/lib/atlas/atlas.sqlite` | Atlas SQLite database and matching WAL/journal |
 | `/var/lib/atlas/sessions/<atlas-id>` | Full private clone per Session |
@@ -107,10 +119,11 @@ Atlas/OpenCode/recovery units, the selected release marker/pin manifest, the
 Atlas journal-namespace bound, an operator-recorded Tailscale
 route file, and an operator-recorded firewall file into
 `/var/lib/atlas/recovery-config/current`. It also records SHA-256 checksums for
-those files and the pinned binaries. It rejects missing, symlinked, or partial
-inputs, writes a private temporary tree, and atomically retains the prior copy
-as `previous`; `capture-recovery-config.sh rollback` swaps back without
-deleting the failed copy. Do not put secret values in command arguments.
+those files, the pinned tools, and the selected OpenCode executable. It rejects
+missing, symlinked, or partial inputs, writes a private temporary tree, and
+atomically retains the prior copy as `previous`; `capture-recovery-config.sh
+rollback` swaps back without deleting the failed copy. Do not put secret values
+in command arguments.
 
 `check-space.sh` reports the shared filesystem's 20 GiB warning threshold and
 10 GiB new-preparation pause threshold, plus allocated Btrfs metadata pressure.
@@ -133,7 +146,8 @@ contents, auth headers, tokens, or keys. Verify both installed bounds manually.
 complete shared subvolume. `atlas-snapshot.sh` keeps seven daily and four weekly
 points as a union and prunes only exact-name, exact-marker, read-only Atlas
 subvolumes. `atlas-space-check.timer` refreshes status every five minutes.
-`verify-sqlite-wal.sh` records the actual fixed embedded SQLite builds, and
+`verify-sqlite-wal.sh` follows `current` and records its observed OpenCode
+version plus both actual fixed embedded SQLite builds, and
 `restore-rehearsal.sh` validates a writable restore before scrubbing known
 runtime endpoints without starting a service. The exact conditional recovery,
 release, rollback, and rehearsal procedure is in [RECOVERY.md](RECOVERY.md).
@@ -146,11 +160,12 @@ The following is a handoff, not an instruction for an agent to execute:
    `/etc/atlas`, `/var/backups/atlas`, and `/run/atlas` do not conflict. Leave
    the exFAT disk untouched. Record current OpenCode/agent PIDs and do not
    start the new unit while the live beta server remains active.
-2. Obtain and checksum the pinned binaries. Use `stage-opencode.sh` first in a
-   disposable isolated directory and verify its immutable tree, exact
-   beta-19135 version, client import, and absence of service registration; do
-   not start it. Create the privileged directories
-   and the ordinary-directory Btrfs subvolume. Install restricted config from
+2. Obtain and checksum the pinned Bun, Git, and gh binaries. Run
+   `stage-opencode.sh` with an explicitly chosen exact server version in a
+   disposable isolated directory. Verify its registry integrity manifest,
+   server-only immutable tree, reported version, and absence of service
+   registration; do not install, select, or start it yet. Create the privileged
+   directories and the ordinary-directory Btrfs subvolume. Install restricted config from
    `atlas.env.example` and `github.env.example`, plus the App key, without
    putting values in shell history, releases, clones, logs, or issue comments.
    Set the actual private origin and listener ports.
@@ -160,10 +175,12 @@ The following is a handoff, not an instruction for an agent to execute:
    XDG locations, including database WAL/journal sidecars. Keep originals
    until validation succeeds. Do not trust/copy the old live service endpoint;
    let the new service register a fresh endpoint.
-4. Stage a clean release with `stage-release.sh`, install the two units, run
-   `systemctl daemon-reload`, and enable/start the independent units in that
-   order. Atlas must not own OpenCode's lifecycle; an Atlas restart must not
-   stop OpenCode or agents.
+4. Stage a clean release with `stage-release.sh`. Separately install the staged
+   OpenCode version, atomically switch `/opt/atlas/tools/opencode/current`, and
+   run `check-opencode.sh`. Install the two units, run `systemctl daemon-reload`,
+   then explicitly enable/start the independent units in that order. Atlas must
+   not own OpenCode's lifecycle; staging or restarting Atlas must not switch,
+   start, stop, or restart OpenCode or agents.
 5. Capture the protected recovery configuration with
    `capture-recovery-config.sh`, record the route/firewall inputs, and run
    `check-space.sh`. Refresh the copy whenever any deployment input changes.

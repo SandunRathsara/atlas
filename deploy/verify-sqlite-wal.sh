@@ -19,9 +19,12 @@ fixed_version() {
 }
 
 [[ -x "$ATLAS_BUN_BINARY" && ! -L "$ATLAS_BUN_BINARY" ]] || { echo "pinned Bun binary is unavailable" >&2; exit 1; }
-[[ -x "$ATLAS_OPENCODE_BINARY" && ! -L "$ATLAS_OPENCODE_BINARY" ]] || { echo "pinned OpenCode binary is unavailable" >&2; exit 1; }
+[[ -x "$ATLAS_OPENCODE_BINARY" && ! -L "$ATLAS_OPENCODE_BINARY" ]] || { echo "selected OpenCode executable is unavailable" >&2; exit 1; }
 [[ "$("$ATLAS_BUN_BINARY" --version)" == "$ATLAS_BUN_VERSION" ]] || { echo "Bun runtime does not match the release pin" >&2; exit 1; }
-[[ "$("$ATLAS_OPENCODE_BINARY" --version)" == "opencode2 v$ATLAS_OPENCODE_VERSION" ]] || { echo "OpenCode runtime does not match the release pin" >&2; exit 1; }
+if ! opencode_version=$("$ATLAS_OPENCODE_BINARY" --version) || [[ -z "$opencode_version" ]]; then
+  echo "selected OpenCode executable did not report its version" >&2
+  exit 1
+fi
 
 bun_sqlite=$(
   "$ATLAS_BUN_BINARY" --eval 'import { Database } from "bun:sqlite"; const db = new Database(":memory:"); console.log(db.query("SELECT sqlite_version() AS version").get().version); db.close();'
@@ -57,11 +60,11 @@ trap 'rm -f -- "$temporary"' EXIT
   printf 'release_commit=%s\n' "$(cat "$release_root/RELEASE_COMMIT")"
   printf 'bun_version=%s\n' "$ATLAS_BUN_VERSION"
   printf 'bun_sqlite_version=%s\n' "$bun_sqlite"
-  printf 'opencode_version=%s\n' "$ATLAS_OPENCODE_VERSION"
+  printf 'opencode_version=%s\n' "$opencode_version"
   printf 'opencode_sqlite_version=%s\n' "$opencode_sqlite"
   printf 'wal_reset_fix=verified\n'
 } > "$temporary"
 chmod 0400 "$temporary"
 mv -f -- "$temporary" "$record"
 trap - EXIT
-echo "embedded SQLite WAL-reset fix verified for pinned Bun and OpenCode builds"
+echo "embedded SQLite WAL-reset fix verified for Bun $ATLAS_BUN_VERSION and $opencode_version"
