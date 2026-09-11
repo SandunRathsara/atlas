@@ -1,7 +1,7 @@
 [Unit]
 Description=Atlas private UI and webhook observer
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target atlas-credentials.service
+After=network-online.target atlas-credentials.service
 RequiresMountsFor=/opt/atlas/current /opt/atlas/tools /var/lib/atlas /etc/atlas /home/omega
 StartLimitIntervalSec=5min
 StartLimitBurst=5
@@ -33,8 +33,6 @@ LogRateLimitBurst=1000
 SyslogIdentifier=atlas
 LogNamespace=atlas
 UMask=0077
-RuntimeDirectory=atlas
-RuntimeDirectoryMode=0700
 LimitNOFILE=65536
 
 [Install]

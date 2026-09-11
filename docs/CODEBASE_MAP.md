@@ -6,14 +6,16 @@ Answers: where is today's shipped implementation? Organized by capability and co
 
 | Path | Role |
 |---|---|
-| `src/server.ts` | Process entry. Loads env, starts credential supplier, SQLite, GitHub client, refresh coordinator, UI + webhook `Bun.serve` listeners, SIGINT/SIGTERM shutdown. |
+| `src/server.ts` | UI process entry. Loads env, configures a client for the independent credential supplier, starts SQLite, GitHub client, refresh coordinator, UI + webhook `Bun.serve` listeners, and handles SIGINT/SIGTERM shutdown without owning the supplier socket. |
+| `src/credential-server.ts` | Independent credential supplier process entry. Owns the existing authenticated Unix-socket boundary and survives Atlas UI restarts. |
 | `package.json` `dev` / `start` | `bun run build:css` then `bun --watch src/server.ts` or `bun src/server.ts`. |
+| `package.json` `credentials` | Runs the credential supplier process directly for local development. |
 | `justfile#dev` | Local bootstrap then `bun run dev`. `justfile#checklist` opens the bearings previewer. |
 | `src/app.ts#createApp` | Private UI Hono app. |
 | `src/webhook.ts#createWebhookApp` | Webhook-only Hono app. |
 | `scripts/atlas-gh.ts` | Scoped `gh` wrapper used by `deploy/bin/gh`. |
 | `scripts/atlas-git-credential.ts` | Git credential helper used by preparation and `deploy/bin/git-credential-atlas`. |
-| `deploy/stage-release.sh`, `deploy/stage-opencode.sh`, `deploy/atlas-snapshot.sh`, `deploy/restore-rehearsal.sh`, `deploy/check-health.sh`, `deploy/check-opencode.sh`, `deploy/check-space.sh`, `deploy/capture-recovery-config.sh`, `deploy/verify-assets.sh`, `deploy/verify-opencode-commands.sh`, `deploy/verify-sqlite-wal.sh` | Operator-facing host scripts. OpenCode staging is exact-version, registry-integrity-verified, and server-only; selection follows the operator-controlled `current` symlink. Inert until applied on the host. |
+| `deploy/bootstrap.sh`, `deploy/stage-release.sh`, `deploy/stage-opencode.sh`, `deploy/atlas-snapshot.sh`, `deploy/restore-rehearsal.sh`, `deploy/check-health.sh`, `deploy/check-opencode.sh`, `deploy/check-space.sh`, `deploy/capture-recovery-config.sh`, `deploy/verify-assets.sh`, `deploy/verify-opencode-commands.sh`, `deploy/verify-sqlite-wal.sh` | Operator-facing host scripts. Bootstrap installs the independent credential service without restarting OpenCode. OpenCode staging is exact-version, registry-integrity-verified, and server-only; selection follows the operator-controlled `current` symlink. Inert until applied on the host. |
 
 The implemented inbox lives in `src/views/inbox.ts`; the deleted `src/prototype-inbox.ts` is not a runtime entry point.
 
@@ -90,15 +92,15 @@ Returns `RefreshCoordinator`: `{ refresh, request, wake, start, stop }`. Also `s
 
 ### Credentials — `src/credentials.ts#createCredentialBoundary`
 
-Returns `CredentialBoundary`: `{ credentialsPath, registryPath, socketPath, keyPath, start, close, registerScope, resolveScope, requestToken, assertReady, installationToken, helperEnvironment }`. Also `CredentialError`, `CredentialScope`, `readGithubEnvFile`, `loadGithubEnv`, `requestCredential`.
+Returns `CredentialBoundary`: `{ credentialsPath, registryPath, socketPath, keyPath, start, close, registerScope, resolveScope, listHelperReferences, requestToken, assertReady, installationToken, helperEnvironment }`. Also `CredentialError`, `CredentialScope`, `readGithubEnvFile`, `loadGithubEnv`, `requestCredential`.
 
-Unix-socket supplier. Repository-scoped App tokens. `src/config.ts#loadGitHubEnv` loads browse keys from `~/.config/atlas/github.env` when unset (mode `0600`).
+`src/credential-server.ts` runs the Unix-socket supplier independently. Atlas creates a non-serving client boundary, so client `start`/`close` cannot own or unlink the socket. Repository-scoped App tokens and the version-1 Session scope registry are unchanged; scope records may include canonical helper paths for later release retention. `src/config.ts#loadGitHubEnv` loads browse keys from `~/.config/atlas/github.env` when unset (mode `0600`).
 
 ### Preparation — `src/preparation.ts#createPreparationService`
 
 Returns `PreparationService`: `{ start, stop, enqueue, prepareNext, credentials, sessionRoot, capacity }`. Also `DEFAULT_MIN_FREE_BYTES`, `hasRequiredFreeSpace`, `cloneGitEnvironment`.
 
-Clones under `ATLAS_SESSION_ROOT`. Default capacity 1. Uses `scripts/atlas-git-credential.ts`. Strips inherited Git/GitHub tokens from clone env. May gate on `src/recovery-status.ts#readRecoveryStatus`.
+Clones under `ATLAS_SESSION_ROOT`. Default capacity 1. Uses `scripts/atlas-git-credential.ts`, records its canonical helper/runtime paths with the Session scope, and requests credentials from the independent supplier. Strips inherited Git/GitHub tokens from clone env. May gate on `src/recovery-status.ts#readRecoveryStatus`.
 
 ### OpenCode handoff — `src/opencode.ts#createOpenCodeHandoffService`
 
@@ -141,7 +143,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 
 **Spec list/detail.** GET specs → `refreshRepository` → `Persistence.listSpecs` / `getSpec` → `src/views/specs.ts#renderSpecsPage` or `renderSpecDetailPage`. Current Spec: `isCurrentSpec` (open, `spec` label, not a PR).
 
-**Start Session.** GET `.../sessions/new` → refresh access/specs/PRs → `src/views/sessions.ts#renderStartSessionPage` + `src/views/targets.ts#startTargetOptions`. POST → CSRF + target observation match → `Persistence.queueSession` → `PreparationService.enqueue`. Duplicate unfinished Spec → 409. `createPreparationService.prepareNext` → `claimPreparation` → clone via `cloneGitEnvironment` → checkpoints through `prepared`. `createOpenCodeHandoffService` then intent → events → create → associate → one prompt → `Persistence.reconcileOpenCode`. Terminal → `refreshPullRequests` + `preparation.enqueue`.
+**Start Session.** GET `.../sessions/new` → refresh access/specs/PRs → `src/views/sessions.ts#renderStartSessionPage` + `src/views/targets.ts#startTargetOptions`. POST → CSRF + target observation match → `Persistence.queueSession` → `PreparationService.enqueue`. Duplicate unfinished Spec → 409. `createPreparationService.prepareNext` → `claimPreparation` → atomically register the Session scope/helper references → request a preflight credential from the independent supplier → clone via `cloneGitEnvironment` → checkpoints through `prepared`. `createOpenCodeHandoffService` then intent → events → create → associate → one prompt → `Persistence.reconcileOpenCode`. Terminal → `refreshPullRequests` + `preparation.enqueue`.
 
 **All Sessions.** GET `/sessions` → `persistence.listRepositories()` → `listSessions(repositoryId, filter)` for every enrolled, non-removed Repository → flatten and sort by submission order → `renderSessionsPage` in global mode. `?status=all` includes terminal history; default `active` includes every unfinished state.
 
@@ -176,11 +178,11 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 
 **OpenCode:** release-installed `@opencode-ai/client` `0.0.0-beta-19135` against an independently running server with no version gate. Service file default `$XDG_STATE_HOME/opencode/service.json` or `OPENCODE_SERVICE_FILE`.
 
-**Filesystem:** Session directories under `ATLAS_SESSION_ROOT`; credential scopes in `session-scopes.json`; supplier socket `0600`.
+**Filesystem:** Session directories under `ATLAS_SESSION_ROOT`; credential scopes and canonical helper references in `session-scopes.json`; supplier socket `0600`, owned by `atlas-credentials.service`; stable supplier source under `/opt/atlas/services/atlas-credentials`.
 
 ## Change Hazards
 
-- **Credential leakage.** `cloneGitEnvironment` strips inherited tokens. Supplier socket `0600`. `scripts/atlas-gh.ts` forbids `auth token` / login. Never log tokens, keys, prompts, or auth headers.
+- **Credential leakage and continuity.** `cloneGitEnvironment` strips inherited tokens. Supplier socket `0600`; the independent service alone owns its lifecycle and stable support tree. Atlas client shutdown must not unlink it. `scripts/atlas-gh.ts` forbids `auth token` / login. Never log tokens, keys, prompts, or auth headers.
 - **Webhook surface.** Signature required. Empty secret fails boot. Webhook app has no UI, login, Session, health, or OpenCode routes.
 - **OpenCode boundary.** Keep the release-installed client dependency unchanged; deployment independently selects the host executable through `/opt/atlas/tools/opencode/current`, and staging neither pairs with nor replaces Atlas client packages and never activates the server. Server version is diagnostic, not a discovery gate. Invalid discovery/health/events and later API failures must retain not-ready/stale/uncertain state and never duplicate create/prompt effects or invent terminal outcomes.
 - **No GitHub mutation from Atlas.** `GitHubClient` is read-only. Reservation release and target reconfirmation change SQLite only. Agent may publish via scoped git/gh; Atlas must not grow write APIs.
@@ -206,6 +208,7 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 | `bun run verify:issue32` | Refresh coordinator retry backoff. |
 | `bun run verify:issue29` | Session viewer hydrate, SSE (no transcript leak). |
 | `bun run verify:issue52` | Real-client local-server discovery, runtime handoff/failure checkpoints, direct health requests, and deployment health exit contracts. |
+| `bun run verify:issue55` | Independent supplier subprocess/socket continuity, client restart, atomic scope registration, invalid-scope rejection, helper references, and Git/gh helpers across fixture release selection. |
 | `bun run verify:inbox` | Inbox Spec projection, latest Session, group/state ordering, Settled cap, terminal unread time, and landing selection. |
 | `bun run verify:landing` | GET `/` landing redirects, per-browser `atlas_visit` / `atlas_inbox`, and canonical `/inbox` filter URL. |
 | `bun run verify:inbox-shell` (`scripts/verify-inbox-shell.ts`) | Desktop sidebar and navigation landmarks, canonical/filter cookie behavior, selected Spec identity, `/inbox/list` fragment contract, access semantics, and exact `status=all` utility state. |
@@ -217,4 +220,4 @@ Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas re
 | `bash deploy/verify-opencode-commands.sh` | Isolated server-only staging/integrity, `current` preflight selection, no-activation, and observed-version WAL command regressions. |
 | `bash deploy/verify-sqlite-wal.sh` | Pinned Bun and selected OpenCode embedded-SQLite WAL safeguards. |
 
-<!-- repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2 -->
+<!-- repo-map-synced: 60d5a38df21d5b840c768b36ce37aacecf90e059 -->

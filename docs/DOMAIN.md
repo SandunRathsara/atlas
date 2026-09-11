@@ -6,7 +6,7 @@ Answers: why does this system exist? Populated and kept current by `/refresh-rep
 
 Atlas is an internal control plane for a team that already writes work as GitHub issues. It lets that team triage Specs across onboarded GitHub Repositories and start autonomous OpenCode Sessions from team-authored Specs, then observe those Sessions without Atlas itself publishing GitHub Pull requests or stacks.
 
-Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; an inbox of current Specs with landing on `/`; read-only Pull request and native-stack browsing; authenticated Session directory preparation; a guarded OpenCode handoff; Session viewing; Atlas-side stack reservation hold and release.
+Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; an inbox of current Specs with landing on `/`; read-only Pull request and native-stack browsing; authenticated Session directory preparation backed by credential serving that survives Atlas UI restarts; a guarded OpenCode handoff; Session viewing; Atlas-side stack reservation hold and release.
 
 ## Actors
 
@@ -16,7 +16,7 @@ Shipped outcomes: private sign-in; durable Repository, Spec, and Session records
 | Operator | Provisions the private host, pins binaries, supplies the shared credential, and controls admission, storage, and recovery. Not an in-app admin role. |
 | Agent | The OpenCode agent that implements a Spec inside a Session. Atlas does not start, upgrade, or replace OpenCode. |
 | GitHub | System of record for Repositories, Specs (issues labelled `spec`), PRs, native stacks, App installation inventory, and signed webhooks. |
-| Atlas process | Private UI listener, loopback webhook listener, SQLite projections, credential supplier, preparation, and OpenCode handoff. |
+| Atlas processes | Private UI listener, loopback webhook listener, SQLite projections, independent credential supplier, preparation, and OpenCode handoff. |
 
 ## Use Cases
 
@@ -66,7 +66,7 @@ Atlas projects GitHub issues labelled exactly `spec` (open, not a pull request) 
 ### Start Session
 
 1. Queue: CSRF-protected form with required prompt (max 20,000 characters) and an observed target. Duplicate `submission_id` with the same content is idempotent. An unfinished Session on that Spec is rejected.
-2. Prepare: global execution-slot capacity (default one). Clone a Session directory under `ATLAS_SESSION_ROOT` with a unique working branch. Pause when Session storage is missing, below the free-space floor (default 10 GiB), or host space status says pause. Production preparation mints a Repository-scoped GitHub App token; it never falls back to a weaker browse token.
+2. Prepare: global execution-slot capacity (default one). Register the Session directory and helper references, request a Repository-scoped GitHub App token from the independently running supplier, and clone under `ATLAS_SESSION_ROOT` with a unique working branch. Pause when credential serving or Session storage is unavailable, below the free-space floor (default 10 GiB), or host space status says pause. Preparation never falls back to a weaker browse token.
 3. Handoff: discover the independently running OpenCode service without filtering by server version, validate its endpoint/health/event stream, create once, associate once, send one exact initial message, and reconcile HTTP state. Atlas does not store a transcript copy.
 
 ### Webhook refresh
@@ -135,6 +135,7 @@ _Avoid_: Stall, timeout, hang
 - Atlas never creates, changes, or submits GitHub Pull requests or stacks. Locally prepared branches are not native stack members.
 - Atlas never starts, upgrades, or replaces OpenCode. Server version is diagnostic rather than a discovery gate; Atlas uses the client installed in its release and retains conservative not-ready/stale behavior when that client cannot use the service.
 - Secrets and GitHub tokens never appear in HTML, URLs, arguments, prompts, or logs. Preparation never falls back to the browse installation token. If the App cannot grant requested writes, preparation stays queued instead of starting with a weaker token.
+- Stopping or restarting the Atlas UI does not stop credential serving, unlink its socket, remove its runtime directory, or discard registered Session scopes/helper references.
 - GitHub values used for browsing stay server-side. Inventory is filtered to the configured organization.
 - If GitHub is missing or fails, keep the enrolled Repository and the last complete Specs/PR projection.
 - Idle is not completed. Active is not necessarily executing. Stale overlays semantic state; lost live connection does not mean the Session failed.
@@ -150,11 +151,11 @@ _Avoid_: Stall, timeout, hang
 
 - Not a public app. Shared-token private access only.
 - Does not enroll every GitHub App-visible Repository automatically.
-- Does not provision the host, enable systemd units, move OpenCode data, or change Tailscale/firewall (`deploy/` is inert until an operator applies it).
+- Does not automatically provision the host, move OpenCode data, or change Tailscale/firewall. The operator-run bootstrap is limited to the independent credential service and updated unit files.
 - Does not own OpenCode lifecycle, configuration, or transcripts.
 - Viewer does not reply to, cancel, or resume OpenCode permissions, forms, or inbox items.
 - Does not create GitHub labels.
 - Design guidelines do not introduce features or change business rules.
 - Phase 1 has no off-site backup. Snapshots cannot undo GitHub effects. Shared host identity `omega` is not hostile-agent isolation.
 
-<!-- repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2 -->
+<!-- repo-map-synced: 60d5a38df21d5b840c768b36ce37aacecf90e059 -->

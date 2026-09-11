@@ -8,7 +8,9 @@ required=(
   "$root/atlas.env.example"
   "$root/RECOVERY.md"
   "$root/github.env.example"
+  "$root/bootstrap.sh"
   "$root/systemd/atlas.service"
+  "$root/systemd/atlas-credentials.service"
   "$root/systemd/opencode.service"
   "$root/systemd/atlas-snapshot.service"
   "$root/systemd/atlas-snapshot.timer"
@@ -36,12 +38,13 @@ required=(
 for path in "${required[@]}"; do
   test -f "$path" || { echo "missing deployment asset: $path" >&2; exit 1; }
 done
+test -x "$root/bootstrap.sh" || { echo "bootstrap command is not executable" >&2; exit 1; }
 
-for script in "$root/bin/gh" "$root/bin/git" "$root/bin/git-credential-atlas" "$root/capture-recovery-config.sh" "$root/check-health.sh" "$root/check-opencode.sh" "$root/check-space.sh" "$root/atlas-snapshot.sh" "$root/lib/recovery-status.sh" "$root/restore-rehearsal.sh" "$root/verify-opencode-commands.sh" "$root/verify-sqlite-wal.sh" "$root/stage-opencode.sh" "$root/stage-release.sh"; do
+for script in "$root/bin/gh" "$root/bin/git" "$root/bin/git-credential-atlas" "$root/bootstrap.sh" "$root/capture-recovery-config.sh" "$root/check-health.sh" "$root/check-opencode.sh" "$root/check-space.sh" "$root/atlas-snapshot.sh" "$root/lib/recovery-status.sh" "$root/restore-rehearsal.sh" "$root/verify-opencode-commands.sh" "$root/verify-sqlite-wal.sh" "$root/stage-opencode.sh" "$root/stage-release.sh"; do
   bash -n "$script"
 done
 
-for unit in "$root/systemd/atlas.service" "$root/systemd/opencode.service"; do
+for unit in "$root/systemd/atlas.service" "$root/systemd/atlas-credentials.service" "$root/systemd/opencode.service"; do
   grep -Fq 'User=omega' "$unit"
   grep -Fq 'Restart=on-failure' "$unit"
   grep -Fq 'RestartSec=5s' "$unit"
@@ -66,6 +69,18 @@ grep -Fq 'daily_count -lt 7' "$root/atlas-snapshot.sh"
 grep -Fq 'weekly_count -lt 4' "$root/atlas-snapshot.sh"
 
 grep -Fq -- '--log-level WARN serve --service --hostname 127.0.0.1' "$root/systemd/opencode.service"
+grep -Fq 'atlas-credentials.service' "$root/systemd/atlas.service"
+grep -Fq 'atlas-credentials.service' "$root/systemd/opencode.service"
+grep -Fq 'RuntimeDirectory=atlas' "$root/systemd/atlas-credentials.service"
+if grep -Fq 'RuntimeDirectory=atlas' "$root/systemd/atlas.service"; then
+  echo "Atlas UI service must not own the credential socket directory" >&2
+  exit 1
+fi
+if grep -Eq '/opt/atlas/current|EnvironmentFile=' "$root/systemd/atlas-credentials.service"; then
+  echo "credential supplier must not depend on a selected Atlas release or load UI secrets" >&2
+  exit 1
+fi
+grep -Fq 'ExecStart=/opt/atlas/tools/bun/1.3.14/bin/bun /opt/atlas/services/atlas-credentials/credential-server.ts' "$root/systemd/atlas-credentials.service"
 grep -Fq 'ExecStartPre=/opt/atlas/current/deploy/check-opencode.sh' "$root/systemd/opencode.service"
 grep -Fq 'ExecStart=/opt/atlas/tools/opencode/current/bin/opencode2 ' "$root/systemd/opencode.service"
 grep -Fq 'PATH=/opt/atlas/current/deploy/bin:' "$root/systemd/atlas.service"
@@ -113,11 +128,11 @@ fi
 if command -v systemd-analyze >/dev/null 2>&1; then
   unit_output=$(mktemp)
   trap 'rm -f -- "$unit_output"' EXIT
-  if ! systemd-analyze verify "$root/systemd/atlas.service" "$root/systemd/opencode.service" "$root/systemd/atlas-snapshot.service" "$root/systemd/atlas-snapshot.timer" "$root/systemd/atlas-space-check.service" "$root/systemd/atlas-space-check.timer" >"$unit_output" 2>&1; then
+  if ! systemd-analyze verify "$root/systemd/atlas.service" "$root/systemd/atlas-credentials.service" "$root/systemd/opencode.service" "$root/systemd/atlas-snapshot.service" "$root/systemd/atlas-snapshot.timer" "$root/systemd/atlas-space-check.service" "$root/systemd/atlas-space-check.timer" >"$unit_output" 2>&1; then
     # The pinned host paths are intentionally absent during safe setup. Keep
     # systemd's syntax/dependency check, but do not pretend staged binaries
     # exist before the human cutover window.
-    unexpected=$(grep -Ev '^((atlas|opencode|atlas-snapshot|atlas-space-check)\.service: Command /opt/atlas/(current/deploy/(bin/git|check-opencode\.sh|atlas-snapshot\.sh|check-space\.sh)|tools/(bun/1\.3\.14/bin/bun|git/2\.55\.0/bin/git|opencode/current/bin/opencode2)) is not executable: No such file or directory)$' "$unit_output" || true)
+    unexpected=$(grep -Ev '^((atlas|atlas-credentials|opencode|atlas-snapshot|atlas-space-check)\.service: Command /opt/atlas/(current/deploy/(bin/git|check-opencode\.sh|atlas-snapshot\.sh|check-space\.sh)|tools/(bun/1\.3\.14/bin/bun|git/2\.55\.0/bin/git|opencode/current/bin/opencode2)) is not executable: No such file or directory)$' "$unit_output" || true)
     if [[ -n "$unexpected" ]]; then
       cat "$unit_output" >&2
       exit 1

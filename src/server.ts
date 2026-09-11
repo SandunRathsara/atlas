@@ -33,8 +33,8 @@ const credentials = createCredentialBoundary({
   socketPath: Bun.env.ATLAS_SUPPLIER_SOCKET,
   keyPath: Bun.env.ATLAS_SUPPLIER_KEY_PATH,
   apiUrl: Bun.env.ATLAS_GITHUB_API_URL,
+  serve: false,
 });
-await credentials.start();
 const fallbackGitHubToken = Bun.env.ATLAS_GITHUB_INSTALLATION_TOKEN;
 const githubToken = async () => {
   try {
@@ -114,7 +114,6 @@ const shutdown = async (signal: NodeJS.Signals) => {
   stopping = true;
   console.log(`Atlas stopping (${signal})`);
   refreshCoordinator.stop();
-  credentials.close();
   try {
     await Promise.all([uiServer.stop(true), webhookServer.stop(true)]);
   } catch {

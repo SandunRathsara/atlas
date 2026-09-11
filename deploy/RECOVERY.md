@@ -125,8 +125,9 @@ only a positively identified rehearsal tree after the owner accepts the result.
    OpenCode client/server, Git, gh, and schema versions.
 4. Stage the clean commit with `stage-release.sh`. Run its migrations by
    selecting the immutable versioned release and starting Atlas while admission
-   remains paused. Never overwrite a release and do not unnecessarily restart
-   OpenCode.
+   remains paused. The independently installed credential supplier and its
+   stable support tree remain running; do not restart it as part of release
+   selection. Never overwrite a release and do not unnecessarily restart OpenCode.
 5. Validate authenticated health, database/schema, OpenCode compatibility,
    reconciliation, preserved Session reopening/history/files, private UI,
    public webhook-only exclusion, signatures, and Repository-scoped credential

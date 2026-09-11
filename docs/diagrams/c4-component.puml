@@ -6,7 +6,7 @@ title Atlas — C4 Component
 Person(team, "Team member", "Shared-token operator of Repositories, Specs, and Sessions")
 Person(operator, "Operator", "Host, pins, secrets, admission")
 
-System_Boundary(atlas, "Atlas process") {
+System_Boundary(atlas, "Atlas UI process") {
   Component(server, "Process host", "src/server.ts", "Wires env, two loopback listeners, shutdown")
   Component(ui, "UI app", "src/app.ts#createApp", "Private HTML/HTMX/JSON routes")
   Component(webhook, "Webhook app", "src/webhook.ts#createWebhookApp", "POST /webhooks/github only")
@@ -15,10 +15,13 @@ System_Boundary(atlas, "Atlas process") {
   Component(persistence, "Persistence", "src/persistence.ts#createPersistence", "SQLite projections and Session records")
   Component(githubClient, "GitHub client", "src/github.ts#createGitHubClient", "Read-only inventory, issues, PRs, stacks")
   Component(sync, "Refresh coordinator", "src/sync.ts#createRefreshCoordinator", "Background GitHub projection refresh")
-  Component(credentials, "Credential boundary", "src/credentials.ts#createCredentialBoundary", "Unix-socket App token supplier")
   Component(preparation, "Preparation", "src/preparation.ts#createPreparationService", "Clone Session directory, execution slot")
   Component(handoff, "OpenCode handoff", "src/opencode.ts#createOpenCodeHandoffService", "Create, associate, one prompt, reconcile")
   Component(viewer, "Session viewer", "src/session-viewer.ts#createSessionViewerService", "Hydrate OpenCode tree for display")
+}
+
+System_Boundary(credentialService, "Atlas credential service") {
+  Component(credentials, "Credential boundary", "src/credential-server.ts → src/credentials.ts", "Independent Unix-socket App token supplier")
 }
 
 System_Ext(github, "GitHub", "App, issues labelled spec, PRs, native stacks, webhooks")
@@ -30,7 +33,6 @@ Rel(team, ui, "HTTPS via Tailscale Serve")
 Rel(github, webhook, "Signed webhook to Funnel/webhook port")
 Rel(operator, credentials, "github.env, supplier key, registry")
 
-Rel(server, credentials, "start supplier")
 Rel(server, persistence, "open database")
 Rel(server, githubClient, "construct")
 Rel(server, sync, "construct")
@@ -50,7 +52,7 @@ Rel(webhook, sync, "wake")
 Rel(sync, githubClient, "GET projections")
 Rel(sync, persistence, "write projections")
 Rel(preparation, persistence, "claim / checkpoints")
-Rel(preparation, credentials, "register scope, mint token")
+Rel(preparation, credentials, "register scope, request token")
 Rel(preparation, githubClient, "refresh before clone")
 Rel(preparation, sessionDirs, "git clone")
 Rel(handoff, persistence, "handoff checkpoints")
@@ -60,5 +62,5 @@ Rel(credentials, github, "mint installation tokens")
 Rel(githubClient, github, "read API")
 Rel(persistence, sqlite, "WAL")
 
-' repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2
+' repo-map-synced: 60d5a38df21d5b840c768b36ce37aacecf90e059
 @enduml
