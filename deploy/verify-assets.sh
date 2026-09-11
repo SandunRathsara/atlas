@@ -31,6 +31,12 @@ required=(
   "$root/verify-sqlite-wal.sh"
   "$root/stage-opencode.sh"
   "$root/stage-release.sh"
+  "$root/../scripts/build-release.sh"
+  "$root/../scripts/release.ts"
+  "$root/../scripts/verify-release-artifact.sh"
+  "$root/../src/release.ts"
+  "$root/../docs/RELEASES.md"
+  "$root/../.github/workflows/release.yml"
   "$root/logrotate/atlas-opencode"
   "$root/journald/atlas.conf"
   "$root/../scripts/check-restored-state.ts"
@@ -40,7 +46,7 @@ for path in "${required[@]}"; do
 done
 test -x "$root/bootstrap.sh" || { echo "bootstrap command is not executable" >&2; exit 1; }
 
-for script in "$root/bin/gh" "$root/bin/git" "$root/bin/git-credential-atlas" "$root/bootstrap.sh" "$root/capture-recovery-config.sh" "$root/check-health.sh" "$root/check-opencode.sh" "$root/check-space.sh" "$root/atlas-snapshot.sh" "$root/lib/recovery-status.sh" "$root/restore-rehearsal.sh" "$root/verify-opencode-commands.sh" "$root/verify-sqlite-wal.sh" "$root/stage-opencode.sh" "$root/stage-release.sh"; do
+for script in "$root/bin/gh" "$root/bin/git" "$root/bin/git-credential-atlas" "$root/bootstrap.sh" "$root/capture-recovery-config.sh" "$root/check-health.sh" "$root/check-opencode.sh" "$root/check-space.sh" "$root/atlas-snapshot.sh" "$root/lib/recovery-status.sh" "$root/restore-rehearsal.sh" "$root/verify-opencode-commands.sh" "$root/verify-sqlite-wal.sh" "$root/stage-opencode.sh" "$root/stage-release.sh" "$root/../scripts/build-release.sh" "$root/../scripts/verify-release-artifact.sh"; do
   bash -n "$script"
 done
 
@@ -104,9 +110,10 @@ grep -Fq 'ATLAS_RECOVERY_STATUS_PATH=/var/lib/atlas/recovery-status' "$root/atla
 grep -Fq 'ATLAS_RECOVERY_CONFIG_ROOT=/var/lib/atlas/recovery-config' "$root/atlas.env.example"
 grep -Fq 'ATLAS_GIT_BINARY=/opt/atlas/tools/git/2.55.0/bin/git' "$root/pins.env"
 grep -Fq 'ATLAS_OPENCODE_BINARY=/opt/atlas/tools/opencode/current/bin/opencode2' "$root/pins.env"
+grep -Fq '"@opencode-ai/client": "'"$ATLAS_OPENCODE_CLIENT_VERSION"'"' "$root/../package.json"
 grep -Fq 'server_version=%s' "$root/stage-opencode.sh"
 grep -Fq 'registry_integrity=%s' "$root/stage-opencode.sh"
-if grep -Eq 'ATLAS_OPENCODE_(VERSION|CLIENT_VERSION|CLI_LINUX_X64_INTEGRITY|CLIENT_INTEGRITY|SCHEMA_INTEGRITY|PROTOCOL_INTEGRITY)=' "$root/pins.env"; then
+if grep -Eq 'ATLAS_OPENCODE_(VERSION|CLI_LINUX_X64_INTEGRITY|CLIENT_INTEGRITY|SCHEMA_INTEGRITY|PROTOCOL_INTEGRITY)=' "$root/pins.env"; then
   echo "deployment manifest still pairs the OpenCode server with Atlas client packages" >&2
   exit 1
 fi

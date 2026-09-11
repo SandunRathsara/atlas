@@ -52,6 +52,10 @@ _Avoid_: Running Session when referring to all unfinished Sessions
 A freshness warning that Atlas's live connection is disconnected or reconciliation is incomplete. It accompanies rather than replaces a Session's semantic state.
 _Avoid_: Stall, timeout, hang
 
+**Release**:
+An immutable Atlas source/dependency/deployment tree published from an authoritative SemVer-plus-global-build tag and exact Git SHA.
+_Avoid_: moving build, source snapshot
+
 ## UI wording
 
 **Inbox** is shell wording for current Specs and their latest Session, not a domain object. **Settled** is a UI group for Specs whose latest Session is terminal, not a Session state.

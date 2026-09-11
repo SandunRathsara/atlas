@@ -19,6 +19,7 @@ System_Boundary(atlas, "Atlas UI process") {
   Component(handoff, "OpenCode handoff", "src/opencode.ts#createOpenCodeHandoffService", "Create, associate, one prompt, reconcile")
   Component(updatePause, "Safe update pause", "src/update-pause.ts#createUpdatePauseCoordinator", "Drain preparation/handoff without waiting for Agent execution")
   Component(viewer, "Session viewer", "src/session-viewer.ts#createSessionViewerService", "Hydrate OpenCode tree for display")
+  Component(releaseIdentity, "Release identity", "src/release.ts", "Validate tag-derived metadata for health")
 }
 
 System_Boundary(credentialService, "Atlas credential service") {
@@ -39,6 +40,7 @@ Rel(server, githubClient, "construct")
 Rel(server, sync, "construct")
 Rel(server, webhook, "serve :ATLAS_WEBHOOK_PORT")
 Rel(server, ui, "serve :ATLAS_PORT")
+Rel(server, releaseIdentity, "load generated metadata")
 
 Rel(ui, auth, "authenticate mutations")
 Rel(ui, views, "render")
@@ -48,6 +50,7 @@ Rel(ui, preparation, "enqueue Session")
 Rel(ui, handoff, "start / events")
 Rel(ui, updatePause, "expose activation prerequisite")
 Rel(ui, viewer, "hydrate")
+Rel(ui, releaseIdentity, "report identity in health")
 Rel(webhook, persistence, "accept delivery")
 Rel(webhook, sync, "wake")
 

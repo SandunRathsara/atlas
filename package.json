@@ -19,13 +19,14 @@
     "verify:issue52": "bun scripts/verify-issue52.ts",
     "verify:issue55": "bun scripts/verify-issue55.ts",
     "verify:issue56": "bun scripts/verify-issue56.ts",
+    "verify:issue57": "bun scripts/verify-release.ts && bash scripts/verify-release-artifact.sh",
     "verify:inbox": "bun scripts/verify-inbox.ts",
     "verify:landing": "bun scripts/verify-landing.ts",
     "verify:inbox-shell": "bun scripts/verify-inbox-shell.ts",
     "verify:inbox-page": "bun scripts/verify-inbox-page.ts",
     "credentials": "bun src/credential-server.ts",
     "dev": "bun run build:css && bun --watch src/server.ts",
-    "start": "bun run build:css && bun src/server.ts"
+    "start": "bun src/server.ts"
   },
   "dependencies": {
     "@opencode-ai/client": "0.0.0-beta-19135",

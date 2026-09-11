@@ -63,6 +63,7 @@ import {
 } from "./views.ts";
 import { renderInboxList, renderInboxPage } from "./views/inbox.ts";
 import { renderShell } from "./views/shell.ts";
+import { DEVELOPMENT_RELEASE_IDENTITY, type ReleaseIdentity } from "./release.ts";
 
 const MAX_FORM_BYTES = 512 * 1024;
 const MAX_TOKEN_LENGTH = 8 * 1024;
@@ -112,6 +113,7 @@ export type AppOptions = {
   persistence?: Persistence;
   refreshCoordinator?: RefreshCoordinator;
   openCode?: OpenCodeHandoffService;
+  releaseIdentity?: ReleaseIdentity;
   sharedToken?: string;
 };
 
@@ -495,6 +497,7 @@ export const createApp = (options: AppOptions) => {
   preparation.start();
 
   const persistenceReady = () => persistence.checkHealth();
+  const releaseIdentity = options.releaseIdentity ?? DEVELOPMENT_RELEASE_IDENTITY;
   const currentOpenCodeReadiness = () => {
     const readiness = openCodeService.readiness?.();
     if (readiness) return { ready: readiness.ready, reason: readiness.reason, version: readiness.version };
@@ -524,7 +527,7 @@ export const createApp = (options: AppOptions) => {
     setPrivateHtmlHeaders(c);
     return c.json({
       status: status === 200 ? "ok" : "degraded",
-      atlas: { process: true },
+      atlas: { process: true, release: releaseIdentity },
       persistence: persistenceHealth,
       openCode: openCodeReadiness,
     }, status);

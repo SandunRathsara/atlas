@@ -361,7 +361,7 @@ try {
   assert.equal((await runHealthCheck("ready-no-version")).exitCode, 0, "deployment health must not require a non-empty version");
   assert.equal((await runHealthCheck("process")).exitCode, 1);
   assert.equal((await runHealthCheck("persistence")).exitCode, 1);
-  assert.equal((await runHealthCheck("opencode")).exitCode, 3);
+  assert.equal((await runHealthCheck("opencode")).exitCode, 0, "Atlas deployment health must not depend on OpenCode readiness");
   deployment.stop(true);
 } finally {
   await rm(root, { recursive: true, force: true });
