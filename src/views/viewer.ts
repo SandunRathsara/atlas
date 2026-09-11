@@ -22,7 +22,7 @@ import {
   statusBadge,
   targetReconfirmationNeeded,
 } from "./shared.ts";
-import { renderShell } from "./shell.ts";
+import { renderShell, type InboxContext } from "./shell.ts";
 
 const viewerJson = (value: unknown) => {
   try {
@@ -343,6 +343,7 @@ export const renderSessionDetailPage = ({
   openCodeReadiness,
   persistenceHealth,
   sessionDirectoryAvailable,
+  inbox,
 }: {
   csrfToken: string;
   repository: Repository;
@@ -354,6 +355,7 @@ export const renderSessionDetailPage = ({
   openCodeReadiness?: { ready: boolean; reason?: string };
   persistenceHealth?: { healthy: boolean; reason?: string | null };
   sessionDirectoryAvailable?: boolean;
+  inbox?: InboxContext;
 }) => {
   const specPath = `/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(session.specIssueNumber)}`;
   const githubUrl = safeExternalUrl(session.specHtmlUrl);
@@ -389,10 +391,9 @@ export const renderSessionDetailPage = ({
 
   return renderShell({
     title: `Session ${session.atlasId}`,
-    active: "sessions",
-    repository,
     csrfToken,
     historyDisabled: true,
+    inbox,
     content: `<p class="font-mono text-sm text-muted">${escapeHtml(repository.fullName)}</p>
       <div class="mt-2">${pageHeader({
         title: `Session ${escapeHtml(session.atlasId)}`,

@@ -19,7 +19,7 @@ import {
   specsNotice,
   statusBadge,
 } from "./shared.ts";
-import { renderShell } from "./shell.ts";
+import { renderShell, type InboxContext } from "./shell.ts";
 
 const specHref = (spec: Spec) =>
   `/repositories/${encodeURIComponent(spec.repositoryId)}/specs/${encodeURIComponent(spec.issueNumber)}`;
@@ -44,6 +44,7 @@ export const renderSpecsPage = ({
   sessionsBySpec,
   accessRefresh,
   specsRefresh,
+  inbox,
 }: {
   csrfToken: string;
   repository: Repository;
@@ -51,6 +52,7 @@ export const renderSpecsPage = ({
   sessionsBySpec?: ReadonlyMap<string, Session[]>;
   accessRefresh?: RefreshState;
   specsRefresh?: RefreshState;
+  inbox?: InboxContext;
 }) => {
   const canShowEmptyState = specsRefresh?.availability === "available"
     && specsRefresh.requestedGeneration <= specsRefresh.completedGeneration;
@@ -88,9 +90,8 @@ export const renderSpecsPage = ({
 
   return renderShell({
     title: `${repository.fullName} Specs`,
-    active: "specs",
-    repository,
     csrfToken,
+    inbox,
     content: `${renderRepositoryHeading(repository, "Specs", "Open, non-PR GitHub issues labelled exactly spec.", csrfToken)}
       ${accessNotice(repository)}
       ${refreshWarning("Access", accessRefresh)}
@@ -107,6 +108,7 @@ export const renderSpecDetailPage = ({
   sessions,
   accessRefresh,
   specsRefresh,
+  inbox,
 }: {
   csrfToken: string;
   repository: Repository;
@@ -114,6 +116,7 @@ export const renderSpecDetailPage = ({
   sessions?: Session[];
   accessRefresh?: RefreshState;
   specsRefresh?: RefreshState;
+  inbox?: InboxContext;
 }) => {
   const githubUrl = safeExternalUrl(spec.htmlUrl);
   const retained = !(spec.isCurrent && spec.state === "open" && spec.hasSpecLabel && !spec.isPullRequest);
@@ -126,9 +129,8 @@ export const renderSpecDetailPage = ({
 
   return renderShell({
     title: `Spec #${spec.issueNumber}`,
-    active: "spec",
-    repository,
     csrfToken,
+    inbox,
     content: `<a class="text-sm text-brand-readable underline underline-offset-4" href="${repositoryLink(repository)}">← Back to Specs</a>
       <div class="mt-6">
         ${pageHeader({
@@ -183,16 +185,17 @@ export const renderSpecUnavailablePage = ({
   repository,
   accessRefresh,
   specsRefresh,
+  inbox,
 }: {
   csrfToken: string;
   repository: Repository;
   accessRefresh?: RefreshState;
   specsRefresh?: RefreshState;
+  inbox?: InboxContext;
 }) => renderShell({
   title: `${repository.fullName} Specs unavailable`,
-  active: "specs",
-  repository,
   csrfToken,
+  inbox,
   content: `${renderRepositoryHeading(repository, "Specs unavailable", "Atlas could not complete the first Specs read.", csrfToken)}
      ${accessNotice(repository)}
      ${refreshWarning("Access", accessRefresh)}

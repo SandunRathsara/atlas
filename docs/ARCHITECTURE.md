@@ -40,13 +40,14 @@ src/server.ts
   → src/webhook.ts#createWebhookApp
   → src/app.ts#createApp
        → src/auth.ts#createAuth
+       → src/inbox-state.ts
        → src/preparation.ts#createPreparationService
        → src/opencode.ts#createOpenCodeHandoffService
        → src/session-viewer.ts#createSessionViewerService
        → src/views.ts → src/views/*
 ```
 
-`createApp` starts preparation and OpenCode after wiring `onSlotReleased` / `onTerminal`. Preparation may read `src/recovery-status.ts#readRecoveryStatus`. OpenCode notifies the viewer through events; the viewer does not write SQLite.
+`createApp` starts preparation and OpenCode after wiring `onSlotReleased` / `onTerminal`; it also assembles the inbox context from persistence and browser cookies for every authenticated page. `src/views/inbox.ts` renders the filter, grouped Spec rows, and full-page records without calling GitHub or OpenCode. Preparation may read `src/recovery-status.ts#readRecoveryStatus`. OpenCode notifies the viewer through events; the viewer does not write SQLite.
 
 ## Integrations and State Ownership
 
@@ -63,6 +64,8 @@ src/server.ts
 | GitHub App ID / installation / PEM | operator file | `github.env` (`0600`) |
 | OpenCode session/events/transcript | OpenCode process | OpenCode XDG; Atlas stores IDs and checkpoints only |
 | Space/backup status | host scripts; Atlas reads | `ATLAS_RECOVERY_STATUS_PATH` |
+| Inbox filter and last visit | UI app sets; browser holds | Cookies `atlas_inbox`, `atlas_visit` (`Path=/; Secure; HttpOnly; SameSite=Strict`) |
+| Inbox poll continuity | `public/app.js`; browser DOM holds | Active element, open `<details>`, and scroll position are transient and restored after list swaps |
 
 GitHub remains source of truth for inventory, Specs, PRs, and stacks. Browse may use `ATLAS_GITHUB_INSTALLATION_TOKEN` if App minting fails; preparation never uses that fallback.
 
@@ -92,7 +95,9 @@ Local `justfile` defaults: token/webhook secret, `data/atlas.sqlite`, `~/.local/
 No accepted ADRs (`docs/adr/INDEX.md` is empty). Constraints from shipped code and operator docs:
 
 - Bind UI and webhook to `127.0.0.1`. Funnel the webhook only.
-- Cookie: `Secure; HttpOnly; SameSite=Strict`. Browser mutations need same-origin CSRF. Health is authenticated and exists only on the UI app.
+- Cookie: `Path=/; Secure; HttpOnly; SameSite=Strict` for `atlas_session`, `atlas_inbox`, and `atlas_visit` (`atlas_session` also has a seven-day max age). Browser mutations need same-origin CSRF. Health is authenticated and exists only on the UI app.
+- Inbox filter state is URL-canonical on `/inbox`; a valid remembered `atlas_inbox` filter redirects bare `/inbox` to `?repository=...`, while removed or invalid Repositories fall back to all enrolled Repositories.
+- The `/inbox/list` fragment owns its 30-second `outerHTML` poll boundary; `public/app.js` must restore focus, open details, and scroll after a successful swap without adding history.
 - GitHub client is read-only (GET plus one GraphQL merge-state query). Atlas never creates, changes, or submits PRs or stacks.
 - OpenCode must report `0.0.0-beta-19135`. Atlas does not own OpenCode lifecycle.
 - Credential supplier mints one-Repository App tokens over a unix socket. Tokens never appear in HTML, URLs, arguments, prompts, or logs.
@@ -102,4 +107,4 @@ No accepted ADRs (`docs/adr/INDEX.md` is empty). Constraints from shipped code a
 - Managed Git invocations must match `deploy/pins.env`.
 - Theme tokens live in `src/styles.css` / `DESIGN.md`. Do not copy hex values into templates.
 
-<!-- repo-map-synced: e64cae76bc7bc138c532617bac116b08c4c4b5d0 -->
+<!-- repo-map-synced: 1546f2d1ed3c9c58dca279e24a0b66d1de784525 -->

@@ -2,7 +2,7 @@
 
 ## Purpose and authority
 
-Atlas is an internal tool for browsing Repositories and starting autonomous Sessions from team-authored Specs. Its UI is a compact, dark-only developer tool: dense enough to work in, calm enough to read, and consistent on phones and desktops.
+Atlas is an internal tool for triaging Specs and starting Sessions. Its UI is a compact, dark-only developer tool: dense enough to work in, calm enough to read, and consistent on phones and desktops.
 
 This file governs visual and interaction decisions. `CONTEXT.md` governs terminology and domain meaning; the originating GitHub issue governs feature scope. Design guidelines do not introduce features or change business rules. If these sources conflict, report the conflict before implementing it.
 
@@ -15,7 +15,7 @@ Decided 2026-09-10 by progressive abstraction: three structurally different prot
 | Question | Decision | Rejected |
 | --- | --- | --- |
 | Mode | Dark only, like Claude desktop dark | Light, switchable |
-| Layout | Left sidebar + dense tables (Ant Design-like) | Top bar + cards (Claude-like), summary tiles |
+| Layout | Inbox variant A (2026-09-11): left sidebar 288px (`lg:w-72`) with card rows; dense tables in the main pane | Top bar + cards (Claude-like), summary tiles; inbox B dense rows; inbox C main-pane table / `w-56` |
 | Background | Graphite with a faint navy tint (GitHub-dark level chroma) | Warm charcoal, deep navy |
 | Brand `#012B68` | Sidebar brand band, logo mark, selected-row tint | Button fill (1.2–1.4:1 against every dark surface) |
 | Interactive primary | Lighter navy `#4373BA` fill with white text | Exact navy + light ring, exact navy with no edge |
@@ -177,9 +177,9 @@ Changes to the theme or these rules require explicit design scope or human appro
 
 ## Layout and spacing
 
-- One shared app shell: a 48px sticky glass header, a 224px (`w-56`) sidebar on `lg` and up, a main region, and a stable location for global notices. Provide a skip link to `main`.
-- Sidebar: brand band on top, then navigation groups with an uppercase 12px `faint` label, 32px rows, `brand-tint` plus left border for the active item. Below `lg`, replace it with a labelled navigation button and an accessible drawer with the same destinations and names.
-- Header: breadcrumb-style context on the left (Repository full name in `muted`), session controls on the right. Nothing else lives in the header.
+- One shared app shell: a 48px sticky glass header, a 288px (`lg:w-72`) sidebar on `lg` and up, a main region, and a stable location for global notices. Provide a skip link to `main`.
+- Sidebar: brand band, Repository filter (native `<select>` GET form: All Repositories, enrolled Repositories, Manage Repositories…, plus Add a Repository), grouped inbox, then a utility group (Pull requests, All Sessions, Open on GitHub) only when one Repository is filtered. Group labels are uppercase 12px `faint`. Selected inbox row: `brand-tint`, 2px `brand-readable` left border, `aria-current="page"`. Below `lg`, no drawer; the header has an **Inbox** link to `/inbox`.
+- Header: filtered Repository full name, or **All Repositories**, in `muted`; session controls on the right. Never "No Repository selected".
 - Main region: `max-w-6xl`, `px-4 sm:px-6`, `py-5`. Forms `max-w-2xl`. Session output may use the full width.
 - Each page has one H1, an optional one-line description in `muted`, and one visually dominant primary action aligned to the right of the title row. Wrap on small screens without changing reading order.
 - Spacing scale: 4px within a control, 8px between related controls, 12–16px inside containers, 24px between groups, 32px between major sections. Express these through Tailwind utilities; do not redefine `--spacing`.
@@ -210,6 +210,7 @@ daisyUI components for controls, Tailwind utilities for layout. Preserve compone
 | Status | `badge badge-sm badge-<state>` with text; color reinforces the word. Never color alone. |
 | Feedback | `alert alert-<state> alert-soft` inline near the cause; toasts only for supplementary confirmation. |
 | Lists of records | A `table` inside a `rounded-box border border-edge bg-base-100` container with compact rows; stacked records below `md`. |
+| Inbox row | Variant A cards in the sidebar (`rounded-box border border-edge bg-base-100 p-3`): Spec title, `Spec #<n>`, latest Session state (or No Session), separate Stale/access badges, and an unread dot when applicable; Repository short name only when the filter is All Repositories. Waiting: 2px `warning` left border. Selected: `brand-tint`, 2px `brand-readable` left border, and `aria-current="page"`. On `/inbox`, use `recordTable` / stacked records. |
 | Grouped content | Plain section with a heading first; a bordered container only for tables, forms, and record groups. |
 | Short confirmation | Native `dialog` styled with `modal`; full page for complex editing. |
 
