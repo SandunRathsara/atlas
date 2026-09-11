@@ -53,8 +53,8 @@ OpenCode service untouched.
   credential file, registry, and supplier key—not Atlas UI/webhook secrets.
 - `systemd/atlas-updater.service` runs as the surviving host authority from the stable
   `/opt/atlas/services/atlas-updater` tree, owns its authenticated Unix socket,
-  downloads and verifies public Atlas artifacts, records durable staging and
-  activation/cleanup state under `/var/lib/atlas`, atomically selects
+  downloads and verifies public Atlas artifacts, records durable policy,
+  staging, activation, and cleanup state under `/var/lib/atlas`, atomically selects
   `/opt/atlas/current`, and stops/restarts only `atlas.service`. Its unit does
   not import or execute Atlas's environment. For candidate validation, it reads
   only the shared token and UI port as data from the restricted `atlas.env`,
@@ -94,7 +94,7 @@ The webhook app has no health, login, Session, event, or OpenCode routes.
 | `/opt/atlas/tools/opencode/current` | Operator-selected OpenCode server symlink used by the independent service |
 | `/var/lib/atlas` | One ordinary-directory Btrfs subvolume |
 | `/var/lib/atlas/atlas.sqlite` | Atlas SQLite database and matching WAL/journal |
-| `/var/lib/atlas/update-state.json` | Durable staging/activation/cleanup target, progress, result, previous release, and failed-tag suppression |
+| `/var/lib/atlas/update-state.json` | Durable installation policy, staging/activation/cleanup target, progress, result, previous release, and failed-tag suppression |
 | `/var/lib/atlas/sessions/<atlas-id>` | Full private clone per Session |
 | `/var/lib/atlas/opencode-data/opencode` | OpenCode data, database, logs, shells, snapshots, tool output |
 | `/var/lib/atlas/opencode-data/opencode/log` | OpenCode file logs; human-installed size/retention bound |
@@ -169,43 +169,57 @@ regression: `bun scripts/verify-clone-scope.ts` with explicit Bun 1.3.14.
 These checks are not performed by `verify-assets.sh`.
 
 After bootstrap, visit the private global `/updates` page. It reports installed
-and available identities, the approval-required policy, runtime/manual
-maintenance limits, and durable staging/activation results. **Check now** keeps
-`/opt/atlas/current` unchanged. **Install** appears only for the fully staged,
-identified, host-runtime-eligible, code-only-compatible candidate. It briefly
-restarts Atlas after the safe checkpoint; the browser may see a short outage and
-then reads the updater's durable result. A failed candidate is automatically
-rolled back and exposes **Retry**. Diagnose before retrying; approval never
-bypasses Manual maintenance required. Run `bun run verify:issue58` and
-`bun run verify:issue59` for the controlled discovery, HTTP, updater, timeout,
-activation, rollback, suppression, and interruption checks.
+and available identities, the installation's update policy, runtime/manual
+maintenance limits, and durable staging/activation results. **Approval
+required** is the default. **Automatic for current SemVer builds** uses the same
+updater and safety path for only a higher numeric build of the installed SemVer;
+patch, minor, and major changes always wait for **Install**. **Check now** keeps
+`/opt/atlas/current` unchanged until an applicable automatic or explicit
+activation reaches its safe checkpoint. **Install** appears only for the fully
+staged, identified, host-runtime-eligible, code-only-compatible candidate. A
+failed candidate is automatically rolled back and exposes **Retry**; it is not
+retried automatically after restart, while a later eligible build may proceed.
+Diagnose before retrying; neither policy bypasses Manual maintenance required.
+Run `bun run verify:issue58`, `bun run verify:issue59`, `bun run
+verify:issue60`, and `bun run verify:issue61` for the controlled discovery,
+HTTP, updater, timeout, activation, rollback, policy, suppression, concurrency,
+retention, and helper-continuity checks.
 
-### Human Install/Retry and continuing-Session check
+### Human policy, Install/Retry, and continuing-Session check
 
 Do this only on the target host after running the bootstrap command above:
 
 1. Open a disposable continuing Session and record its Atlas/OpenCode Session
    identities. Confirm a scoped Git and `gh` read works without printing a token.
-2. On **Updates**, use **Check now** and wait for **Staged**. Confirm the shown
-   host requirements are met and no Manual maintenance required warning exists.
-3. Choose **Install** once. During the brief Atlas outage, confirm OpenCode and
+2. On **Updates**, confirm **Approval required**, select **Automatic for current
+   SemVer builds**, save, reload, and restart Atlas once to confirm the selection
+   persists. Switch back to **Approval required** unless this is the intended
+   installation policy.
+3. Use **Check now** and wait for **Staged**. For automatic-policy observation,
+   use only a disposable higher build of the exact installed SemVer; confirm a
+   SemVer-changing Release still waits for **Install**. Confirm the shown host
+   requirements are met and no Manual maintenance required warning exists.
+4. If approval is required, choose **Install** once. During the brief Atlas outage, confirm OpenCode and
    `atlas-credentials.service` remain running; repeat the scoped credential read
    from the existing Session directory if it is safe to do so.
-4. Reopen **Updates** and require **Activated** or **Recovered** with the exact
+5. Reopen **Updates** and require **Activated** or **Recovered** with the exact
    target. **Recovery failed** is not a successful rollback. Use **Retry** only
-   after diagnosing the failed candidate.
-5. Reopen the same Session. Confirm its identity, latest Running/Waiting/Idle or
+   after diagnosing the failed candidate; first confirm normal checks do not
+   reactivate the suppressed build and that a later eligible build remains usable.
+6. Reopen the same Session. Confirm its identity, latest Running/Waiting/Idle or
    terminal observation, branch, files, and one original prompt are preserved.
    If OpenCode observation is unavailable, expect the existing stale/not-ready
    presentation rather than treating the Atlas update as failed.
-6. On **Updates**, inspect **Release retention** separately from activation.
+7. On **Updates**, inspect **Release retention** separately from activation.
    Confirm cleanup completed, or preserve a reported cleanup failure for
    diagnosis; do not treat a healthy active Release as failed solely because an
    old tree could not be removed. Repeat the scoped helper read from step 1.
 
-Check keyboard focus and 320 px plus desktop layout manually for Check now,
-Install, Retry, active progress, recovered, and recovery-failed states. These
-browser and live-service checks are intentionally not automated here.
+Check keyboard focus and 320 px plus desktop layout manually for the policy
+control, Check now, Install, Retry, active progress, recovered, and
+recovery-failed states. These browser and live-service checks are intentionally
+not automated here. Repeat policy observation independently on each installation;
+there is no fleet coordinator or shared schedule.
 
 ### Read-only Release retention inspection
 

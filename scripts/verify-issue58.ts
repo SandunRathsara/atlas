@@ -65,6 +65,7 @@ const github = {
 
 const idleUpdater = (): UpdaterStatus => ({
   schemaVersion: 1,
+  policy: "approval_required",
   state: "idle",
   metadata: null,
   requestedAt: null,
@@ -137,6 +138,10 @@ try {
     downloadBaseUrl: "https://downloads.test/releases",
     updater: {
       status: async () => updaterStatus,
+      setPolicy: async (policy) => {
+        updaterStatus = { ...updaterStatus, policy };
+        return updaterStatus;
+      },
       stage: async (candidate) => {
         stageRequests.push(candidate.identity.tag);
         updaterStatus = {

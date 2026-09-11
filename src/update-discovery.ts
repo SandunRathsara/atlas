@@ -6,12 +6,13 @@ import {
   type ReleaseIdentity,
   type ReleaseMetadata,
 } from "./release.ts";
-import type { UpdaterClient, UpdaterStatus } from "./updater.ts";
+import { activationInProgress, type UpdatePolicy, type UpdaterClient, type UpdaterStatus } from "./updater.ts";
 
 export const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DEFAULT_API_URL = "https://api.github.com/repos/SandunRathsara/atlas/releases";
 const DEFAULT_DOWNLOAD_BASE = "https://github.com/SandunRathsara/atlas/releases/download";
 const MAX_METADATA_BYTES = 1024 * 1024;
+const activeStage = new Set<UpdaterStatus["state"]>(["requested", "downloading", "verifying", "extracting"]);
 
 export type UpdateStatus = {
   installed: ReleaseIdentity;
@@ -24,10 +25,11 @@ export type UpdateStatus = {
 };
 
 export type UpdateService = {
-  start: () => void;
+  start: (pause?: () => Promise<UpdatePauseOutcome>) => void;
   stop: () => void;
-  check: () => Promise<void>;
+  check: (pause?: () => Promise<UpdatePauseOutcome>) => Promise<void>;
   status: () => Promise<UpdateStatus>;
+  setPolicy: (policy: UpdatePolicy, pause?: () => Promise<UpdatePauseOutcome>) => Promise<void>;
   install: (tag: string, retry: boolean, pause: () => Promise<UpdatePauseOutcome>) => Promise<void>;
 };
 
@@ -42,11 +44,21 @@ export type UpdateServiceOptions = {
   downloadBaseUrl?: string;
   scheduleEvery?: (callback: () => void, milliseconds: number) => ReturnType<typeof setInterval>;
   cancelSchedule?: (timer: ReturnType<typeof setInterval>) => void;
+  sleep?: (milliseconds: number) => Promise<void>;
 };
 
-const availableRelease = (installed: ReleaseIdentity, candidates: readonly ReleaseMetadata[]) => {
+const availableRelease = (
+  installed: ReleaseIdentity,
+  candidates: readonly ReleaseMetadata[],
+  policy: UpdatePolicy,
+) => {
   if (!installed.published) return null;
-  return candidates.find((candidate) => compareReleaseTags(candidate.identity.tag, installed.tag) > 0) ?? null;
+  const newer = candidates.filter((candidate) => compareReleaseTags(candidate.identity.tag, installed.tag) > 0);
+  if (policy === "automatic") {
+    const sameSemver = newer.find((candidate) => candidate.identity.semver === installed.semver);
+    if (sameSemver) return sameSemver;
+  }
+  return newer[0] ?? null;
 };
 
 const metadataUrl = (base: string, tag: string) =>
@@ -68,10 +80,14 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
   const scheduleEvery: NonNullable<UpdateServiceOptions["scheduleEvery"]> = options.scheduleEvery ??
     ((callback, milliseconds) => setInterval(callback, milliseconds));
   const cancelSchedule = options.cancelSchedule ?? clearInterval;
+  const sleep = options.sleep ?? Bun.sleep;
   let checking = false;
   let currentCheck: Promise<void> | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
+  let activationRequest: { tag: string; task: Promise<void> } | undefined;
   let activationWork: { tag: string; task: Promise<void> } | undefined;
+  let automaticTarget: { candidate: ReleaseMetadata; pause: () => Promise<UpdatePauseOutcome> } | undefined;
+  let automaticWork: Promise<void> | undefined;
 
   const persist = (operation: () => void) => {
     try {
@@ -115,25 +131,86 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
     return candidates.sort((left, right) => compareReleaseTags(right.identity.tag, left.identity.tag));
   };
 
-  const check = () => {
+  const matchingActivation = (updaterStatus: UpdaterStatus, candidate: ReleaseMetadata) =>
+    updaterStatus.activation.metadata?.identity.tag === candidate.identity.tag;
+
+  const isAutomaticCandidate = (candidate: ReleaseMetadata) => options.installed.published &&
+    candidate.identity.semver === options.installed.semver && candidate.identity.build > options.installed.build;
+
+  const queueAutomatic = (candidate: ReleaseMetadata, pause: () => Promise<UpdatePauseOutcome>) => {
+    automaticTarget = { candidate, pause };
+    if (automaticWork) return;
+    automaticWork = (async () => {
+      while (automaticTarget) {
+        const target = automaticTarget;
+        automaticTarget = undefined;
+        const tag = target.candidate.identity.tag;
+        while (true) {
+          const updaterStatus = await options.updater.status();
+          const latest = availableRelease(options.installed, options.persistence.getUpdateDiscoveryState().candidates, updaterStatus.policy);
+          if (updaterStatus.policy !== "automatic" || latest?.identity.tag !== tag ||
+              updaterStatus.activation.failedTags.includes(tag) || activationInProgress(updaterStatus)) break;
+          if (updaterStatus.metadata?.identity.tag !== tag) {
+            if (activeStage.has(updaterStatus.state)) {
+              await sleep(250);
+              continue;
+            }
+            await options.updater.stage(target.candidate);
+            continue;
+          }
+          if (activeStage.has(updaterStatus.state)) {
+            await sleep(250);
+            continue;
+          }
+          if (updaterStatus.state === "staged") {
+            await activateCandidate(target.candidate, false, target.pause, true);
+          }
+          break;
+        }
+      }
+    })().catch(() => undefined).finally(() => {
+      automaticWork = undefined;
+      if (automaticTarget) queueAutomatic(automaticTarget.candidate, automaticTarget.pause);
+    });
+  };
+
+  const applyCandidates = async (
+    candidates: readonly ReleaseMetadata[],
+    pause?: () => Promise<UpdatePauseOutcome>,
+  ) => {
+    let updaterStatus: UpdaterStatus;
+    try {
+      updaterStatus = await options.updater.status();
+    } catch {
+      persist(() => options.persistence.recordUpdateStageRequestFailure("The host updater could not accept the staging request."));
+      return;
+    }
+    const available = availableRelease(options.installed, candidates, updaterStatus.policy);
+    if (!available) return;
+    try {
+      updaterStatus = await options.updater.stage(available);
+      if (updaterStatus.metadata?.identity.tag !== available.identity.tag) {
+        persist(() => options.persistence.recordUpdateStageRequestFailure(
+          `The updater is already staging ${updaterStatus.metadata?.identity.tag ?? "another release"}; ${available.identity.tag} remains available.`,
+        ));
+      }
+      if (pause && updaterStatus.policy === "automatic" && isAutomaticCandidate(available) &&
+          !updaterStatus.activation.failedTags.includes(available.identity.tag)) {
+        queueAutomatic(available, pause);
+      }
+    } catch {
+      persist(() => options.persistence.recordUpdateStageRequestFailure("The host updater could not accept the staging request."));
+    }
+  };
+
+  const check = (pause?: () => Promise<UpdatePauseOutcome>) => {
     if (currentCheck) return currentCheck;
     checking = true;
     currentCheck = (async () => {
       try {
         const candidates = await fetchPublished();
         persist(() => options.persistence.recordUpdateDiscoverySuccess(candidates));
-        const available = availableRelease(options.installed, candidates);
-        if (!available) return;
-        try {
-          const updaterStatus = await options.updater.stage(available);
-          if (updaterStatus.metadata?.identity.tag !== available.identity.tag) {
-            persist(() => options.persistence.recordUpdateStageRequestFailure(
-              `The updater is already staging ${updaterStatus.metadata?.identity.tag ?? "another release"}; ${available.identity.tag} remains available.`,
-            ));
-          }
-        } catch {
-          persist(() => options.persistence.recordUpdateStageRequestFailure("The host updater could not accept the staging request."));
-        }
+        await applyCandidates(candidates, pause);
       } catch {
         try {
           persist(() => options.persistence.recordUpdateDiscoveryFailure(
@@ -159,7 +236,7 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
     } catch {
       updaterError = "The host updater is unavailable. Known release information is retained.";
     }
-    const available = availableRelease(options.installed, discovery.candidates);
+    const available = availableRelease(options.installed, discovery.candidates, updater?.policy ?? "approval_required");
     if (discovery.stageRequestFailureReason && updater?.metadata?.identity.tag === available?.identity.tag) {
       discovery = { ...discovery, stageRequestFailureAt: null, stageRequestFailureReason: null };
     }
@@ -174,9 +251,6 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
     };
   };
 
-  const matchingActivation = (updaterStatus: UpdaterStatus, candidate: ReleaseMetadata) =>
-    updaterStatus.activation.metadata?.identity.tag === candidate.identity.tag;
-
   const abandonDurably = async (candidate: ReleaseMetadata, message: string) => {
     while (true) {
       try {
@@ -190,7 +264,7 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
           // Retry until the surviving updater records or supersedes this abandonment.
         }
       }
-      await Bun.sleep(250);
+      await sleep(250);
     }
   };
 
@@ -227,7 +301,7 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
       } catch {
         // Keep the safe pause while the surviving updater's decision is unavailable.
       }
-      if (!accepted) await Bun.sleep(250);
+      if (!accepted) await sleep(250);
     }
     if (!accepted) {
       outcome.resume();
@@ -248,56 +322,89 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
       } catch {
         // The updater owns recovery; retry status without changing the active selection.
       }
-      await Bun.sleep(250);
+      await sleep(250);
     }
   };
 
-  const install = async (tag: string, retry: boolean, pause: () => Promise<UpdatePauseOutcome>) => {
+  async function activateCandidate(
+    candidate: ReleaseMetadata,
+    retry: boolean,
+    pause: () => Promise<UpdatePauseOutcome>,
+    automatic = false,
+  ) {
+    const tag = candidate.identity.tag;
+    if (activationRequest) {
+      if (activationRequest.tag !== tag) throw new Error("Another Atlas activation is already in progress.");
+      return activationRequest.task;
+    }
     if (activationWork) {
       if (activationWork.tag !== tag) throw new Error("Another Atlas activation is already in progress.");
       return;
     }
-    const current = await status();
-    const candidate = current.available;
-    const updaterStatus = current.updater;
-    if (!candidate || candidate.identity.tag !== tag) throw new Error("The requested release is not the available Atlas release.");
-    if (!updaterStatus) throw new Error("The host updater is unavailable.");
-    if (matchingActivation(updaterStatus, candidate) &&
-        ["awaiting_checkpoint", "requested", "stopping", "selecting", "starting", "validating", "selecting_previous", "restarting_previous", "validating_previous"].includes(updaterStatus.activation.state)) {
-      return;
-    }
-    if (updaterStatus.state !== "staged" || updaterStatus.metadata?.identity.tag !== tag || !updaterStatus.stagedPath ||
-        updaterStatus.requirements === null || updaterStatus.requirements.unmet.length > 0) {
-      throw new Error("The requested release is not fully staged and host-runtime eligible.");
-    }
-    if (!candidate.rollback.codeOnlyCompatible) throw new Error("The requested release requires manual maintenance.");
-    const suppressed = updaterStatus.activation.failedTags.includes(tag);
-    if (suppressed !== retry) throw new Error(suppressed ? "This failed release requires Retry." : "This release does not require Retry.");
-
-    let prepared: UpdaterStatus;
-    try {
-      prepared = await options.updater.prepareActivation(candidate, retry);
-    } catch (error) {
-      try {
-        const durable = await options.updater.status();
-        if (!matchingActivation(durable, candidate) || durable.activation.state !== "awaiting_checkpoint") throw error;
-        prepared = durable;
-      } catch {
-        throw error;
+    const request = (async () => {
+      const current = await status();
+      const updaterStatus = current.updater;
+      if (!current.available || current.available.identity.tag !== tag) throw new Error("The requested release is not the available Atlas release.");
+      if (!updaterStatus) throw new Error("The host updater is unavailable.");
+      if (automatic && (updaterStatus.policy !== "automatic" || !isAutomaticCandidate(candidate))) {
+        throw new Error("The requested release requires explicit approval.");
       }
+      if (matchingActivation(updaterStatus, candidate) &&
+          ["awaiting_checkpoint", "requested", "stopping", "selecting", "starting", "validating", "selecting_previous", "restarting_previous", "validating_previous"].includes(updaterStatus.activation.state)) {
+        return;
+      }
+      if (updaterStatus.state !== "staged" || updaterStatus.metadata?.identity.tag !== tag || !updaterStatus.stagedPath ||
+          updaterStatus.requirements === null || updaterStatus.requirements.unmet.length > 0) {
+        throw new Error("The requested release is not fully staged and host-runtime eligible.");
+      }
+      if (!candidate.rollback.codeOnlyCompatible) throw new Error("The requested release requires manual maintenance.");
+      const suppressed = updaterStatus.activation.failedTags.includes(tag);
+      if (suppressed !== retry) throw new Error(suppressed ? "This failed release requires Retry." : "This release does not require Retry.");
+
+      let prepared: UpdaterStatus;
+      try {
+        prepared = await options.updater.prepareActivation(candidate, retry);
+      } catch (error) {
+        try {
+          const durable = await options.updater.status();
+          if (!matchingActivation(durable, candidate) || durable.activation.state !== "awaiting_checkpoint") throw error;
+          prepared = durable;
+        } catch {
+          throw error;
+        }
+      }
+      if (!matchingActivation(prepared, candidate) || prepared.activation.state !== "awaiting_checkpoint") {
+        throw new Error("The host updater did not persist the activation approval.");
+      }
+      const task = continueActivation(candidate, pause).finally(() => {
+        if (activationWork?.task === task) activationWork = undefined;
+      });
+      activationWork = { tag, task };
+    })();
+    activationRequest = { tag, task: request };
+    try {
+      await request;
+    } finally {
+      if (activationRequest?.task === request) activationRequest = undefined;
     }
-    if (!matchingActivation(prepared, candidate) || prepared.activation.state !== "awaiting_checkpoint") {
-      throw new Error("The host updater did not persist the activation approval.");
+  }
+
+  const install = async (tag: string, retry: boolean, pause: () => Promise<UpdatePauseOutcome>) => {
+    const current = await status();
+    if (!current.available || current.available.identity.tag !== tag) {
+      throw new Error("The requested release is not the available Atlas release.");
     }
-    const task = continueActivation(candidate, pause).finally(() => {
-      if (activationWork?.task === task) activationWork = undefined;
-    });
-    activationWork = { tag, task };
+    await activateCandidate(current.available, retry, pause);
   };
 
-  const start = () => {
+  const setPolicy = async (policy: UpdatePolicy, pause?: () => Promise<UpdatePauseOutcome>) => {
+    await options.updater.setPolicy(policy);
+    await applyCandidates(options.persistence.getUpdateDiscoveryState().candidates, pause);
+  };
+
+  const start = (pause?: () => Promise<UpdatePauseOutcome>) => {
     if (timer) return;
-    void check();
+    void check(pause);
     void options.updater.status().then((updaterStatus) => {
       if (updaterStatus.activation.state === "awaiting_checkpoint" && updaterStatus.activation.metadata) {
         return options.updater.abandonActivation(
@@ -306,7 +413,7 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
         );
       }
     }).catch(() => undefined);
-    timer = scheduleEvery(() => void check(), UPDATE_CHECK_INTERVAL_MS);
+    timer = scheduleEvery(() => void check(pause), UPDATE_CHECK_INTERVAL_MS);
     (timer as { unref?: () => void }).unref?.();
   };
 
@@ -315,7 +422,7 @@ export const createUpdateService = (options: UpdateServiceOptions): UpdateServic
     timer = undefined;
   };
 
-  return { start, stop, check, status, install };
+  return { start, stop, check, status, setPolicy, install };
 };
 
 export const createUnavailableUpdateService = (
@@ -325,6 +432,7 @@ export const createUnavailableUpdateService = (
   start: () => undefined,
   stop: () => undefined,
   check: async () => undefined,
+  setPolicy: async () => { throw new Error("The host updater is unavailable."); },
   install: async () => { throw new Error("The host updater is unavailable."); },
   status: async () => {
     const discovery = persistence.getUpdateDiscoveryState();
@@ -333,7 +441,7 @@ export const createUnavailableUpdateService = (
       checking: false,
       discovery,
       candidates: discovery.candidates,
-      available: availableRelease(installed, discovery.candidates),
+      available: availableRelease(installed, discovery.candidates, "approval_required"),
       updater: null,
       updaterError: "The host updater is unavailable. Known release information is retained.",
     };

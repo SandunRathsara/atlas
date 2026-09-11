@@ -151,6 +151,35 @@ const cleanupMarkup = (status: UpdateStatus) => {
   </section>`;
 };
 
+const policyMarkup = (status: UpdateStatus, csrfToken: string) => {
+  const policy = status.updater?.policy;
+  const badge = policy === "automatic"
+    ? statusBadge("badge-info", "Automatic")
+    : policy === "approval_required"
+      ? statusBadge("badge-neutral", "Approval required")
+      : statusBadge("badge-error", "Unavailable");
+  const form = policy && csrfToken
+    ? `<form class="mt-4 flex max-w-2xl flex-wrap items-end gap-3" action="/updates/policy" method="post">
+        <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
+        <label class="flex min-w-56 flex-1 flex-col" for="update-policy">
+          <span class="mb-2 text-sm font-medium text-muted">Policy</span>
+          <select class="select w-full" id="update-policy" name="policy">
+            <option value="approval_required"${policy === "approval_required" ? " selected" : ""}>Approval required</option>
+            <option value="automatic"${policy === "automatic" ? " selected" : ""}>Automatic for current SemVer builds</option>
+          </select>
+        </label>
+        <button class="btn" type="submit">Save policy</button>
+      </form>`
+    : "";
+  return `<section class="mt-6 rounded-box border border-edge bg-base-100 p-4" aria-labelledby="update-policy-title">
+    <div class="flex flex-wrap items-center justify-between gap-3"><h2 id="update-policy-title" class="text-base font-semibold">Update policy</h2>${badge}</div>
+    <p class="mt-3 max-w-prose text-sm leading-normal text-muted">Automatic mode installs only a newer numeric build of the installed SemVer. Every patch, minor, or major change still requires Install.</p>
+    <p class="mt-2 max-w-prose text-sm leading-normal text-muted">A failed build is suppressed until explicit Retry; a later eligible build may proceed normally. Each Atlas installation keeps its own policy and schedule.</p>
+    ${form}
+    <p class="mt-4 max-w-prose text-sm leading-normal text-muted">Activation briefly restarts Atlas, preserves queued Sessions, and automatically restores the previous release when candidate validation fails. OpenCode keeps running and is not an activation gate.</p>
+  </section>`;
+};
+
 export const renderUpdatesStatus = (status: UpdateStatus, csrfToken = "") => {
   const available = status.available;
   const polling = status.checking || Boolean(status.updater && (activeStage.has(status.updater.state) || activeActivation.has(status.updater.activation.state) || status.updater.cleanup.state === "cleaning"));
@@ -180,11 +209,7 @@ export const renderUpdatesStatus = (status: UpdateStatus, csrfToken = "") => {
     ${stageMarkup(status)}
     ${activationMarkup(status)}
     ${cleanupMarkup(status)}
-    <section class="mt-6 rounded-box border border-edge bg-base-100 p-4" aria-labelledby="update-policy-title">
-      <div class="flex flex-wrap items-center justify-between gap-3"><h2 id="update-policy-title" class="text-base font-semibold">Update policy</h2>${statusBadge("badge-neutral", "Approval required")}</div>
-      <p class="mt-3 max-w-prose text-sm leading-normal text-muted">Published artifacts are staged automatically. Install requires explicit approval; a failed candidate requires explicit Retry.</p>
-      <p class="mt-2 max-w-prose text-sm leading-normal text-muted">Activation briefly restarts Atlas, preserves queued Sessions, and automatically restores the previous release when candidate validation fails. OpenCode keeps running and is not an activation gate.</p>
-    </section>
+    ${policyMarkup(status, csrfToken)}
   </div>`;
 };
 

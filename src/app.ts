@@ -953,7 +953,7 @@ export const createApp = (options: AppOptions) => {
     }
     const identity = c.get("auth");
     if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return c.text("Request rejected", 403);
-    void updates.check().catch(() => undefined);
+    void updates.check(updatePause.pause).catch(() => undefined);
     if (isHtmx(c)) {
       c.header("HX-Redirect", "/updates");
       return c.body(null, 200);
@@ -979,6 +979,31 @@ export const createApp = (options: AppOptions) => {
     } catch (error) {
       return c.text(error instanceof Error ? error.message : "The activation request was rejected.", 409);
     }
+    if (isHtmx(c)) {
+      c.header("HX-Redirect", "/updates");
+      return c.body(null, 200);
+    }
+    return c.redirect("/updates", 303);
+  });
+  app.post("/updates/policy", async (c) => {
+    setPrivateHtmlHeaders(c);
+    let form: Record<string, unknown>;
+    try {
+      form = await parseForm(c.req.raw);
+    } catch (error) {
+      if (error instanceof FormBodyTooLarge) return c.text("Request body is too large", 413);
+      return c.text("Malformed update request", 400);
+    }
+    const identity = c.get("auth");
+    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return c.text("Request rejected", 403);
+    const policy = stringField(form.policy);
+    if (policy !== "approval_required" && policy !== "automatic") return c.text("A valid update policy is required", 400);
+    try {
+      await updates.setPolicy(policy, updatePause.pause);
+    } catch (error) {
+      return c.text(error instanceof Error ? error.message : "The update policy could not be saved.", 409);
+    }
+    void updates.check(updatePause.pause).catch(() => undefined);
     if (isHtmx(c)) {
       c.header("HX-Redirect", "/updates");
       return c.body(null, 200);

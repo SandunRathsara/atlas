@@ -109,7 +109,7 @@ const webhookApp = createWebhookApp({
 });
 
 refreshCoordinator.start();
-updates.start();
+updates.start(app.updatePause.pause);
 if (startupUpdaterStatus && activationInProgress(startupUpdaterStatus)) {
   void app.updatePause.pause().then(async (outcome) => {
     if (outcome.status !== "paused") return;

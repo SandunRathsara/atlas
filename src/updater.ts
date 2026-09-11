@@ -95,6 +95,8 @@ export type UpdaterResult = {
   at: string;
 };
 
+export type UpdatePolicy = "approval_required" | "automatic";
+
 export type CleanupStatus = {
   state: "idle" | "cleaning" | "succeeded" | "failed";
   message: string;
@@ -105,6 +107,7 @@ export type CleanupStatus = {
 
 export type UpdaterStatus = {
   schemaVersion: 1;
+  policy: UpdatePolicy;
   state: "idle" | "requested" | "downloading" | "verifying" | "extracting" | "staged" | "failed";
   metadata: ReleaseMetadata | null;
   requestedAt: string | null;
@@ -119,6 +122,7 @@ export type UpdaterStatus = {
 
 export type UpdaterClient = {
   status: () => Promise<UpdaterStatus>;
+  setPolicy: (policy: UpdatePolicy) => Promise<UpdaterStatus>;
   stage: (metadata: ReleaseMetadata) => Promise<UpdaterStatus>;
   prepareActivation: (metadata: ReleaseMetadata, retry: boolean) => Promise<UpdaterStatus>;
   activate: (metadata: ReleaseMetadata) => Promise<UpdaterStatus>;
@@ -127,6 +131,7 @@ export type UpdaterClient = {
 
 type UpdaterRequest =
   | { key: string; operation: "status" }
+  | { key: string; operation: "set_policy"; policy: UpdatePolicy }
   | { key: string; operation: "stage"; metadata: ReleaseMetadata }
   | { key: string; operation: "prepare_activation"; metadata: ReleaseMetadata; retry: boolean }
   | { key: string; operation: "activate"; metadata: ReleaseMetadata }
@@ -161,6 +166,7 @@ const initialCleanup = (): CleanupStatus => ({
 
 const initialStatus = (): UpdaterStatus => ({
   schemaVersion: 1,
+  policy: "approval_required",
   state: "idle",
   metadata: null,
   requestedAt: null,
@@ -252,7 +258,8 @@ const parseStatus = (value: unknown): UpdaterStatus => {
   const requirements = status.requirements as Partial<RuntimeRequirements> | null | undefined;
   const available = requirements?.available as Partial<HostRuntime> | undefined;
   const lastResult = status.lastResult as Partial<UpdaterResult> | null | undefined;
-  if (status.schemaVersion !== 1 || typeof status.state !== "string" ||
+  const policy = status.policy ?? "approval_required";
+  if (status.schemaVersion !== 1 || !["approval_required", "automatic"].includes(policy) || typeof status.state !== "string" ||
       !["idle", "requested", "downloading", "verifying", "extracting", "staged", "failed"].includes(status.state) ||
       status.metadata === undefined || (status.metadata !== null && !assertReleaseMetadata(status.metadata)) ||
       ![status.requestedAt, status.updatedAt, status.stagedPath].every((item) => item === null || typeof item === "string") ||
@@ -265,7 +272,7 @@ const parseStatus = (value: unknown): UpdaterStatus => {
     throw new Error("Updater state is invalid");
   }
   if (status.state !== "idle" && status.metadata === null) throw new Error("Updater state is invalid");
-  return { ...status, activation: parseActivation(status.activation), cleanup: parseCleanup(status.cleanup) } as UpdaterStatus;
+  return { ...status, policy, activation: parseActivation(status.activation), cleanup: parseCleanup(status.cleanup) } as UpdaterStatus;
 };
 
 const readStatusFile = (path: string) => {
@@ -760,6 +767,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
     const at = timestamp();
     save({
       schemaVersion: 1,
+      policy: status.policy,
       state: "requested",
       metadata,
       requestedAt: at,
@@ -772,6 +780,14 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
       cleanup: status.cleanup,
     });
     void runStage();
+    return status;
+  };
+
+  const setPolicy = (policyValue: unknown) => {
+    if (policyValue !== "approval_required" && policyValue !== "automatic") {
+      throw new Error("Update policy is invalid");
+    }
+    if (status.policy !== policyValue) save({ ...status, policy: policyValue });
     return status;
   };
 
@@ -886,6 +902,8 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
             if (!request || typeof request !== "object" || typeof request.key !== "string" || !keysMatch(request.key, key)) throw new Error();
             response = request.operation === "status"
               ? { ok: true, status }
+              : request.operation === "set_policy"
+                ? { ok: true, status: setPolicy(request.policy) }
               : request.operation === "stage"
                 ? { ok: true, status: requestStage(request.metadata) }
                 : request.operation === "prepare_activation"
@@ -921,7 +939,7 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
     }
   };
 
-  return { start, close, status: () => status, requestStage, prepareActivation, beginActivation, abandonActivation };
+  return { start, close, status: () => status, setPolicy, requestStage, prepareActivation, beginActivation, abandonActivation };
 };
 
 export type UpdaterClientOptions = { socketPath?: string; keyPath?: string };
@@ -931,6 +949,7 @@ export const createUpdaterClient = (options: UpdaterClientOptions = {}): Updater
   const keyPath = resolve(options.keyPath ?? process.env.ATLAS_UPDATER_KEY_PATH ?? DEFAULT_KEY_PATH);
   const request = async (payload:
     | { operation: "status" }
+    | { operation: "set_policy"; policy: UpdatePolicy }
     | { operation: "stage"; metadata: ReleaseMetadata }
     | { operation: "prepare_activation"; metadata: ReleaseMetadata; retry: boolean }
     | { operation: "activate"; metadata: ReleaseMetadata }
@@ -971,6 +990,7 @@ export const createUpdaterClient = (options: UpdaterClientOptions = {}): Updater
   };
   return {
     status: () => request({ operation: "status" }),
+    setPolicy: (policy) => request({ operation: "set_policy", policy }),
     stage: (metadata) => request({ operation: "stage", metadata }),
     prepareActivation: (metadata, retry) => request({ operation: "prepare_activation", metadata, retry }),
     activate: (metadata) => request({ operation: "activate", metadata }),
