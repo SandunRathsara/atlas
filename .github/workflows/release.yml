@@ -1,0 +1,57 @@
+name: Publish Atlas release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: atlas-release-publishing
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Validate tag and global build sequence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tagged_commit=$(git rev-list -n 1 "$RELEASE_TAG")
+          test "$(git rev-parse HEAD)" = "$tagged_commit"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' > "$RUNNER_TEMP/published-tags"
+          mapfile -t published_tags < "$RUNNER_TEMP/published-tags"
+          bun scripts/release.ts validate "$RELEASE_TAG" "${published_tags[@]}"
+          echo "RELEASE_SHA=$tagged_commit" >> "$GITHUB_ENV"
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile
+      - name: Check tagged source
+        run: |
+          bun run check
+          bun scripts/verify-release.ts
+          bash deploy/verify-assets.sh
+      - name: Build and smoke release archive
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bash scripts/verify-release-artifact.sh "$RELEASE_TAG" "$RELEASE_SHA" "$RUNNER_TEMP/release"
+      - name: Publish immutable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            "$RUNNER_TEMP/release/atlas-linux-x64-${RELEASE_TAG}.tar.gz" \
+            "$RUNNER_TEMP/release/atlas-linux-x64-${RELEASE_TAG}.tar.gz.sha256" \
+            "$RUNNER_TEMP/release/atlas-release.json" \
+            --verify-tag --title "$RELEASE_TAG" --generate-notes

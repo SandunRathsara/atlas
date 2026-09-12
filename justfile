@@ -54,8 +54,13 @@ dev:
     fi
     bun install --frozen-lockfile
     mkdir -p "$(dirname "$ATLAS_DATABASE_PATH")" "$ATLAS_SESSION_ROOT"
-    supplier_socket="${ATLAS_SUPPLIER_SOCKET:-$HOME/.config/atlas/supplier.sock}"
-    trap 'rm -f "$supplier_socket"' EXIT
+    bun run credentials &
+    supplier_pid=$!
+    cleanup() {
+      kill "$supplier_pid" 2>/dev/null || true
+      wait "$supplier_pid" 2>/dev/null || true
+    }
+    trap cleanup EXIT INT TERM
     echo "Atlas UI  http://127.0.0.1:${ATLAS_PORT}  (or http://localhost:${ATLAS_PORT})"
     echo "Webhook   http://127.0.0.1:${ATLAS_WEBHOOK_PORT}/webhooks/github"
     echo "Sign-in   Authorization: Bearer \$ATLAS_SHARED_TOKEN  (or the login form)"

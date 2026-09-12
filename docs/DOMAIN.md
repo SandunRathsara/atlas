@@ -6,17 +6,18 @@ Answers: why does this system exist? Populated and kept current by `/refresh-rep
 
 Atlas is an internal control plane for a team that already writes work as GitHub issues. It lets that team triage Specs across onboarded GitHub Repositories and start autonomous OpenCode Sessions from team-authored Specs, then observe those Sessions without Atlas itself publishing GitHub Pull requests or stacks.
 
-Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; an inbox of current Specs with landing on `/`; read-only Pull request and native-stack browsing; authenticated Session directory preparation; a guarded OpenCode handoff; Session viewing; Atlas-side stack reservation hold and release.
+Shipped outcomes: private sign-in; durable Repository, Spec, and Session records; an inbox of current Specs with landing on `/`; read-only Pull request and native-stack browsing; authenticated Session directory preparation backed by credential serving that survives Atlas UI restarts; a guarded OpenCode handoff; an awaitable safe update pause for preparation/handoff; Session viewing; Atlas-side stack reservation hold and release; immutable numbered Linux x64 Releases built from authoritative tags; public Release discovery, durable host staging, approval-required or same-SemVer automatic activation, automatic code rollback, immutable surviving-service updates, and helper-aware old-Release cleanup.
 
 ## Actors
 
 | Actor | Role |
 |---|---|
-| Team member | Uses the shared team credential to enroll Repositories, browse Specs/PRs/stacks, start Sessions, watch execution, and release reservations. |
+| Team member | Uses the shared team credential to enroll Repositories, browse Specs/PRs/stacks, start Sessions, watch execution, release reservations, and manage installation updates. |
+| Maintainer | Commits complete release inputs and publishes an immutable Release by pushing its authoritative tag. |
 | Operator | Provisions the private host, pins binaries, supplies the shared credential, and controls admission, storage, and recovery. Not an in-app admin role. |
 | Agent | The OpenCode agent that implements a Spec inside a Session. Atlas does not start, upgrade, or replace OpenCode. |
-| GitHub | System of record for Repositories, Specs (issues labelled `spec`), PRs, native stacks, App installation inventory, and signed webhooks. |
-| Atlas process | Private UI listener, loopback webhook listener, SQLite projections, credential supplier, preparation, and OpenCode handoff. |
+| GitHub | System of record for Repositories, Specs (issues labelled `spec`), PRs, native stacks, App installation inventory, signed webhooks, and public Releases. |
+| Atlas processes | Private UI listener, loopback webhook listener, SQLite projections, independent credential supplier and surviving host updater, preparation, and OpenCode handoff. |
 
 ## Use Cases
 
@@ -31,6 +32,10 @@ Shipped outcomes: private sign-in; durable Repository, Spec, and Session records
 - Reconfirm a queued Session target when GitHub observations drifted.
 - Release a held stack reservation after confirmed terminal execution.
 - Accept signed GitHub webhooks that wake background refresh of enrolled Repositories.
+- Publish a numbered ready-to-run Linux x64 Release from a reviewed tag without changing dependencies during publishing.
+- Check public Releases and observe durable staging without changing the active Release or Session admission.
+- Choose the installation's update policy, approve a fully staged Release when required, observe activation/recovery through a brief Atlas outage, and explicitly Retry a failed candidate.
+- Inspect Release retention outcomes while current, previous-working, staged, in-flight, and Session-helper-referenced Releases remain protected.
 
 ## Workflows
 
@@ -66,8 +71,27 @@ Atlas projects GitHub issues labelled exactly `spec` (open, not a pull request) 
 ### Start Session
 
 1. Queue: CSRF-protected form with required prompt (max 20,000 characters) and an observed target. Duplicate `submission_id` with the same content is idempotent. An unfinished Session on that Spec is rejected.
-2. Prepare: global execution-slot capacity (default one). Clone a Session directory under `ATLAS_SESSION_ROOT` with a unique working branch. Pause when Session storage is missing, below the free-space floor (default 10 GiB), or host space status says pause. Production preparation mints a Repository-scoped GitHub App token; it never falls back to a weaker browse token.
+2. Prepare: global execution-slot capacity (default one). Register the Session directory and helper references, request a Repository-scoped GitHub App token from the independently running supplier, and clone under `ATLAS_SESSION_ROOT` with a unique working branch. Pause when credential serving or Session storage is unavailable, below the free-space floor (default 10 GiB), or host space status says pause. Preparation never falls back to a weaker browse token.
 3. Handoff: discover the independently running OpenCode service without filtering by server version, validate its endpoint/health/event stream, create once, associate once, send one exact initial message, and reconcile HTTP state. Atlas does not store a transcript copy.
+
+### Safe update pause
+
+Atlas exposes one coordinated process-local update pause. A request immediately
+blocks new preparation and create/associate/prompt work, then completes only
+after already in-flight Atlas-owned work leaves its external operation and its
+durable checkpoint records completion or uncertainty. The pause preserves all
+Session and reservation state. OpenCode execution-state reconciliation may
+continue, so Running, Waiting, and Idle Sessions do not delay readiness.
+
+The default deadline is five minutes. A timeout abandons and removes only the
+update-owned pause; it neither kills in-flight work nor removes independent
+operator, capacity, storage, recovery, persistence, or OpenCode-readiness
+restrictions. A completed pause remains held until its scoped, idempotent resume
+is used. This is the lifecycle prerequisite for later activation work; Release
+discovery and staging do not invoke it. A published Atlas process that starts
+during activation—or while authoritative updater status is temporarily
+unavailable—uses the same hold without a deadline and releases it only when the
+updater reports terminal host work.
 
 ### Webhook refresh
 
@@ -76,6 +100,82 @@ Funnel targets only `POST /webhooks/github` on the webhook port. Accepted delive
 ### Stack reservation
 
 Held for native-stack and standalone-parent admission (and for some default-branch publication cases). It is Atlas-side exclusivity, not a GitHub lock, and can outlast execution while publication is pending. Automatic release requires terminal OpenCode outcome plus qualifying publication. Explicit release is allowed only after confirmed terminal execution (`succeeded`, `failed`, or `interrupted`) and does not change GitHub.
+
+### Publish Release
+
+A maintainer pushes an exact `vMAJOR.MINOR.PATCH+build.BUILD` tag. The first
+Release is `v0.1.0+build.1`; build numbers increase globally and never reset.
+SemVer communicates intended Atlas behavior, while a behavior-preserving
+dependency update may increment only the build. Publishing serializes globally,
+rejects malformed/reused/older identities, builds the tagged frozen dependency
+tree, and creates immutable public metadata, checksum, and a ready-to-run Linux
+x64 archive. The archive starts with host-installed pinned Bun and reports the
+tag-derived identity plus storage health even when OpenCode is absent. An
+untagged checkout reports unpublished development identity.
+
+### Discover and stage Release
+
+Atlas checks all public GitHub Releases at startup, every four hours, and when a
+team member uses **Check now**. It validates each published metadata document,
+orders Releases by SemVer and then numeric build, and persists the complete
+known candidate set. A failed check retains that set and remains distinct from a
+successful check that found no newer Release.
+
+When a newer Release is available, Atlas requests staging over an authenticated
+Unix socket. The independently running updater durably records the request,
+progress, host-runtime requirements, and latest result; verifies the archive
+checksum and embedded metadata; and atomically creates a read-only Release tree.
+Repeated requests coalesce or reuse the completed tree. `/opt/atlas/current`
+and Session admission remain unchanged. The Updates page shows
+rollback-incompatible manual-maintenance instructions and unmet Bun, Git, or gh
+requirements, but neither Atlas process upgrades those host tools or manages
+OpenCode. Approval required is the persistent default. Automatic policy prefers
+only the highest newer numeric build of the exact installed SemVer, even when a
+newer SemVer is also known; patch, minor, and major changes remain staged for
+explicit approval. Staging alone never changes the active Release.
+
+### Activate and recover Release
+
+A user with existing Atlas web access may choose **Install** or configure the
+installation policy. Explicit approval remains required for every SemVer
+change. Automatic policy may select only a higher numeric build of the exact
+installed SemVer. Both paths require complete staging, met host runtimes, and
+metadata guaranteeing code-only rollback, then use the same durable activation
+and safe pause. Host runtimes are checked again immediately before that pause.
+Existing work reaches safe checkpoints for at most five minutes;
+Running, Waiting, and Idle Sessions do not block. Timeout abandons activation,
+leaves the current Release selected, and removes only the update-owned pause.
+
+After the checkpoint, the surviving updater stops only Atlas, atomically selects
+the complete candidate, restarts Atlas, and allows 60 seconds for the expected
+Release identity and healthy Atlas persistence. OpenCode and credential serving
+continue; OpenCode readiness, availability, and version are neither queried nor
+used by activation health. Atlas processes started during host work remain
+update-paused until the durable result is terminal.
+
+After candidate health succeeds, the updater installs the Release's shipped
+credential and updater support files as one immutable bundle and atomically
+selects it for future surviving-service starts. It does not restart either
+already-running service as part of activation.
+
+Candidate failure suppresses that exact tag from automatic activation and
+automatically selects, restarts, and verifies the previous working Release
+against unchanged shared data. Atlas reports **Recovered** only after previous
+identity/storage health succeeds; otherwise it reports **Recovery failed**.
+Explicit **Retry** permits the failed tag again, while a later eligible build is
+unaffected. Policy and suppression survive Atlas/updater restart and rollback,
+and each installation owns its own state and four-hour schedule.
+Manual-maintenance Releases cannot use this path.
+
+The updater removes only managed Release trees older than the selected Release
+and not protected as current, previous working, staged, in-flight, or referenced
+by an absolute Session helper path. Session state labels do not release helper
+references. Cleanup shares durable updater serialization, runs after successful
+activation/recovered rollback and on updater lifecycle reconciliation, and
+rechecks helper references before removal. A cleanup failure is a separate
+visible result: it neither changes a healthy selected Release nor starts another
+activation. A restart resumes only durable pending cleanup still allowed by the
+same current/previous/reference rules.
 
 ## Ubiquitous Language
 
@@ -127,6 +227,10 @@ _Avoid_: Stall, timeout, hang
 
 **Execution slot**: Global capacity for live preparation/execution. Distinct from stack reservation.
 
+**Release**: An immutable Atlas source/dependency/deployment tree published
+from an authoritative SemVer-plus-global-build tag and exact Git SHA.
+_Avoid_: moving build, source snapshot
+
 ## Domain Rules
 
 - One unfinished Session per Spec. The server enforces this.
@@ -135,6 +239,8 @@ _Avoid_: Stall, timeout, hang
 - Atlas never creates, changes, or submits GitHub Pull requests or stacks. Locally prepared branches are not native stack members.
 - Atlas never starts, upgrades, or replaces OpenCode. Server version is diagnostic rather than a discovery gate; Atlas uses the client installed in its release and retains conservative not-ready/stale behavior when that client cannot use the service.
 - Secrets and GitHub tokens never appear in HTML, URLs, arguments, prompts, or logs. Preparation never falls back to the browse installation token. If the App cannot grant requested writes, preparation stays queued instead of starting with a weaker token.
+- Stopping or restarting the Atlas UI does not stop credential serving, unlink its socket, remove its runtime directory, or discard registered Session scopes/helper references.
+- Surviving credential/updater code is selected as an immutable per-Release bundle only after candidate health succeeds; activation does not restart either running service.
 - GitHub values used for browsing stay server-side. Inventory is filtered to the configured organization.
 - If GitHub is missing or fails, keep the enrolled Repository and the last complete Specs/PR projection.
 - Idle is not completed. Active is not necessarily executing. Stale overlays semantic state; lost live connection does not mean the Session failed.
@@ -145,16 +251,44 @@ _Avoid_: Stall, timeout, hang
 - GET `/` landing follows rules 1–4 above. Cookies `atlas_visit` (`lastVisitAt`, `lastRepositoryId`) and `atlas_inbox` (Repository filter) are `Secure; HttpOnly; SameSite=Strict`.
 - **Settled** is inbox UI grouping for Specs whose latest Session is terminal, not a Session state. Idle is never Settled.
 - Inbox access and refresh warnings never replace the latest Session state; unknown access is not evidence of revocation, and an unavailable Specs refresh is not evidence of an empty inbox.
+- An update pause blocks new preparation and OpenCode create/associate/prompt effects, but does not wait for Running, Waiting, or Idle Agent execution. It times out after five minutes without interrupting uncertain work and removes only its own restriction.
+- Release tags are authoritative. Build numbers increase globally; published
+  identities and artifacts are never replaced, and a correction uses a new
+  build. Release ordering is SemVer first, then numeric build for equal SemVer.
+- Atlas startup and Release activation health require exact Atlas identity and
+  healthy persistence, never OpenCode readiness, availability, or version
+  inspection. OpenCode diagnostics remain independent.
+- Release discovery uses public GitHub Releases and validates their metadata.
+  Failed checks retain the last successful candidate set. Staging is durable,
+  read-only, and inactive; it neither pauses Session admission nor changes
+  `/opt/atlas/current`.
+- Release activation requires either explicit web approval or automatic policy
+  applied to a newer numeric build of the exact installed SemVer. Both require a
+  complete exact staged tree, met host runtimes, and declared code-only rollback
+  compatibility. Runtime requirements are revalidated immediately before the
+  pause. Activation durably serializes target/progress/result, checks
+  exact Atlas identity and healthy persistence within 60 seconds, and never
+  gates on or controls OpenCode. Failed tags require Retry; rollback success
+  requires verified previous health. Policy and scheduling are installation-local.
+- Release cleanup removes only managed trees older than current after protecting
+  current, previous-working, staged, in-flight, and every helper-referenced
+  Release. Cleanup outcomes and partial work are durable; failure does not alter
+  activation truth, Session data, credentials, service trees, or host tools.
 
 ## Boundaries and Non-Goals
 
 - Not a public app. Shared-token private access only.
 - Does not enroll every GitHub App-visible Repository automatically.
-- Does not provision the host, enable systemd units, move OpenCode data, or change Tailscale/firewall (`deploy/` is inert until an operator applies it).
+- Does not automatically provision the host, move OpenCode data, or change Tailscale/firewall. The operator-run bootstrap is limited to the independent credential/updater services and updated unit files.
 - Does not own OpenCode lifecycle, configuration, or transcripts.
+- Release discovery/staging alone does not invoke the safe update pause or
+  activate a Release. Automatic policy applies only to newer builds of the
+  installed SemVer; unattended SemVer changes remain out of scope.
 - Viewer does not reply to, cancel, or resume OpenCode permissions, forms, or inbox items.
 - Does not create GitHub labels.
 - Design guidelines do not introduce features or change business rules.
+- Published release targets other than Linux x64, host-side dependency install,
+  and automatic selection/upgrading of Bun, Git, gh, OS packages, or OpenCode.
 - Phase 1 has no off-site backup. Snapshots cannot undo GitHub effects. Shared host identity `omega` is not hostile-agent isolation.
 
-<!-- repo-map-synced: c1dfd7ef6762627878735cfea366563e20ca0fa2 -->
+<!-- repo-map-synced: 61e7f5bd42b416930da76c6fa343cfc89628bdca -->

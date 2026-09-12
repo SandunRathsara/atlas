@@ -1,0 +1,130 @@
+{
+  "title": "Updates discovery and staging smoke test",
+  "summary": "Verify issue #58 on a private Atlas installation without activating a release or restarting OpenCode.",
+  "intro": "Use a reviewed Atlas build that includes issue #58, an existing shared-access account, and a newer public Atlas GitHub Release. Run host commands on the Atlas host. Do not expose tokens or key contents.",
+  "conventions": "Replace ATLAS_PRIVATE_URL with the private Tailscale Serve URL. Record exact visible messages and command output when a check fails.",
+  "sections": [
+    {
+      "number": "1",
+      "title": "Confirm scope and starting state",
+      "kind": "info",
+      "items": [
+        {
+          "id": "scope",
+          "title": "This smoke test stages only",
+          "instruction": "The expected endpoint is a complete inactive release tree. Do not change /opt/atlas/current, restart Atlas manually, or use any unpublished activation procedure.",
+          "expectedResult": "The operator understands that Check now stages first; shipped Install, Retry, and automatic-policy controls may activate afterward, but this smoke test does not use them. No update action controls OpenCode."
+        }
+      ]
+    },
+    {
+      "number": "2",
+      "title": "Bootstrap the surviving services",
+      "kind": "checklist",
+      "items": [
+        {
+          "id": "record-processes",
+          "title": "Record the selected release and OpenCode process",
+          "instruction": "Run these read-only commands before bootstrap and keep their output for the final comparison.",
+          "codeBlocks": [
+            {
+              "language": "bash",
+              "content": "readlink -f /opt/atlas/current\nsystemctl show --property=MainPID --value opencode.service"
+            }
+          ],
+          "expectedResult": "The first command prints the currently selected immutable Atlas release directory; the second prints the current OpenCode process ID.",
+          "failureGuidance": "Stop if the selected release is missing or OpenCode is unexpectedly inactive; resolve the host baseline before testing bootstrap."
+        },
+        {
+          "id": "run-bootstrap",
+          "title": "Run the documented bootstrap command",
+          "instruction": "Run the bootstrap from the selected reviewed release.",
+          "codeBlocks": [
+            {
+              "language": "bash",
+              "content": "sudo /opt/atlas/current/deploy/bootstrap.sh"
+            }
+          ],
+          "warning": "This privileged command installs or updates systemd units, the atomically selected immutable updater/credential support bundle, and restricted keys. It may briefly restart Atlas only when credential runtime ownership must be transferred; it must not restart OpenCode.",
+          "expectedResult": "The command exits 0 and prints that the Atlas credential supplier and updater bootstrap completed and OpenCode was not restarted.",
+          "failureGuidance": "Do not proceed. Inspect systemctl status and the Atlas journal namespace without printing /etc/atlas key or credential contents. Correct the bootstrap failure, then rerun the command."
+        },
+        {
+          "id": "verify-services",
+          "title": "Verify independent service continuity",
+          "instruction": "Confirm both surviving services are active and compare the OpenCode process ID with the value recorded before bootstrap.",
+          "codeBlocks": [
+            {
+              "language": "bash",
+              "content": "systemctl is-active atlas-credentials.service atlas-updater.service\nsystemctl show --property=MainPID --value opencode.service"
+            }
+          ],
+          "expectedResult": "Both is-active lines are active, and the OpenCode process ID is unchanged.",
+          "failureGuidance": "Stop. A changed OpenCode process ID or inactive surviving service violates the lifecycle boundary; preserve journal evidence and do not test staging."
+        }
+      ]
+    },
+    {
+      "number": "3",
+      "title": "Verify the Updates page",
+      "kind": "checklist",
+      "items": [
+        {
+          "id": "open-page",
+          "title": "Open Updates with existing Atlas access",
+          "instruction": "In a desktop browser, sign in through the normal shared-access flow and open ATLAS_PRIVATE_URL/updates from the global Updates link.",
+          "expectedResult": "The responsive Atlas shell shows one Updates heading, installed and available release identities, Approval required, discovery time/result, staging status/result, host runtime requirements, and the statement that OpenCode is not checked for release eligibility.",
+          "failureGuidance": "Capture the full screen and exact visible text. If authentication or the whole app is unavailable, treat this as an environment failure rather than a staging result."
+        },
+        {
+          "id": "check-now",
+          "title": "Check and stage the public release",
+          "instruction": "Record the current selected release with the command below. In the browser, activate Check now once, then return to or remain on Updates while the status refreshes.",
+          "codeBlocks": [
+            {
+              "language": "bash",
+              "content": "readlink -f /opt/atlas/current"
+            }
+          ],
+          "expectedResult": "Checking is distinct from failure; an eligible release progresses through request/download/verification/extraction and finishes as Staged with a durable latest result. Repeated page refreshes do not start conflicting copies.",
+          "failureGuidance": "Keep the page open long enough to receive a terminal status. Record whether the failure is release discovery, updater availability, download, checksum, extraction, metadata identity, or a host runtime limitation; do not activate or delete any tree."
+        },
+        {
+          "id": "verify-inactive",
+          "title": "Confirm staging did not activate or pause work",
+          "instruction": "Run the selected-release command again and inspect one pre-existing Active Session through Atlas.",
+          "codeBlocks": [
+            {
+              "language": "bash",
+              "content": "readlink -f /opt/atlas/current"
+            }
+          ],
+          "expectedResult": "The selected release path exactly matches the value recorded before Check now. The existing Session retains its state/identity. Install or Retry may be visible for an eligible staged release and automatic policy may be configurable, but no activation is requested during this staging-only check.",
+          "failureGuidance": "Stop and preserve the selected path, Updates page, Session page, and Atlas journal evidence if selection or Session admission changed."
+        },
+        {
+          "id": "keyboard-mobile",
+          "title": "Check keyboard and phone layout",
+          "instruction": "Use only the keyboard to reach the global Updates link and Check now. Then inspect the same page at 320 CSS pixels wide and at a desktop width.",
+          "expectedResult": "Focus remains visible; links and Check now are reachable; identities and status wrap without page-level horizontal scrolling; Inbox, Updates, and sign-out controls remain accessible on the phone layout.",
+          "failureGuidance": "Capture phone and desktop screens plus the focused element and viewport width before reporting the layout failure."
+        }
+      ]
+    },
+    {
+      "number": "4",
+      "title": "Record conditional limitations",
+      "kind": "checklist",
+      "items": [
+        {
+          "id": "maintenance-runtime",
+          "title": "Verify candidate limitations when present",
+          "instruction": "If the published candidate declares code-only rollback incompatible or requires a host Bun, Git, or gh version not available on this host, inspect the corresponding Updates presentation.",
+          "optional": true,
+          "expectedResult": "Rollback incompatibility shows Manual maintenance required with the published instructions. Runtime mismatch names the required and reported versions and does not claim the updater will upgrade host tools.",
+          "failureGuidance": "Do not try to bypass the limitation. Record the candidate tag, displayed requirements, and exact instructions for the release maintainer."
+        }
+      ]
+    }
+  ]
+}

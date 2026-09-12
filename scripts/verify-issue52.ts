@@ -309,6 +309,8 @@ try {
       stop: () => undefined,
       enqueue: () => undefined,
       process: async () => undefined,
+      pauseForUpdate: async () => undefined,
+      resumeFromUpdate: () => undefined,
       getClient: async () => { throw new Error("not ready"); },
       isReady: () => false,
       readiness: () => ({ ready: false, state: "stale" as const, reason: "not ready", version: undefined }),
@@ -359,7 +361,7 @@ try {
   assert.equal((await runHealthCheck("ready-no-version")).exitCode, 0, "deployment health must not require a non-empty version");
   assert.equal((await runHealthCheck("process")).exitCode, 1);
   assert.equal((await runHealthCheck("persistence")).exitCode, 1);
-  assert.equal((await runHealthCheck("opencode")).exitCode, 3);
+  assert.equal((await runHealthCheck("opencode")).exitCode, 1, "the normal operator health diagnostic must retain OpenCode readiness");
   deployment.stop(true);
 } finally {
   await rm(root, { recursive: true, force: true });
