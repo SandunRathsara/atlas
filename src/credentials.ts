@@ -37,6 +37,7 @@ export type CredentialScope = {
   directory: string;
   repositoryId: string;
   fullName: string;
+  helperPaths?: string[];
 };
 
 type Registry = {
@@ -70,6 +71,8 @@ type CredentialBoundaryOptions = {
   /** Only test callers may explicitly provide a static, already scoped token. */
   staticToken?: string;
   allowStaticToken?: boolean;
+  /** False for Atlas clients that connect to the independently running supplier. */
+  serve?: boolean;
 };
 
 type CachedToken = {
@@ -80,7 +83,7 @@ type CachedToken = {
 
 const normalizedRepository = (value: string) => value.trim().toLocaleLowerCase("en-US");
 
-const assertRestrictedFile = (path: string, label: string) => {
+const assertRestrictedFile = (path: string, label: string, expectedOwnerUid?: number, exactMode?: number) => {
   let stat;
   try {
     stat = lstatSync(path);
@@ -88,8 +91,9 @@ const assertRestrictedFile = (path: string, label: string) => {
     throw new CredentialError(`${label} is unavailable`);
   }
 
-  const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
-  if (!stat.isFile() || (stat.mode & 0o077) !== 0 || (uid !== undefined && stat.uid !== uid)) {
+  const uid = expectedOwnerUid ?? (typeof process.getuid === "function" ? process.getuid() : undefined);
+  if (!stat.isFile() || (exactMode === undefined ? (stat.mode & 0o077) !== 0 : (stat.mode & 0o777) !== exactMode) ||
+      (uid !== undefined && stat.uid !== uid)) {
     throw new CredentialError(`${label} must be a private regular file`);
   }
   return stat;
@@ -170,9 +174,9 @@ const isWithin = (root: string, candidate: string) => {
   return remainder === "" || (remainder !== ".." && !remainder.startsWith(`..${"/"}`) && !isAbsolute(remainder));
 };
 
-const readRegistry = (path: string): Registry => {
+const readRegistry = (path: string, expectedOwnerUid?: number, exactMode?: number): Registry => {
   if (!existsSync(path)) return { version: 1, scopes: [] };
-  assertRestrictedFile(path, "Session scope registry");
+  assertRestrictedFile(path, "Session scope registry", expectedOwnerUid, exactMode);
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<Registry>;
     if (parsed.version !== 1 || !Array.isArray(parsed.scopes)) throw new Error();
@@ -180,12 +184,22 @@ const readRegistry = (path: string): Registry => {
       scope && typeof scope === "object" &&
       typeof scope.atlasId === "string" &&
       typeof scope.directory === "string" && isAbsolute(scope.directory) &&
-      typeof scope.repositoryId === "string" && typeof scope.fullName === "string",
+      typeof scope.repositoryId === "string" && typeof scope.fullName === "string" &&
+      (scope.helperPaths === undefined || (Array.isArray(scope.helperPaths) &&
+        scope.helperPaths.every((path) => typeof path === "string" && isAbsolute(path)))),
     )) throw new Error();
     return { version: 1, scopes: parsed.scopes as CredentialScope[] };
   } catch {
     throw new CredentialError("Session scope registry is invalid");
   }
+};
+
+export const readSessionHelperReferences = (options: { registryPath: string; expectedOwnerUid: number }) => {
+  if (!isAbsolute(options.registryPath) || resolve(options.registryPath) !== options.registryPath ||
+      !Number.isSafeInteger(options.expectedOwnerUid) || options.expectedOwnerUid < 0 || !existsSync(options.registryPath)) {
+    throw new CredentialError("Session scope registry read contract is invalid");
+  }
+  return [...new Set(readRegistry(options.registryPath, options.expectedOwnerUid, 0o600).scopes.flatMap((scope) => scope.helperPaths ?? []))];
 };
 
 const writeRegistry = (path: string, registry: Registry) => {
@@ -315,6 +329,7 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
     ? new Set(options.authorizedRepositories.map(normalizedRepository))
     : undefined;
   const fetcher = options.fetcher ?? fetch;
+  const serves = options.serve !== false;
   const tokenCache = new Map<string, CachedToken>();
   let installationTokenCache: CachedToken | undefined;
   let server: Server | undefined;
@@ -472,6 +487,7 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
   };
 
   const start = async () => {
+    if (!serves) return;
     if (startPromise) return startPromise;
     startPromise = (async () => {
       if (existsSync(socketPath)) {
@@ -529,7 +545,6 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
         server.listen(socketPath, () => {
           try {
             chmodSync(socketPath, 0o600);
-            server?.unref();
             resolveStart();
           } catch (error) {
             rejectStart(error);
@@ -545,17 +560,22 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
 
   const registerScope = (scope: CredentialScope) => {
     if (!isAbsolute(scope.directory)) throw new CredentialError("Session directory must be absolute");
+    if (scope.helperPaths?.some((path) => !isAbsolute(path))) {
+      throw new CredentialError("Credential helper paths must be absolute");
+    }
     if (allowed && !allowed.has(normalizedRepository(scope.fullName))) {
       throw new CredentialError("Repository is outside the authorized preparation scope");
     }
     const directory = canonicalPath(scope.directory);
+    const helperPaths = scope.helperPaths?.map(canonicalPath);
     const registry = readRegistry(registryPath);
     const next = registry.scopes.filter((entry) => entry.atlasId !== scope.atlasId);
-    next.push({ ...scope, directory });
+    next.push({ ...scope, directory, ...(helperPaths ? { helperPaths } : {}) });
     writeRegistry(registryPath, { version: 1, scopes: next });
   };
 
   const close = () => {
+    if (!serves) return;
     const current = server;
     server = undefined;
     startPromise = undefined;
@@ -576,6 +596,7 @@ export const createCredentialBoundary = (options: CredentialBoundaryOptions = {}
     close,
     registerScope,
     resolveScope,
+    listHelperReferences: () => [...new Set(readRegistry(registryPath).scopes.flatMap((scope) => scope.helperPaths ?? []))],
     requestToken: (request: Omit<SupplierRequest, "key">) => requestCredential(request, { socketPath, keyPath }),
     assertReady: async (scope: CredentialScope) => {
       await start();

@@ -6,6 +6,11 @@ import { createPersistence } from "./persistence.ts";
 import { createRefreshCoordinator } from "./sync.ts";
 import { createWebhookApp } from "./webhook.ts";
 import { homedir } from "node:os";
+import { join } from "node:path";
+import { loadReleaseIdentity } from "./release.ts";
+import { createUpdateService } from "./update-discovery.ts";
+import { activationInProgress, createUpdaterClient } from "./updater.ts";
+import { restoreUpdatePauseUntilUpdaterSettles } from "./update-pause.ts";
 
 const githubEnvPath = Bun.env.ATLAS_GITHUB_ENV_PATH ?? `${homedir()}/.config/atlas/github.env`;
 loadGithubEnv(githubEnvPath);
@@ -33,8 +38,8 @@ const credentials = createCredentialBoundary({
   socketPath: Bun.env.ATLAS_SUPPLIER_SOCKET,
   keyPath: Bun.env.ATLAS_SUPPLIER_KEY_PATH,
   apiUrl: Bun.env.ATLAS_GITHUB_API_URL,
+  serve: false,
 });
-await credentials.start();
 const fallbackGitHubToken = Bun.env.ATLAS_GITHUB_INSTALLATION_TOKEN;
 const githubToken = async () => {
   try {
@@ -58,6 +63,19 @@ const refreshCoordinator = createRefreshCoordinator({
   organization,
   installationId,
 });
+const releaseRoot = Bun.env.ATLAS_RELEASE_ROOT ?? join(import.meta.dir, "..");
+const releaseIdentity = loadReleaseIdentity(releaseRoot);
+const updater = createUpdaterClient({
+  socketPath: Bun.env.ATLAS_UPDATER_SOCKET,
+  keyPath: Bun.env.ATLAS_UPDATER_KEY_PATH,
+});
+const startupUpdaterStatus = await updater.status().catch(() => null);
+const restoreUpdatePause = releaseIdentity.published && (!startupUpdaterStatus || activationInProgress(startupUpdaterStatus));
+const updates = createUpdateService({
+  persistence,
+  installed: releaseIdentity,
+  updater,
+});
 
 const app = createApp({
   allowedOrigin: Bun.env.ATLAS_ORIGIN,
@@ -78,6 +96,9 @@ const app = createApp({
   getSharedToken: () => Bun.env.ATLAS_SHARED_TOKEN,
   persistence,
   refreshCoordinator,
+  releaseIdentity,
+  startPausedForUpdate: restoreUpdatePause,
+  updates,
   sharedToken,
 });
 
@@ -90,6 +111,10 @@ const webhookApp = createWebhookApp({
 });
 
 refreshCoordinator.start();
+updates.start(app.updatePause.pause);
+if (restoreUpdatePause) {
+  void restoreUpdatePauseUntilUpdaterSettles(app.updatePause, updater.status);
+}
 
 const uiServer = Bun.serve({
   fetch: app.fetch,
@@ -114,7 +139,7 @@ const shutdown = async (signal: NodeJS.Signals) => {
   stopping = true;
   console.log(`Atlas stopping (${signal})`);
   refreshCoordinator.stop();
-  credentials.close();
+  updates.stop();
   try {
     await Promise.all([uiServer.stop(true), webhookServer.stop(true)]);
   } catch {

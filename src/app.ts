@@ -24,8 +24,9 @@ import {
 } from "./persistence.ts";
 import { createPreparationService } from "./preparation.ts";
 import type { CredentialBoundary } from "./credentials.ts";
-import { APPROVED_OPENCODE_VERSION, createOpenCodeHandoffService } from "./opencode.ts";
+import { createOpenCodeHandoffService } from "./opencode.ts";
 import type { OpenCodeHandoffService } from "./opencode.ts";
+import { createUpdatePauseCoordinator } from "./update-pause.ts";
 import {
   createSessionViewerService,
   ViewerScopeError,
@@ -56,12 +57,16 @@ import {
   renderSpecDetailPage,
   renderSpecUnavailablePage,
   renderSpecsPage,
+  renderUpdatesPage,
+  renderUpdatesStatus,
   startTargetOptions,
   targetObservation,
   type PendingStartSession,
 } from "./views.ts";
 import { renderInboxList, renderInboxPage } from "./views/inbox.ts";
 import { renderShell } from "./views/shell.ts";
+import { DEVELOPMENT_RELEASE_IDENTITY, parseReleaseTag, type ReleaseIdentity } from "./release.ts";
+import { createUnavailableUpdateService, type UpdateService } from "./update-discovery.ts";
 
 const MAX_FORM_BYTES = 512 * 1024;
 const MAX_TOKEN_LENGTH = 8 * 1024;
@@ -111,6 +116,9 @@ export type AppOptions = {
   persistence?: Persistence;
   refreshCoordinator?: RefreshCoordinator;
   openCode?: OpenCodeHandoffService;
+  releaseIdentity?: ReleaseIdentity;
+  updates?: UpdateService;
+  startPausedForUpdate?: boolean;
   sharedToken?: string;
 };
 
@@ -485,6 +493,8 @@ export const createApp = (options: AppOptions) => {
     },
   });
   openCode = openCodeService;
+  const updatePause = createUpdatePauseCoordinator({ preparation, openCode: openCodeService });
+  if (options.startPausedForUpdate) void updatePause.hold();
   const sessionViewer = createSessionViewerService(openCodeService);
   openCodeService.onTransport((state) => {
     if (state === "connected") preparation.enqueue();
@@ -493,12 +503,14 @@ export const createApp = (options: AppOptions) => {
   preparation.start();
 
   const persistenceReady = () => persistence.checkHealth();
+  const releaseIdentity = options.releaseIdentity ?? DEVELOPMENT_RELEASE_IDENTITY;
+  const updates = options.updates ?? createUnavailableUpdateService(persistence, releaseIdentity);
   const currentOpenCodeReadiness = () => {
     const readiness = openCodeService.readiness?.();
-    if (readiness) return { ready: readiness.ready, reason: readiness.reason };
+    if (readiness) return { ready: readiness.ready, reason: readiness.reason, version: readiness.version };
     return {
       ready: openCodeService.transportState() === "connected",
-      reason: "The approved OpenCode service is unavailable or incompatible.",
+      reason: "The OpenCode service is unavailable or incompatible.",
     };
   };
 
@@ -517,17 +529,14 @@ export const createApp = (options: AppOptions) => {
   app.get("/health", (c) => {
     const databaseHealthy = persistence.checkHealth();
     const persistenceHealth = persistence.getHealth();
-    const openCodeReadiness = currentOpenCodeReadiness();
+    const activationHealth = c.req.query("activation") === "1";
     const status: 200 | 503 = databaseHealthy && persistenceHealth.healthy ? 200 : 503;
     setPrivateHtmlHeaders(c);
     return c.json({
       status: status === 200 ? "ok" : "degraded",
-      atlas: { process: true },
+      atlas: { process: true, release: releaseIdentity },
       persistence: persistenceHealth,
-      openCode: {
-        ...openCodeReadiness,
-        expectedVersion: APPROVED_OPENCODE_VERSION,
-      },
+      ...(!activationHealth ? { openCode: currentOpenCodeReadiness() } : {}),
     }, status);
   });
 
@@ -819,6 +828,8 @@ export const createApp = (options: AppOptions) => {
   app.use("/sessions", auth.middleware);
   app.use("/sessions/*", auth.middleware);
   app.use("/events", auth.middleware);
+  app.use("/updates", auth.middleware);
+  app.use("/updates/*", auth.middleware);
 
   app.get("/events", (c) => {
     const sessionId = c.req.query("session");
@@ -913,6 +924,113 @@ export const createApp = (options: AppOptions) => {
       unsubscribeEvent();
       unsubscribeTransport();
     });
+  });
+
+  const updatesPage = async (c: Context, fragment = false) => {
+    const identity = c.get("auth");
+    const status = await updates.status();
+    const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
+    setPrivateHtmlHeaders(c);
+    if (fragment && isHtmx(c)) return c.html(renderUpdatesStatus(status, csrfToken));
+    return c.html(renderShell({
+      title: "Updates",
+      csrfToken,
+      inbox: inboxFromRequest(c),
+      content: renderUpdatesPage(status, csrfToken),
+    }));
+  };
+
+  const updateFailure = async (
+    c: Context,
+    message: string,
+    statusCode: 400 | 403 | 409 | 413 | 422,
+    policy?: "approval_required" | "automatic",
+  ) => {
+    const identity = c.get("auth");
+    const status = await updates.status();
+    const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
+    const content = renderUpdatesPage(status, csrfToken, { message, policy });
+    setPrivateHtmlHeaders(c);
+    if (isHtmx(c)) return c.html(content, statusCode);
+    return c.html(renderShell({
+      title: "Updates",
+      csrfToken,
+      inbox: inboxFromRequest(c),
+      content,
+    }), statusCode);
+  };
+
+  app.get("/updates", (c) => updatesPage(c));
+  app.get("/updates/status", (c) => updatesPage(c, true));
+  app.post("/updates/check", async (c) => {
+    setPrivateHtmlHeaders(c);
+    let form: Record<string, unknown>;
+    try {
+      form = await parseForm(c.req.raw);
+    } catch (error) {
+      return updateFailure(c, error instanceof FormBodyTooLarge ? "The request body was too large." : "The update request was malformed.", error instanceof FormBodyTooLarge ? 413 : 400);
+    }
+    const identity = c.get("auth");
+    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return updateFailure(c, "Refresh this page before trying the check again.", 403);
+    void updates.check(updatePause.pause).catch(() => undefined);
+    if (isHtmx(c)) {
+      c.header("HX-Redirect", "/updates");
+      return c.body(null, 200);
+    }
+    return c.redirect("/updates", 303);
+  });
+  app.post("/updates/install", async (c) => {
+    setPrivateHtmlHeaders(c);
+    let form: Record<string, unknown>;
+    try {
+      form = await parseForm(c.req.raw);
+    } catch (error) {
+      return updateFailure(c, error instanceof FormBodyTooLarge ? "The request body was too large." : "The activation request was malformed.", error instanceof FormBodyTooLarge ? 413 : 400);
+    }
+    const identity = c.get("auth");
+    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return updateFailure(c, "Refresh this page before trying the activation again.", 403);
+    const tagValue = stringField(form.tag);
+    const retry = stringField(form.retry) === "1";
+    let tag;
+    try {
+      tag = parseReleaseTag(tagValue ?? "").tag;
+    } catch {
+      return updateFailure(c, "Choose the available Release again before activating it.", 422);
+    }
+    try {
+      await updates.install(tag, retry, updatePause.pause);
+    } catch (error) {
+      return updateFailure(c, error instanceof Error ? error.message : "The activation request was rejected.", 409);
+    }
+    if (isHtmx(c)) {
+      c.header("HX-Redirect", "/updates");
+      return c.body(null, 200);
+    }
+    return c.redirect("/updates", 303);
+  });
+  app.post("/updates/policy", async (c) => {
+    setPrivateHtmlHeaders(c);
+    let form: Record<string, unknown>;
+    try {
+      form = await parseForm(c.req.raw);
+    } catch (error) {
+      return updateFailure(c, error instanceof FormBodyTooLarge ? "The request body was too large." : "The policy request was malformed.", error instanceof FormBodyTooLarge ? 413 : 400);
+    }
+    const identity = c.get("auth");
+    if (!auth.validateBrowserMutation(c, identity, stringField(form.csrf))) return updateFailure(c, "Refresh this page before saving the policy again.", 403);
+    const policy = stringField(form.policy);
+    if (policy !== "approval_required" && policy !== "automatic") return updateFailure(c, "Choose one of the available update policies.", 422);
+    try {
+      await updates.setPolicy(policy, updatePause.pause);
+    } catch (error) {
+      return updateFailure(c, error instanceof Error ? error.message : "The update policy could not be saved.", 409, policy);
+    }
+    void updates.check(updatePause.pause).catch(() => undefined);
+    if (isHtmx(c)) {
+      c.header("HX-Redirect", "/updates");
+      return c.body(null, 200);
+    }
+    return c.redirect("/updates", 303);
   });
 
   app.get("/repositories", (c) => {
@@ -1850,7 +1968,7 @@ export const createApp = (options: AppOptions) => {
     return c.redirect("/login", 303);
   });
 
-  return app;
+  return Object.assign(app, { updatePause });
 };
 
 export type AtlasApp = ReturnType<typeof createApp>;

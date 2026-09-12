@@ -6,7 +6,7 @@ title Atlas — C4 Component
 Person(team, "Team member", "Shared-token operator of Repositories, Specs, and Sessions")
 Person(operator, "Operator", "Host, pins, secrets, admission")
 
-System_Boundary(atlas, "Atlas process") {
+System_Boundary(atlas, "Atlas UI process") {
   Component(server, "Process host", "src/server.ts", "Wires env, two loopback listeners, shutdown")
   Component(ui, "UI app", "src/app.ts#createApp", "Private HTML/HTMX/JSON routes")
   Component(webhook, "Webhook app", "src/webhook.ts#createWebhookApp", "POST /webhooks/github only")
@@ -15,27 +15,43 @@ System_Boundary(atlas, "Atlas process") {
   Component(persistence, "Persistence", "src/persistence.ts#createPersistence", "SQLite projections and Session records")
   Component(githubClient, "GitHub client", "src/github.ts#createGitHubClient", "Read-only inventory, issues, PRs, stacks")
   Component(sync, "Refresh coordinator", "src/sync.ts#createRefreshCoordinator", "Background GitHub projection refresh")
-  Component(credentials, "Credential boundary", "src/credentials.ts#createCredentialBoundary", "Unix-socket App token supplier")
   Component(preparation, "Preparation", "src/preparation.ts#createPreparationService", "Clone Session directory, execution slot")
   Component(handoff, "OpenCode handoff", "src/opencode.ts#createOpenCodeHandoffService", "Create, associate, one prompt, reconcile")
+  Component(activityGate, "Activity gate", "src/activity-gate.ts#createActivityGate", "Shared balanced activity and pause accounting")
+  Component(updatePause, "Safe update pause", "src/update-pause.ts#createUpdatePauseCoordinator", "Drain preparation/handoff without waiting for Agent execution")
   Component(viewer, "Session viewer", "src/session-viewer.ts#createSessionViewerService", "Hydrate OpenCode tree for display")
+  Component(releaseIdentity, "Release identity", "src/release.ts", "Validate tag-derived metadata for health")
+  Component(updateDiscovery, "Release updates", "src/update-discovery.ts#createUpdateService", "Public checks, policy selection, staging, safe-pause orchestration")
 }
 
-System_Ext(github, "GitHub", "App, issues labelled spec, PRs, native stacks, webhooks")
-System_Ext(opencode, "OpenCode V2", "Pinned 0.0.0-beta-19135; independent process")
+System_Boundary(credentialService, "Atlas credential service") {
+  Component(credentials, "Credential boundary", "src/credential-server.ts → src/credentials.ts", "Independent Unix-socket App token supplier")
+}
+
+System_Boundary(updaterService, "Atlas updater service") {
+  Component(updater, "Host updater", "src/updater-server.ts → src/updater.ts", "Independent authenticated policy, staging, activation, rollback, support selection, helper-aware retention")
+}
+
+System_Ext(github, "GitHub", "App, issues labelled spec, PRs, native stacks, webhooks, public Releases")
+System_Ext(opencode, "OpenCode V2", "Independent process; server version is not a discovery gate")
 SystemDb_Ext(sqlite, "SQLite", "WAL file; Atlas-owned projections")
 Container_Ext(sessionDirs, "Session directories", "ATLAS_SESSION_ROOT clones")
+Container_Ext(releaseDirs, "Release trees and selection", "/opt/atlas/releases/atlas-<tag> and /opt/atlas/current")
+Container_Ext(supportBundles, "Surviving service bundles", "/opt/atlas/services/releases/<bundle> and /opt/atlas/services/current")
+Container_Ext(updateState, "Updater state", "/var/lib/atlas/update-state.json")
 
 Rel(team, ui, "HTTPS via Tailscale Serve")
 Rel(github, webhook, "Signed webhook to Funnel/webhook port")
 Rel(operator, credentials, "github.env, supplier key, registry")
+Rel(operator, updater, "bootstrap, updater key, host runtimes")
 
-Rel(server, credentials, "start supplier")
 Rel(server, persistence, "open database")
 Rel(server, githubClient, "construct")
 Rel(server, sync, "construct")
 Rel(server, webhook, "serve :ATLAS_WEBHOOK_PORT")
 Rel(server, ui, "serve :ATLAS_PORT")
+Rel(server, releaseIdentity, "load generated metadata")
+Rel(server, updateDiscovery, "start / stop")
 
 Rel(ui, auth, "authenticate mutations")
 Rel(ui, views, "render")
@@ -43,22 +59,39 @@ Rel(ui, persistence, "read/write records")
 Rel(ui, sync, "request refresh")
 Rel(ui, preparation, "enqueue Session")
 Rel(ui, handoff, "start / events")
+Rel(ui, updatePause, "expose activation prerequisite")
 Rel(ui, viewer, "hydrate")
+Rel(ui, releaseIdentity, "report identity in health")
+Rel(ui, updateDiscovery, "check / status / policy / Install / Retry")
 Rel(webhook, persistence, "accept delivery")
 Rel(webhook, sync, "wake")
 
 Rel(sync, githubClient, "GET projections")
 Rel(sync, persistence, "write projections")
+Rel(updateDiscovery, github, "list public Releases and metadata")
+Rel(updateDiscovery, persistence, "write/read known candidates")
+Rel(updateDiscovery, updater, "policy/stage/status/activation over authenticated Unix socket")
 Rel(preparation, persistence, "claim / checkpoints")
-Rel(preparation, credentials, "register scope, mint token")
+Rel(preparation, credentials, "register scope, request token")
 Rel(preparation, githubClient, "refresh before clone")
 Rel(preparation, sessionDirs, "git clone")
+Rel(preparation, activityGate, "account and drain clone preparation")
 Rel(handoff, persistence, "handoff checkpoints")
 Rel(handoff, opencode, "discover, create, prompt, events")
+Rel(handoff, activityGate, "account and drain create/associate/prompt")
+Rel(updatePause, preparation, "pause / resume")
+Rel(updatePause, handoff, "pause / resume")
 Rel(viewer, opencode, "session.get / events")
 Rel(credentials, github, "mint installation tokens")
+Rel(credentials, supportBundles, "run selected credential source")
+Rel(updater, credentials, "read canonical helper references from shared registry contract")
 Rel(githubClient, github, "read API")
 Rel(persistence, sqlite, "WAL")
+Rel(updater, github, "download public archive/checksum")
+Rel(updater, releaseDirs, "atomic staging/current selection; remove only unprotected older trees")
+Rel(updater, supportBundles, "run selected updater source; install and atomically select candidate bundle after health")
+Rel(updater, updateState, "atomic policy/staging/activation/recovery/cleanup writes")
+Rel(updater, server, "stop/restart Atlas only; validate authenticated Atlas-only health")
 
-' repo-map-synced: 1546f2d1ed3c9c58dca279e24a0b66d1de784525
+' repo-map-synced: 61e7f5bd42b416930da76c6fa343cfc89628bdca
 @enduml

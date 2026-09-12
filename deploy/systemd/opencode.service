@@ -1,7 +1,7 @@
 [Unit]
 Description=OpenCode V2 private service
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target atlas-credentials.service
+After=network-online.target atlas-credentials.service
 RequiresMountsFor=/opt/atlas/current /opt/atlas/tools /var/lib/atlas /etc/atlas /home/omega
 StartLimitIntervalSec=5min
 StartLimitBurst=5
@@ -35,7 +35,7 @@ ExecStartPre=/opt/atlas/current/deploy/check-opencode.sh
 ExecStartPre=/usr/bin/test -x /opt/atlas/tools/git/2.55.0/bin/git
 ExecStartPre=/opt/atlas/current/deploy/bin/git --version
 ExecStartPre=/usr/bin/test -d /var/lib/atlas/opencode-runtime
-ExecStart=/opt/atlas/tools/opencode/0.0.0-beta-19135/bin/opencode2 --log-level WARN serve --service --hostname 127.0.0.1
+ExecStart=/opt/atlas/tools/opencode/current/bin/opencode2 --log-level WARN serve --service --hostname 127.0.0.1
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30s

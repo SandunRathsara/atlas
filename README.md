@@ -1,6 +1,6 @@
 # Atlas
 
-This repository contains the runnable Atlas slice: private sign-in, durable Repository/Spec/Session records, read-only Pull request/native-stack browsing, authenticated preparation, and a guarded OpenCode handoff.
+This repository contains the runnable Atlas slice: private sign-in, durable Repository/Spec/Session records, read-only Pull request/native-stack browsing, authenticated preparation, a guarded OpenCode handoff, and approval-driven Atlas release activation with automatic code rollback.
 
 ## Run locally
 
@@ -15,7 +15,7 @@ export ATLAS_GITHUB_INSTALLATION_ID="123456"
 export ATLAS_GITHUB_INSTALLATION_TOKEN="an-installation-token"
 export ATLAS_GITHUB_WEBHOOK_SECRET="a-webhook-secret"
 bun install --frozen-lockfile
-bun run dev
+just dev
 ```
 
 Open `http://localhost:3000`. The server refuses to start without `ATLAS_SHARED_TOKEN` and `ATLAS_GITHUB_WEBHOOK_SECRET`.
@@ -26,21 +26,28 @@ The UI listens only on `ATLAS_PORT` (default `3000`). The signed webhook endpoin
 
 GitHub settings may be kept in the private `~/.config/atlas/github.env` file instead of the shell environment. Atlas accepts only the GitHub settings used by this server and requires the file to be a regular owner-only (`0600`) file. Explicit environment variables win; secrets are never logged or rendered.
 
-The GitHub values are server-side only. Atlas reads the configured installation's Repository inventory, filters it to the configured organization, and never puts the installation token in HTML, URLs, or logs. If GitHub is not configured or cannot be reached, the Repository remains enrolled and its last complete Specs projection is retained. Preparation mints a short-lived installation token scoped to exactly the registered Session→Repository mapping, requesting Contents and Pull requests `write` plus the required read permissions through a private local supplier; it never puts credentials in HTML, URLs, arguments, prompts, or logs. Production preparation authorizes the enrolled Repository through that durable mapping and the configured GitHub App installation; test-only allowlists are optional. If the installed App does not grant the requested writes, preparation stays queued instead of starting with a weaker token.
+The GitHub values are server-side only. Atlas reads the configured installation's Repository inventory, filters it to the configured organization, and never puts the installation token in HTML, URLs, or logs. If GitHub is not configured or cannot be reached, the Repository remains enrolled and its last complete Specs projection is retained. Preparation requests a short-lived installation token from the independently running credential supplier, scoped to exactly the registered Session→Repository mapping with Contents and Pull requests `write` plus the required read permissions; it never puts credentials in HTML, URLs, arguments, prompts, or logs. Production preparation authorizes the enrolled Repository through that durable mapping and the configured GitHub App installation; test-only allowlists are optional. If the supplier is unavailable or the installed App does not grant the requested writes, preparation stays queued instead of starting with a weaker token.
 
-The credential file is a non-shell `KEY=value` file with mode `0600`; it contains the App ID, installation ID, private-key path, and (for browse compatibility) an optional installation token. Keep the App key and file outside source clones. `ATLAS_SESSION_ROOT`, `ATLAS_GLOBAL_CAPACITY`, `ATLAS_MIN_FREE_BYTES`, and the `ATLAS_CREDENTIAL_*`/`ATLAS_SUPPLIER_*` paths may be set for deployment tests; the default preparation capacity is one and the default free-space floor is 10 GiB. Preparation pauses before admission when Session storage is unavailable or below the configured free-space floor. OpenCode is discovered through its private service registration and must report the exact pinned `0.0.0-beta-19135` baseline; Atlas never starts, upgrades, or replaces it.
+The credential file is a non-shell `KEY=value` file with mode `0600`; it contains the App ID, installation ID, private-key path, and (for browse compatibility) an optional installation token. Keep the App key and file outside source clones. `ATLAS_SESSION_ROOT`, `ATLAS_GLOBAL_CAPACITY`, `ATLAS_MIN_FREE_BYTES`, and the `ATLAS_CREDENTIAL_*`/`ATLAS_SUPPLIER_*` paths may be set for deployment tests; the default preparation capacity is one and the default free-space floor is 10 GiB. Preparation pauses before admission when Session storage is unavailable or below the configured free-space floor. Atlas discovers and health-checks the independently running OpenCode service without gating on its reported version, using the client installed in the Atlas release. Atlas never starts, upgrades, or replaces OpenCode.
 
-`ATLAS_DATABASE_PATH` optionally selects the SQLite file; it defaults to `./data/atlas.sqlite`. Migrations run before the server starts and configure foreign keys, WAL, and `synchronous=FULL`. Webhook delivery IDs are retained for 30 days; accepted deliveries only increment durable refresh generations, and authoritative GitHub reads run in the background.
+`just dev` starts the credential supplier as a sibling process so UI watch restarts do not interrupt it. When running `bun run dev` directly, run `bun run credentials` separately first. `ATLAS_DATABASE_PATH` optionally selects the SQLite file; it defaults to `./data/atlas.sqlite`. Migrations run before the server starts and configure foreign keys, WAL, and `synchronous=FULL`. Webhook delivery IDs are retained for 30 days; accepted deliveries only increment durable refresh generations, and authoritative GitHub reads run in the background.
 
-The CSS asset is generated by `bun run build:css`; pages are server-rendered with HTMX. Pull request pages read detailed PRs, native stack inventory/detail, read-only merge state, and exact head refs. Atlas never creates, changes, or submits GitHub Pull requests or stacks. Durable projections include `repositories`, `specs`, `pull_requests`, `pr_stacks`, `stack_members`, `refresh_state`, `webhook_deliveries`, `schema_migrations`, and queued Session requests. An admitted default-branch Session gets one full local clone and a unique tracked branch under `ATLAS_SESSION_ROOT` (default `/var/lib/atlas/sessions`); its OpenCode handoff consumes events, creates once, associates once, sends one exact initial message, and reconciles canonical HTTP state. Partial resources are retained on proven setup failure or uncertainty.
+The global `/updates` page checks public GitHub Releases at startup, every four hours, and through **Check now**. Production staging and activation are handled by the independently bootstrapped updater service through `ATLAS_UPDATER_SOCKET` and `ATLAS_UPDATER_KEY_PATH`; local development without that service reports updates as unavailable rather than changing an active release. **Install** records approval, waits for the existing safe preparation/handoff checkpoint, atomically selects the staged release, and verifies exact Atlas identity plus storage health. A failed candidate restores the previous release and requires explicit **Retry**. OpenCode and the credential supplier keep running and are excluded from the activation health gate.
+
+The CSS asset is generated by `bun run build:css`; pages are server-rendered with HTMX. `bun run dev` builds it for development, while `bun run start` expects a prebuilt asset as supplied by a published release. Pull request pages read detailed PRs, native stack inventory/detail, read-only merge state, and exact head refs. Atlas never creates, changes, or submits GitHub Pull requests or stacks. Durable projections include `repositories`, `specs`, `pull_requests`, `pr_stacks`, `stack_members`, `refresh_state`, `webhook_deliveries`, `schema_migrations`, and queued Session requests. An admitted default-branch Session gets one full local clone and a unique tracked branch under `ATLAS_SESSION_ROOT` (default `/var/lib/atlas/sessions`); its OpenCode handoff consumes events, creates once, associates once, sends one exact initial message, and reconciles canonical HTTP state. Partial resources are retained on proven setup failure or uncertainty.
 
 `bun run verify:issue25` runs the small read-only regression check for stale/archived/fork target classification and stable stack identities. OpenCode handoff records caller-generated IDs and exact context before remote requests, consumes events before creating the directory-bound Session, associates it before sending one prompt, and reconciles canonical HTTP state without storing a transcript copy.
 
 ## Deployment assets
 
-The inert pinned units, release staging helper, host-managed Git/gh wrappers, and
+The inert units, release/server staging helpers, host-managed Git/gh wrappers, and
 human-only cutover order are in [`deploy/README.md`](deploy/README.md). Run
-`bash deploy/verify-assets.sh` for static/unit verification; it does not enable
-services, change routing, or move data. The one narrow real-Git clone-scope
-regression is `scripts/verify-clone-scope.ts`; the remaining deployment checks
-are manual by design.
+`bash deploy/verify-assets.sh` for static/unit verification and
+`bash deploy/verify-opencode-commands.sh` for isolated OpenCode staging,
+selection, and WAL-command regressions; neither enables services, changes
+routing, or moves data. The one narrow real-Git clone-scope regression is
+`scripts/verify-clone-scope.ts`; host cutover, credential checks, and real
+stopped-writer WAL verification remain manual.
+
+Tag-driven release identity, publishing, artifact contents, host requirements,
+and rollback metadata are documented in [`docs/RELEASES.md`](docs/RELEASES.md).

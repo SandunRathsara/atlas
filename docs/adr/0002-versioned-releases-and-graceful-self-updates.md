@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted on 2026-09-11 after the developer explicitly expanded [#49](https://github.com/SandunRathsara/atlas/issues/49), answered the grilling rounds, and confirmed the final agreement. Implementation is pending; this is a decision record.
+Accepted on 2026-09-11 after the developer explicitly expanded [#49](https://github.com/SandunRathsara/atlas/issues/49), answered the grilling rounds, and confirmed the final agreement.
 
 ## Context
 
@@ -16,7 +16,7 @@ OpenCode execution is independently owned. Atlas updating must neither wait for 
 
 This decision covers release identity, tag-triggered publishing, release archives, update discovery and web controls, installation-local activation and recovery, credential/helper continuity, release retention, and one-time bootstrap of supporting services.
 
-The developer explicitly replaced #49's original narrow fence, which excluded CI, update UI, and self-update. This remains a decision-only ticket. Additional authentication/authorization, a compatibility matrix, OpenCode lifecycle management, host-tool/OS upgrades, coordinated fleet updates, and additional deployment platforms are outside this feature. Existing web access is sufficient to approve an update; no new operator role is introduced.
+The developer explicitly replaced #49's original narrow fence, which excluded CI, update UI, and self-update. Additional authentication/authorization, a compatibility matrix, OpenCode lifecycle management, host-tool/OS upgrades, coordinated fleet updates, and additional deployment platforms are outside this feature. Existing web access is sufficient to approve an update; no new operator role is introduced.
 
 ## Decision
 
@@ -86,7 +86,6 @@ The developer explicitly replaced #49's original narrow fence, which excluded CI
 
 - This is broader than the original client-bump decision. Implementation must supply publishing, metadata and ordering, discovery/policy UI, durable host update/recovery orchestration, safe preparation/handoff checkpoints, independent credential serving, helper continuity/retention, and bootstrap/runbook changes.
 - Existing deployment assumptions about draining all Active Sessions and using OpenCode readiness to approve activation cannot be copied into the self-updater. Runtime/API observation failures remain separate from Atlas installation health; a successful update is not a claim that the OpenCode client works with every server.
-- Keep shipped-baseline DOMAIN/ARCHITECTURE documentation distinct from this accepted, implementation-pending decision; refresh those baselines through their required repository-map workflow when implementation lands.
 - Follow-up verification should cover tag/build ordering and frozen release contents, same-SemVer automatic eligibility, manual approval, safe-checkpoint timeout, failed startup and code rollback, failed-build retry suppression, retained helper references and credential continuity, and reconnection without creating or prompting duplicate Sessions. Include Atlas activation with OpenCode absent or not ready. Human-run UI verification covers discovery, approval, progress, and post-update Session observations.
 
 ## Supersession

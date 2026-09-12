@@ -63,8 +63,8 @@ private_directory "$release_dir"
   exit 1
 }
 
-config_files=(atlas.env github.env github-app.pem supplier.key)
-unit_files=(atlas.service opencode.service atlas-snapshot.service atlas-snapshot.timer atlas-space-check.service atlas-space-check.timer)
+config_files=(atlas.env github.env github-app.pem supplier.key updater.key)
+unit_files=(atlas.service atlas-credentials.service atlas-updater.service opencode.service atlas-snapshot.service atlas-snapshot.timer atlas-space-check.service atlas-space-check.timer)
 for name in "${config_files[@]}"; do regular_file "$config_root/$name"; done
 for name in "${unit_files[@]}"; do regular_file "$unit_root/$name"; done
 regular_file "$route_record"
@@ -77,7 +77,7 @@ regular_file "$release_dir/deploy/pins.env"
 # shellcheck disable=SC1090
 . "$release_dir/deploy/pins.env"
 : "${ATLAS_BUN_BINARY:?Bun pin is missing}"
-: "${ATLAS_OPENCODE_BINARY:?OpenCode pin is missing}"
+: "${ATLAS_OPENCODE_BINARY:?OpenCode executable selection is missing}"
 : "${ATLAS_GIT_BINARY:?Git pin is missing}"
 : "${ATLAS_GIT_WRAPPER:?Git wrapper pin is missing}"
 : "${ATLAS_REAL_GH:?gh pin is missing}"

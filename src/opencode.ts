@@ -6,8 +6,7 @@ import type { OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client";
 import { Service } from "@opencode-ai/client/service";
 import type { Endpoint } from "@opencode-ai/client/service";
 import type { Persistence, Session } from "./persistence.ts";
-
-export const APPROVED_OPENCODE_VERSION = "0.0.0-beta-19135";
+import { createActivityGate } from "./activity-gate.ts";
 
 const DEFAULT_POLL_MS = 2_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -86,10 +85,7 @@ const fallbackEndpoint = async (file: string): Promise<Endpoint | undefined> => 
     : typeof service.password === "string"
       ? service.password
       : typeof root.password === "string" ? root.password : undefined;
-  const version = typeof service.version === "string"
-    ? service.version
-    : typeof root.version === "string" ? root.version : undefined;
-  if (!url || !password || version !== APPROVED_OPENCODE_VERSION) return undefined;
+  if (!url || !password) return undefined;
 
   return safeEndpoint({
     url,
@@ -98,7 +94,7 @@ const fallbackEndpoint = async (file: string): Promise<Endpoint | undefined> => 
 };
 
 const discoverEndpoint = async (file: string) => {
-  const discovered = await Service.discover({ file, version: APPROVED_OPENCODE_VERSION }).catch(() => undefined);
+  const discovered = await Service.discover({ file }).catch(() => undefined);
   const endpoint = discovered ?? await fallbackEndpoint(file);
   return endpoint ? safeEndpoint(endpoint) : undefined;
 };
@@ -186,9 +182,21 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   let connectionPromise: Promise<OpenCodeClient> | undefined;
   let transportState: "connected" | "stale" = "stale";
   let readinessReason: string | undefined = "OpenCode connection is not established.";
+  let observedVersion: string | undefined;
+  const activity = createActivityGate();
   const eventListeners = new Set<(event: OpenCodeEvent) => void>();
   const transportListeners = new Set<(state: "connected" | "stale", reason?: string) => void>();
   const evidence = new Map<string, EventEvidence>();
+
+  const beginHandoff = activity.enter;
+
+  const finishHandoff = () => {
+    if (!activity.leave()) return;
+    if (!activity.paused() && pendingWake && !running && !stopped) {
+      pendingWake = false;
+      queueMicrotask(wake);
+    }
+  };
 
   const notifyEvent = (event: OpenCodeEvent) => {
     for (const listener of eventListeners) {
@@ -295,9 +303,10 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     if (!endpoint) {
       retryAt = Date.now() + retryDelay;
       retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
-      throw new Error(`OpenCode service is unavailable or is not approved version ${APPROVED_OPENCODE_VERSION}`);
+      throw new Error("OpenCode service is unavailable or has invalid discovery data");
     }
 
+    observedVersion = undefined;
     const nextClient = OpenCode.make({
       baseUrl: endpoint.url.endsWith("/") ? endpoint.url : `${endpoint.url}/`,
       headers: Service.headers(endpoint),
@@ -310,11 +319,15 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
       retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
       throw error;
     }
-    if (!health.healthy || health.version !== APPROVED_OPENCODE_VERSION) {
+    const healthValue = health as unknown as { healthy?: unknown; version?: unknown };
+    if (healthValue?.healthy !== true) {
       retryAt = Date.now() + retryDelay;
       retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
-      throw new Error(`OpenCode service did not validate against ${APPROVED_OPENCODE_VERSION}`);
+      throw new Error("OpenCode service did not report healthy");
     }
+    observedVersion = typeof healthValue.version === "string" && healthValue.version.length > 0
+      ? healthValue.version
+      : undefined;
 
     const controller = new AbortController();
     const iterator = nextClient.event.subscribe({ signal: controller.signal })[Symbol.asyncIterator]();
@@ -553,6 +566,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     let session = options.persistence.getSession(initial.atlasId) ?? initial;
     if (session.preparationCheckpoint !== "prepared" && session.handoffCheckpoint === "not_started") return;
     if (process.env.ATLAS_ADMISSION_PAUSED === "1" && ["not_started", "intent_saved", "events_consuming"].includes(session.handoffCheckpoint)) return;
+    if (activity.paused() && !["prompt_sent", "prompt_accepted"].includes(session.handoffCheckpoint)) return;
 
     if (session.handoffCheckpoint === "not_started") {
       session = saveIntent(session) ?? session;
@@ -568,12 +582,16 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     }
 
     if (session.handoffCheckpoint === "events_consuming") {
+      if (!beginHandoff()) return;
       session = setHandoffCheckpoint(
         session,
         "create_sent",
         "OpenCode Session creation was sent once; Atlas will reconcile the saved identity instead of retrying it.",
       ) ?? session;
-      if (session.handoffCheckpoint !== "create_sent" || !session.opencodeIntendedSessionId || !session.directory) return;
+      if (session.handoffCheckpoint !== "create_sent" || !session.opencodeIntendedSessionId || !session.directory) {
+        finishHandoff();
+        return;
+      }
       try {
         const created = await activeClient.session.create({
           id: session.opencodeIntendedSessionId,
@@ -591,56 +609,68 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
           "OpenCode Session creation response was not durably confirmed; inspect the saved identity before any retry.",
         );
         return;
+      } finally {
+        finishHandoff();
       }
     }
+    if (activity.paused() && session.handoffCheckpoint === "create_confirmed") return;
 
     if (session.handoffCheckpoint === "create_sent" || session.handoffCheckpoint === "create_confirmed") {
-      const info = await requestSession(activeClient, session);
-      if (!info) {
-        markUnconfirmed(
-          session.atlasId,
-          "OpenCode Session creation or association is unconfirmed; Atlas will not create it again.",
-        );
-        return;
-      }
+      if (!beginHandoff()) return;
       try {
-        if (session.handoffCheckpoint === "create_sent") {
-          const created = setHandoffCreated(session.atlasId, info.id);
-          if (!created) {
+        const info = await requestSession(activeClient, session);
+        if (!info) {
+          markUnconfirmed(
+            session.atlasId,
+            "OpenCode Session creation or association is unconfirmed; Atlas will not create it again.",
+          );
+          return;
+        }
+        try {
+          if (session.handoffCheckpoint === "create_sent") {
+            const created = setHandoffCreated(session.atlasId, info.id);
+            if (!created) {
+              markUnconfirmed(
+                session.atlasId,
+                "OpenCode Session association was observed but could not be durably saved; Atlas will not prompt or create it again.",
+              );
+              return;
+            }
+            session = created;
+          }
+          const associated = confirmHandoffAssociation(session.atlasId);
+          if (!associated) {
             markUnconfirmed(
               session.atlasId,
               "OpenCode Session association was observed but could not be durably saved; Atlas will not prompt or create it again.",
             );
             return;
           }
-          session = created;
-        }
-        const associated = confirmHandoffAssociation(session.atlasId);
-        if (!associated) {
+          session = associated;
+        } catch {
           markUnconfirmed(
             session.atlasId,
             "OpenCode Session association was observed but could not be durably saved; Atlas will not prompt or create it again.",
           );
           return;
         }
-        session = associated;
-      } catch {
-        markUnconfirmed(
-          session.atlasId,
-          "OpenCode Session association was observed but could not be durably saved; Atlas will not prompt or create it again.",
-        );
-        return;
+      } finally {
+        finishHandoff();
       }
     }
+    if (activity.paused() && session.handoffCheckpoint === "associated") return;
 
     if (session.handoffCheckpoint === "associated") {
-      if (process.env.ATLAS_ADMISSION_PAUSED === "1") return;
+      if (process.env.ATLAS_ADMISSION_PAUSED === "1" || !beginHandoff()) return;
       session = setHandoffCheckpoint(
         session,
         "prompt_sent",
         "The initial prompt was sent once; Atlas will reconcile message/inbox evidence instead of resending it.",
       ) ?? session;
-      if (session.handoffCheckpoint !== "prompt_sent" || !session.openCodeSessionId || !session.initialMessageId || !session.exactMessage) return;
+      if (session.handoffCheckpoint !== "prompt_sent" || !session.openCodeSessionId || !session.initialMessageId || !session.exactMessage) {
+        finishHandoff();
+        return;
+      }
       try {
         const accepted = await activeClient.session.prompt({
           sessionID: session.openCodeSessionId,
@@ -663,6 +693,8 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
           "Initial prompt acceptance was not durably confirmed; Atlas will not resend the prompt.",
         );
         return;
+      } finally {
+        finishHandoff();
       }
     }
 
@@ -714,7 +746,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     } catch (error) {
       const reason = error instanceof Error && error.message.includes("retry delay")
         ? "OpenCode is unavailable or waiting for its retry delay; Atlas is retaining the preparation slot."
-        : `OpenCode is unavailable or incompatible; launches are paused until ${APPROVED_OPENCODE_VERSION} is healthy.`;
+        : "OpenCode is unavailable or incompatible; launches are paused until the service is healthy.";
       markStaleSessions(reason);
       return;
     }
@@ -733,8 +765,8 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   };
 
   const wake = () => {
-    if (stopped || running) {
-      if (running) pendingWake = true;
+    if (stopped || running || activity.active() > 0) {
+      if (running || activity.active() > 0) pendingWake = true;
       return;
     }
     running = true;
@@ -776,8 +808,15 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     transportState = "stale";
   };
 
+  const pauseForUpdate = activity.pause;
+
+  const resumeFromUpdate = () => {
+    if (!activity.resume()) return;
+    enqueue();
+  };
+
   const enqueue = () => {
-    if (running) {
+    if (running || activity.active() > 0) {
       pendingWake = true;
       return;
     }
@@ -799,12 +838,15 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     stop,
     enqueue,
     process: runCycle,
+    pauseForUpdate,
+    resumeFromUpdate,
     getClient: ensureClient,
     isReady: () => Boolean(client && streamReady && transportState === "connected"),
     readiness: () => ({
       ready: Boolean(client && streamReady && transportState === "connected"),
       state: transportState,
       reason: readinessReason,
+      version: observedVersion,
     }),
     onEvent,
     onTransport,

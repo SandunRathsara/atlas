@@ -7,8 +7,9 @@ release automatically.
 ## Protection boundary and targets
 
 - `/var/lib/atlas` must be one Btrfs subvolume containing ordinary directories
-  only: Atlas SQLite and its WAL/journal, OpenCode data/state/config/cache and
-  matching database sidecars, complete Session directories, and
+  only: Atlas SQLite and its WAL/journal, durable updater staging state,
+  OpenCode data/state/config/cache and matching database sidecars, complete
+  Session directories, and
   `recovery-config/current`. Nested subvolumes, nested mounts, and external
   symlink targets are not captured. Inventory these before readiness.
 - `/var/backups/atlas` contains local read-only snapshots named only
@@ -43,8 +44,9 @@ release automatically.
    sudo ATLAS_WRITERS_STOPPED=YES /opt/atlas/current/deploy/verify-sqlite-wal.sh
    ```
 
-   This records the actual SQLite versions embedded in pinned Bun and pinned
-   OpenCode only if they include SQLite's accepted WAL-reset fix. Host
+   This records the actual SQLite versions embedded in pinned Bun and the
+   currently selected OpenCode executable, plus that executable's observed
+   version, only if they include SQLite's accepted WAL-reset fix. Host
    `sqlite3`, WAL mode, and FULL/NORMAL synchronous settings are not substitutes.
 4. Enable and start only the timers after reviewing them:
 
@@ -87,7 +89,8 @@ chmod 0600 /root/atlas-recovery/files.sha256 /root/atlas-recovery/history.tsv
 Then stop Atlas/OpenCode and all Agent writers, set `ATLAS_ADMISSION_PAUSED=1`
 in the live Atlas environment, and restart Atlas only if a private read-only UI
 is needed to confirm the pause. Do not restart OpenCode. Confirm encryption and
-recovery-key access, the selected release, and pinned tools. Run against an
+recovery-key access, the selected release, pinned tools, and the selected
+OpenCode server. Run against an
 empty direct child of a dedicated same-filesystem rehearsal root:
 
 ```bash
@@ -110,7 +113,25 @@ It never starts Atlas, OpenCode, Agents, sockets, or listeners. Never point a
 service at the rehearsal tree. Preserve a failed tree for investigation; delete
 only a positively identified rehearsal tree after the owner accepts the result.
 
-## Versioned release and rollback
+## Approval-driven code-only release and rollback
+
+For a normal `rollback.codeOnlyCompatible` Release, run the current Release's
+one-time `sudo /opt/atlas/current/deploy/bootstrap.sh` first. Use **Install** on
+the private Updates page. The surviving updater records approval and progress,
+waits for Atlas's preparation/handoff checkpoint, stops only Atlas, atomically
+selects the candidate, and requires its exact identity plus healthy storage
+within 60 seconds. OpenCode and the credential supplier continue running. A
+failed candidate selects and verifies the previous code automatically against
+the unchanged database; **Recovered** is success, while **Recovery failed**
+requires operator intervention. Inspect the durable result before using
+**Retry**. Do not restore a snapshot for this ordinary path.
+
+After candidate health succeeds, the updater atomically selects the candidate's
+immutable credential/updater support bundle for future service starts. It does
+not restart either already-running support service.
+
+Use the stopped-writer procedure below only for a Release marked Manual
+maintenance required or for recovery outside the normal web contract.
 
 1. Set `ATLAS_ADMISSION_PAUSED=1` in `/etc/atlas/atlas.env` and restart **Atlas
    only**. Confirm queued work does not enter Preparing. Do not stop OpenCode.
@@ -121,14 +142,20 @@ only a positively identified rehearsal tree after the owner accepts the result.
    `recovery-config/current`, verify both embedded SQLite builds, take and
    verify a pre-upgrade snapshot, and record Atlas commit/release, Bun,
    OpenCode client/server, Git, gh, and schema versions.
-4. Stage the clean commit with `stage-release.sh`. Run its migrations by
+4. Verify and extract the published archive selected by `atlas-release.json`
+   (or use `stage-release.sh` only for an unpublished manual rehearsal). Require
+   `rollback.codeOnlyCompatible` for ordinary code-only rollback; otherwise
+   follow its non-empty manual-maintenance instructions. Run migrations by
    selecting the immutable versioned release and starting Atlas while admission
-   remains paused. Never overwrite a release and do not unnecessarily restart
-   OpenCode.
-5. Validate authenticated health, database/schema, OpenCode compatibility,
-   reconciliation, preserved Session reopening/history/files, private UI,
-   public webhook-only exclusion, signatures, and Repository-scoped credential
-   routing/renewal/denial. Rehearse restore. Only then set
+    remains paused. The independently installed credential supplier and
+    updater and their currently selected immutable support bundle remain running; do
+   not restart them as part of release selection. Never overwrite a release or
+   restart OpenCode.
+5. Validate authenticated Atlas identity and storage health first; this startup
+   gate does not query or wait for OpenCode. Separately diagnose OpenCode and
+   validate reconciliation, preserved Session reopening/history/files, private
+   UI, public webhook-only exclusion, signatures, and Repository-scoped
+   credential routing/renewal/denial. Rehearse restore. Only then set
    `ATLAS_ADMISSION_PAUSED=0`, restart Atlas, and confirm ordinary eligibility
    and storage checks resume preparation.
 6. For code-only rollback with unchanged schema, pause admission and atomically

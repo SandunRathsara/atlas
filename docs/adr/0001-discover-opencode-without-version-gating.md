@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted on 2026-09-11 following explicit developer approval of the grilling for [#48](https://github.com/SandunRathsara/atlas/issues/48). Implementation is pending; this is a decision-only record.
+Accepted on 2026-09-11 following explicit developer approval of the grilling for [#48](https://github.com/SandunRathsara/atlas/issues/48).
 
 Partially superseded on 2026-09-11 by [ADR-0002](0002-versioned-releases-and-graceful-self-updates.md): Atlas startup and self-update activation use Atlas-only health and do not inspect OpenCode or require its readiness. The remaining discovery, observation, and operator-managed OpenCode decisions stay accepted.
 
@@ -42,7 +42,7 @@ It excludes Atlas release identity and client-bump policy ([#49](https://github.
 - API-break risk is accepted. Existing readiness and stale indicators remain the failure surface; an incompatible server can still prevent useful work.
 - Server selection is decoupled from Atlas deployment. The operator is responsible for choosing and activating an installed server version.
 - Implementation follow-through covers `src/opencode.ts`, `src/app.ts`, `deploy/check-health.sh`, `deploy/check-opencode.sh`, `deploy/stage-opencode.sh`, `deploy/pins.env` (OpenCode staging inputs), `deploy/verify-sqlite-wal.sh`, `deploy/verify-assets.sh`, and `deploy/systemd/opencode.service`. Adjust artifact assertions to the server-only staging contract without removing unrelated verification.
-- Replace pinned-server/pairing wording in operator documentation and refresh the corresponding DOMAIN/ARCHITECTURE baseline statements through their required repository-map workflow. Those documents currently describe the shipped pin; this ADR records the accepted replacement policy, not a claim that implementation has shipped.
+- Replace pinned-server/pairing wording in operator documentation and refresh the corresponding DOMAIN/ARCHITECTURE baseline statements through their required repository-map workflow.
 - Verification must cover a different and empty reported server version, invalid endpoints/unhealthy services, existing post-connect API failure behavior, readiness-based deployment health, selected-executable checks, explicit staging-version input, and missing/mismatched download integrity. Browser journeys are not required for this decision record.
 
 ## Supersession

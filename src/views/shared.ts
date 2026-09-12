@@ -331,7 +331,7 @@ export const sessionRecoveryNotice = (
 
 export const openCodeReadinessNotice = (readiness: { ready: boolean; reason?: string } | undefined) =>
   readiness && !readiness.ready
-    ? alertSoft("warning", "status", `<div><strong>OpenCode launches are paused.</strong> ${escapeHtml(readiness.reason ?? "The approved OpenCode service is unavailable or incompatible.")} Atlas remains available with cached Session data and will reconcile before resuming.</div>`)
+    ? alertSoft("warning", "status", `<div><strong>OpenCode launches are paused.</strong> ${escapeHtml(readiness.reason ?? "The OpenCode service is unavailable or incompatible.")} Atlas remains available with cached Session data and will reconcile before resuming.</div>`)
     : "";
 
 export const persistenceHealthNotice = (health: { healthy: boolean; reason?: string | null } | undefined) =>
