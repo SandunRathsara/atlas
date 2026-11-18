@@ -109,7 +109,7 @@
   .sv-live-body { padding-top: 0; }
   .sv-kv { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .sv-kv-l { margin: 0; font-size: 12px; font-weight: 650; color: var(--a-sec); text-transform: uppercase; letter-spacing: .04em; }
-  .sv-code { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--a-fill); font: 12.5px/1.55 "Geist Mono", ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; }
+  .sv-code { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--a-fill); font: 12.5px/1.55 var(--a-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; }
   .sv-diff { max-height: 480px; }
   .sv-step-body .ax-term { max-height: 420px; font-size: 12.5px; }
   .sv-file { margin: 0; display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; overflow-wrap: anywhere; }

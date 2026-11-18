@@ -47,6 +47,8 @@ export const renderDocument = (title: string, content: string, bodyClass = "") =
     <title>${escapeHtml(title)} | Atlas</title>
     <script src="/assets/theme.js"></script>
     <link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/assets/fonts/geist-mono.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/assets/app.css">
     <script src="/assets/htmx.min.js" defer></script>
     <script src="/assets/app.js" defer></script>
