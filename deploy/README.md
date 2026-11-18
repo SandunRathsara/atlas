@@ -1,18 +1,18 @@
 # Atlas deployment assets
 
 This directory is the deployment seam for the private host. Nothing changes the
-host until an operator runs it. The one bootstrap command installs and enables
-the independent credential and update services plus updated unit files; it does
-not itself activate a staged release, move OpenCode data, or change
-Tailscale/firewall state.
+host until an operator runs it. Atlas is one compiled binary per Release; the
+host needs no Bun. Installing and enabling the services is the job of
+`atlas setup` (Phase 4, not yet implemented); it renders the four units from
+`src/units.ts#renderUnits` and builds Release folders with
+`src/release-layout.ts#buildReleaseFolder`.
 
 ## Pins
 
-`pins.env` pins Bun `1.3.14`, Git `2.55.0`, gh `2.100.0`, and the
-release-packaged OpenCode client. The client pin is diagnostic package input,
-not an OpenCode server selection or compatibility gate. Host tool paths are
-absolute and versioned; the Git wrapper loads this manifest and rejects a
-version drift on every managed Git invocation and service start. OpenCode is
+Atlas's host-tool requirements are numeric minimums in `src/host-tools.ts`
+(Git `2.55.0`, gh `2.100.0`) and are published in each Release's metadata.
+`pins.env` remains only for the operator recovery tools here (snapshot capture,
+restore rehearsal, SQLite WAL probe), which still use a pinned host Bun. OpenCode is
 different: `ATLAS_OPENCODE_BINARY` follows the operator-controlled
 `/opt/atlas/tools/opencode/current` selection. Its server version is not an
 Atlas release pin. The Atlas release still installs the exact
@@ -22,11 +22,8 @@ does not replace or pair that client.
 Published releases are produced from authoritative
 `vMAJOR.MINOR.PATCH+build.BUILD` tags by `.github/workflows/release.yml`. See
 [`docs/RELEASES.md`](../docs/RELEASES.md) for the immutable archive/metadata
-contract and maintainer procedure. `stage-release.sh` remains a manual
-clean-checkout staging helper: it archives a clean committed checkout into a
-new release, installs the frozen lockfile, builds CSS, records `RELEASE_COMMIT`,
-makes the tree read-only, and atomically renames the staging directory. It
-never overwrites `/opt/atlas/current` or an existing release.
+single-binary contract and maintainer procedure. `bun run build:release`
+produces the three Release assets from a clean checkout.
 
 `stage-opencode.sh <exact-server-version> <directory>` queries npm registry
 metadata for that exact `@opencode/cli-linux-x64` version, requires its
@@ -42,32 +39,35 @@ Staging never installs the version, changes `current`, or restarts OpenCode.
 After inspecting the isolated tree, the operator separately installs its
 `tools/opencode/<version>` directory under `/opt/atlas/tools/opencode`,
 atomically points `current` at that installed version, and explicitly restarts
-`opencode.service` in an approved window. Run `check-opencode.sh` before restart
-to confirm that `current` is executable and to print the version it actually
-reports. A successful Atlas release staging also leaves `current` and the
+`opencode.service` in an approved window. Run
+`/opt/atlas/tools/opencode/current/bin/opencode --version` before restart to
+confirm that `current` is executable and see the version it reports. A successful Atlas release staging also leaves `current` and the
 OpenCode service untouched.
 
 ## Units and listeners
 
-- `systemd/atlas-credentials.service` owns `/run/atlas`, serves the existing
+The four long-running units are rendered by `renderUnits` (`src/units.ts`);
+there are no checked-in copies. `verify-assets.sh` renders and checks them.
+
+- `atlas-credentials.service` owns `/run/atlas`, serves the existing
   Repository-scoped credential protocol from the atomically selected immutable
   support bundle, and keeps
   running while Atlas is stopped or restarted. It loads only the GitHub App
   credential file, registry, and supplier key—not Atlas UI/webhook secrets.
-- `systemd/atlas-updater.service` runs as the surviving host authority from
-  `/opt/atlas/services/current/atlas-updater`, owns its authenticated Unix socket,
-  downloads and verifies public Atlas artifacts, records durable policy,
+- `atlas-updater.service` runs as the surviving host authority from
+  `/opt/atlas/services/current/atlas updater`, owns its authenticated Unix socket,
+  downloads and verifies the public Atlas binary, builds Release folders, records durable policy,
   staging, activation, and cleanup state under `/var/lib/atlas`, atomically selects
   `/opt/atlas/current`, and stops/restarts only `atlas.service`. Its unit does
   not import or execute Atlas's environment. For candidate validation, it reads
   only the shared token and UI port as data from the restricted `atlas.env`,
-  passes them to its stable `check-activation-health.sh` child, and requests the Atlas-only
-  health response. It never controls or inspects OpenCode.
-- `systemd/atlas.service` runs Atlas as `omega` with explicit Bun, pinned Git,
+  and requests the Atlas-only health response itself
+  (`src/updater-server.ts#checkActivationHealth`). It never controls or inspects OpenCode.
+- `atlas.service` runs `/opt/atlas/current/atlas serve` as `omega` with the Release's Git wrapper,
   `HOME`, `PATH`, working directory, crash restart, bounded journal rate, and
   `/etc/atlas/atlas.env`. It connects to, but does not own, either surviving
   service socket.
-- `systemd/opencode.service` independently runs the operator-selected server as
+- `opencode.service` independently runs the operator-selected server as
   `omega`, bound to `127.0.0.1:49475` with `--service` discovery. The fixed port
   keeps it off OpenCode's default background-service port, which an
   interactive OpenCode for the same `omega` user may use. Atlas still finds the
@@ -82,7 +82,7 @@ OpenCode service untouched.
   their ports come from `atlas.env`. Funnel must target only the webhook port.
 - `check-health.sh` is the normal operator diagnostic for the private,
   authenticated `/health` route and requires healthy Atlas persistence plus
-  OpenCode readiness. `check-activation-health.sh` is the updater-only check: it
+  OpenCode readiness. The updater's activation check is separate: it
   requires exact candidate tag/SHA and healthy Atlas persistence from
   `/health?activation=1`, where OpenCode is not evaluated or reported.
 
@@ -99,7 +99,7 @@ Atlas Sessions run unattended, so OpenCode must not stop to ask a person.
 `opencode/opencode.json` is the global configuration for the service's
 `XDG_CONFIG_HOME`. `install-opencode-config.sh <config-home>` installs it as
 `<config-home>/opencode/opencode.json` (owner of `<config-home>`, mode `0400`).
-`bootstrap.sh` runs it for `/var/lib/atlas/opencode-config`.
+Run it for `/var/lib/atlas/opencode-config` (Phase 4 `atlas setup` will).
 The installer:
 
 - writes only as the config home's owner: run as root, it reads the shipped
@@ -140,12 +140,12 @@ Limits (Waiting is still possible):
 
 | Path | Owner / purpose |
 | --- | --- |
-| `/opt/atlas/releases/<release>` | Read-only versioned Atlas release |
+| `/opt/atlas/releases/atlas-<tag>` | Read-only Release folder: `atlas`, `RELEASE_METADATA.json`, `bin/{git,gh,git-credential-atlas}` |
 | `/opt/atlas/current` | Operator-selected release symlink |
-| `/opt/atlas/services/releases/<bundle>` | Immutable credential/updater support bundle, independent of Atlas release selection |
+| `/opt/atlas/services/releases/atlas-<tag>` | Immutable credential/updater support bundle (same folder shape), independent of Atlas release selection |
 | `/opt/atlas/services/current` | Atomically selected support-bundle symlink used when either surviving service next starts |
-| `<release>/RELEASE_METADATA.json` | Tag-derived SemVer, global build, Git SHA, artifact/runtime, and rollback contract |
-| `/opt/atlas/tools/<tool>/<version>` | Pinned Bun, Git, and GitHub CLI binaries; installed OpenCode server versions |
+| `<release>/RELEASE_METADATA.json` | Schema-2 metadata: identity, binary SHA-256/size, host-tool minimums, OpenCode client, rollback contract |
+| `/opt/atlas/tools/<tool>/<version>` | Operator-installed Git and GitHub CLI (and Bun for recovery tools); installed OpenCode server versions |
 | `/opt/atlas/tools/opencode/current` | Operator-selected OpenCode server symlink used by the independent service |
 | `/var/lib/atlas` | One ordinary-directory Btrfs subvolume |
 | `/var/lib/atlas/atlas.sqlite` | Atlas SQLite database and matching WAL/journal |
@@ -172,26 +172,16 @@ hostile-agent isolation. Refresh `recovery-config/current` after any accepted
 configuration, unit, route, firewall, binary, or release change; the previous
 copy is retained for rollback.
 
-## Credential and updater bootstrap
+## Credential and updater services
 
-After installing `/etc/atlas/github.env` and its App key, both an existing and a
-new installation use the same one-time command:
-
-```bash
-sudo /opt/atlas/current/deploy/bootstrap.sh
-```
-
-The command installs the credential and updater services plus the Atlas-only
-health check in one immutable support bundle, atomically selects it through
-`/opt/atlas/services/current`, installs the service-aware Atlas/OpenCode units, creates or preserves
-their private keys, reloads systemd, and enables both services. On an existing
-install it briefly stops and restarts Atlas only when needed to transfer
-`/run/atlas` ownership; it never stops, restarts, selects, or inspects OpenCode.
-This is the credential/updater portion of bootstrap. The root updater has only
-the shipped workflow for Atlas release staging, `/opt/atlas/current` selection,
-and `atlas.service` control; its code has no OpenCode operation.
-For a new install, run it after private configuration is in place and before
-enabling Atlas/OpenCode in the normal cutover order.
+After installing `/etc/atlas/github.env` and its App key, Phase 4 `atlas setup`
+will (for both fresh and adopted installs) build the support bundle under
+`/opt/atlas/services`, select it through `/opt/atlas/services/current`, write
+the rendered units, create or preserve the private keys, reload systemd, and
+enable both surviving services. It never stops, restarts, selects, or inspects
+OpenCode. The root updater has only the shipped workflow for Atlas release
+staging, `/opt/atlas/current` selection, and `atlas.service` control; its code
+has no OpenCode operation.
 
 The independent service persists the Session-to-Repository registry under
 `/var/lib/atlas`, serves only `/run/atlas/supplier.sock`, and keeps its key in
@@ -200,7 +190,7 @@ release cleanup can protect every referenced Release regardless of Session
 state. The root updater accepts this owner-controlled registry only as the
 expected service-account-owned `0600` regular file. Atlas client shutdown does
 not unlink the socket or remove its runtime directory.
-The `gh` launcher and Git helper are in the release, before real gh on the
+The `gh` launcher and Git helper are the Release's `bin/` shims, before real gh on the
 OpenCode service `PATH`. The launcher resolves the current Session directory,
 requests one-Repository App credentials, clears inherited auth/config/debug
 overrides, and passes the token only to the real gh child. Git uses a
@@ -224,7 +214,7 @@ opening admission. The other focused real-Git
 regression: `bun scripts/verify-clone-scope.ts` with explicit Bun 1.3.14.
 These checks are not performed by `verify-assets.sh`.
 
-After bootstrap, visit the private global `/updates` page. It reports installed
+After setup, visit the private global `/updates` page. It reports installed
 and available identities, the installation's update policy, runtime/manual
 maintenance limits, and durable staging/activation results. **Approval
 required** is the default. **Automatic for current SemVer builds** uses the same
@@ -244,7 +234,7 @@ retention, and helper-continuity checks.
 
 ### Human policy, Install/Retry, and continuing-Session check
 
-Do this only on the target host after running the bootstrap command above:
+Do this only on the target host after the services above are installed:
 
 1. Open a disposable continuing Session and record its Atlas/OpenCode Session
    identities. Confirm a scoped Git and `gh` read works without printing a token.
@@ -362,7 +352,8 @@ The following is a handoff, not an instruction for an agent to execute:
    `/etc/atlas`, `/var/backups/atlas`, and `/run/atlas` do not conflict. Leave
    the exFAT disk untouched. Record current OpenCode/agent PIDs and do not
    start the new unit while the existing live server remains active.
-2. Obtain and checksum the pinned Bun, Git, and gh binaries. Run
+2. Install Git and gh meeting the published minimums (and the pinned Bun for
+   the recovery tools). Run
    `stage-opencode.sh` with an explicitly chosen exact server version in a
    disposable isolated directory. Verify its registry integrity manifest,
    server-only immutable tree, reported version, and absence of service
@@ -377,15 +368,12 @@ The following is a handoff, not an instruction for an agent to execute:
    XDG locations, including database WAL/journal sidecars. Keep originals
    until validation succeeds. Do not trust/copy the old live service endpoint;
    let the new service register a fresh endpoint.
-4. Extract and checksum a published release using its `atlas-release.json`
-   contract (or use `stage-release.sh` only for a deliberate unpublished manual
-   staging rehearsal), select it, and run the one-time
-   `sudo /opt/atlas/current/deploy/bootstrap.sh` credential setup, which also
-   installs the headless OpenCode configuration without restarting OpenCode.
-   Separately
-   install the staged
-   OpenCode version, atomically switch `/opt/atlas/tools/opencode/current`, and
-   run `check-opencode.sh`. Install the remaining units, run `systemctl daemon-reload`,
+4. Install a published Release with Phase 4 `atlas setup` (verifies the
+   binary against `atlas-release.json`, builds the Release folder, selects it,
+   installs the services and the headless OpenCode configuration without
+   restarting OpenCode). Separately install the staged OpenCode version,
+   atomically switch `/opt/atlas/tools/opencode/current`, and run its
+   `--version`. Install the remaining units, run `systemctl daemon-reload`,
    then explicitly enable/start the independent units in that order. Atlas must
    not own OpenCode's lifecycle; staging or restarting Atlas must not switch,
    start, stop, or restart OpenCode or agents.
@@ -396,7 +384,7 @@ The following is a handoff, not an instruction for an agent to execute:
    Tailscale Funnel to the webhook loopback port on different externally
    served ports. Apply the reviewed tailnet/firewall policy. Never Funnel the
    UI listener. Configure GitHub's signed webhook for `/webhooks/github`.
-7. Run `check-health.sh`, then the independent `check-opencode.sh` diagnostic,
+7. Run `check-health.sh`, then the independent OpenCode `--version` diagnostic,
    private cookie/bearer checks, public webhook-only
    exclusion checks, valid/invalid signed webhook checks, and the credential
    matrix before admitting work. Reopen a preserved Session without replaying

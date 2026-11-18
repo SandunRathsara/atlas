@@ -1,7 +1,8 @@
 # Atlas releases
 
-Atlas publishes immutable, ready-to-run Linux x64 release directories from
-tags. The initial release identity is `v0.1.0+build.1`.
+Atlas publishes immutable Linux x64 Releases from tags. Each Release is one
+compiled `atlas` binary; the host needs no Bun.
+The initial release identity is `v0.1.0+build.1`.
 
 ## Identity and ordering
 
@@ -21,10 +22,11 @@ is not used.
 ## Maintainer publishing procedure
 
 1. Commit the complete release tree. Never let release CI choose a newer
-   dependency. For an OpenCode client bump, update `package.json`, `bun.lock`,
-   `ATLAS_OPENCODE_CLIENT_VERSION` in `deploy/pins.env`, and documentation that
-   names the pin. This pin records the packaged client only and never selects
-   or gates the independently managed OpenCode server.
+   dependency. For an OpenCode client bump, update `package.json` and
+   `bun.lock`; `scripts/build-release.ts` refuses to build when they and the
+   installed package disagree. The client version is compiled into the binary
+   and reported as `openCodeClient`; it never selects or gates the
+   independently managed OpenCode server.
 2. Run `bun install --frozen-lockfile`, `bun run check`,
    `bun run verify:issue57`, and the affected checks. Confirm the proposed
    build exceeds every published build and the SemVer content rule above.
@@ -41,44 +43,47 @@ exact tagged tree, then creates the release without overwrite flags. A rerun of
 an already published identity fails. Verification uses local synthetic
 artifacts and never creates a disposable GitHub Release.
 
-## Producer/consumer contract (schema 1)
+`bun run build:release -- <tag> <sha> <out>` (`scripts/build-release.ts`) is
+the only producer. It refuses a dirty checkout or a SHA other than `HEAD`,
+needs no secrets, and writes exactly the three assets below.
+`scripts/verify-release-artifact.sh <tag> <sha> <out>` builds them, checks the
+sidecar, runs the binary with no Bun on `PATH`, and checks its `/health`
+identity.
+
+## Producer/consumer contract (schema 2)
 
 Every GitHub Release contains these public assets:
 
 - `atlas-release.json` — release metadata described below.
-- `atlas-linux-x64-<tag>.tar.gz` — one read-only release directory containing
-  the tagged source, production `node_modules`, built `public/app.css`, helpers,
-  and every tracked deployment asset.
-- `atlas-linux-x64-<tag>.tar.gz.sha256` — GNU SHA-256 checksum sidecar.
+- `atlas-linux-x64` — the compiled Atlas binary (all subcommands, CSS, and
+  helpers embedded).
+- `atlas-linux-x64.sha256` — one line: `<sha256-hex>  atlas-linux-x64`.
 
-The archive also contains `RELEASE_METADATA.json`, byte-for-byte equal to the
-published `atlas-release.json`. A consumer reads metadata before choosing an
-artifact, requires `schemaVersion: 1`, verifies the sidecar, extracts to a new
-directory, then confirms the candidate's authenticated `/health` identity and
-storage health. It never installs dependencies or builds CSS after extraction.
+A consumer reads metadata first and requires `schemaVersion: 2`. Schema 1
+(tarball Releases) and unknown schemas are refused with a clear message. The
+download must match `asset.size` and `asset.sha256` (and the sidecar) before
+the file is ever executed. Example (real build output, fixture SHA):
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "identity": {
     "published": true,
     "tag": "v0.1.0+build.1",
     "semver": "0.1.0",
     "build": 1,
-    "gitSha": "<full tagged Git SHA>"
+    "gitSha": "cccccccccccccccccccccccccccccccccccccccc"
   },
-  "artifact": {
-    "name": "atlas-linux-x64-v0.1.0+build.1.tar.gz",
-    "checksum": "atlas-linux-x64-v0.1.0+build.1.tar.gz.sha256",
+  "asset": {
+    "name": "atlas-linux-x64",
+    "checksum": "atlas-linux-x64.sha256",
+    "sha256": "89f4ea5223d559c2b7821bbd173d891e24a60bd25f8565cb1aae4ad5512d9340",
+    "size": 94832768,
     "os": "linux",
-    "architecture": "x64",
-    "format": "tar.gz"
+    "architecture": "x64"
   },
-  "runtime": {
-    "bun": "1.3.14",
-    "git": "2.55.0",
-    "gh": "2.100.0"
-  },
+  "minimumHostTools": { "git": "2.55.0", "gh": "2.100.0" },
+  "openCodeClient": "2.3.2",
   "rollback": {
     "codeOnlyCompatible": true,
     "manualMaintenanceInstructions": null
@@ -86,12 +91,29 @@ storage health. It never installs dependencies or builds CSS after extraction.
 }
 ```
 
-`runtime` lists operator-installed host requirements; publishing never upgrades
-them or OpenCode. `rollback.codeOnlyCompatible` is authoritative—version order
-does not imply rollback safety. When false, `manualMaintenanceInstructions`
-must be non-empty and a normal updater must refuse activation. Schema-1 fields
-will not be removed or reinterpreted; a future incompatible contract requires
-an explicit compatibility path readable by the installed and previous release.
+`minimumHostTools` are numeric minimums (`src/host-tools.ts`) for
+operator-installed tools; publishing never upgrades them or OpenCode.
+`rollback.codeOnlyCompatible` is authoritative—version order does not imply
+rollback safety. When false, `manualMaintenanceInstructions` must be non-empty
+and a normal updater must refuse activation.
+
+### Release folder
+
+Every installed Release is `/opt/atlas/releases/atlas-<tag>/`, made only by
+`buildReleaseFolder` (`src/release-layout.ts`):
+
+```
+atlas                      the binary (read-only)
+RELEASE_METADATA.json      byte-equal to atlas-release.json
+bin/git                    wrapper: real git + Atlas credential helper
+bin/gh                     shim → atlas gh
+bin/git-credential-atlas   shim → atlas git-credential
+```
+
+The builder hashes the binary and refuses a SHA-256 mismatch before running
+it, then runs `atlas version --json` (never as root) and refuses an identity
+mismatch. It writes a temporary sibling, fsyncs, and renames, so a folder is
+either complete or absent. Re-running it for an intact folder is a no-op.
 
 ## Discovery, staging, and update policy
 
@@ -105,18 +127,18 @@ even when a newer patch, minor, or major Release also exists. With no such
 build, the newest Release is staged but still waits for **Install**. A failed
 check retains the last successful set and is not reported as up to date.
 
-The independently installed `atlas-updater.service` owns archive download,
-checksum verification, extraction, and durable staging status. Atlas submits
+The independently installed `atlas-updater.service` owns binary download,
+checksum verification, Release-folder building, and durable staging status. Atlas submits
 validated metadata over its authenticated Unix socket. The updater stages one
 request at a time beneath `/opt/atlas/releases`, resumes an interrupted durable
-request after its own restart, verifies embedded metadata before an atomic
-rename, and never changes `/opt/atlas/current`. Repeated requests for the same
-release reuse the complete staged tree, and a lost request response is
+request after its own restart, builds the folder with `buildReleaseFolder`, and
+never changes `/opt/atlas/current`. Repeated requests for the same release
+reuse the complete staged folder, and a lost request response is
 reconciled from updater status. Host runtime differences and rollback-incompatible
 release instructions remain visible on `/updates`.
 
-Staging does not pause Session preparation, install dependencies, build CSS,
-select a release, restart Atlas, or inspect/manage OpenCode. A staged,
+Staging does not pause Session preparation, unpack archives, install
+dependencies, select a release, restart Atlas, or inspect/manage OpenCode. A staged,
 host-runtime-eligible, code-only-compatible candidate exposes **Install**. In
 automatic mode, only a newer numeric build of the exact installed SemVer enters
 the same activation path without that click; all SemVer changes remain explicit.
@@ -137,24 +159,24 @@ previous working release without restoring older data. The failed tag remains
 suppressed from automatic activation across restarts until **Retry**; a later
 eligible build of the current SemVer can proceed normally. A checkpoint timeout
 is a durable abandonment and leaves the current release selected. After candidate
-health succeeds, the updater copies the candidate's shipped credential/updater
-support into a read-only per-Release bundle and atomically selects it through
-`/opt/atlas/services/current`; already-running support services are not
-restarted.
+health succeeds, the updater builds a support bundle from the candidate's
+binary (same builder, under `/opt/atlas/services`) and atomically selects it
+through `/opt/atlas/services/current`. The credential and updater services run
+`services/current/atlas credentials|updater`; already-running support services
+are not restarted.
 
-Updater schema 1 keeps its original staging fields and additively stores the
-installation policy, activation state, previous-release identity,
-progress/result, failed-tag suppression, and cleanup outcomes. Missing policy in
-older state reads as approval required, while subsequent writes preserve an
-existing selection so the previous Atlas release can still read staging status
-after rollback.
+Updater state is schema 2: staging fields, installation policy, activation
+state, previous-release identity, progress/result, failed-tag suppression, and
+cleanup outcomes. A schema-1 (tarball-era) state file is reset to idle but keeps
+its policy; missing policy reads as approval required.
 
 ## Release retention
 
 The updater cleans only managed Release directories older than the selected
 Release. It protects the selected Release, the previous working Release, the
 staged candidate, every in-flight activation/recovery path, and every Release
-containing an absolute helper path in the durable Session scope registry. A
+containing an absolute helper path (a compiled Release's `atlas` binary) in the
+durable Session scope registry. A
 failed candidate is not promoted to previous-working status merely because it
 was briefly selected; it remains protected while staged for Retry.
 
@@ -162,7 +184,7 @@ Cleanup shares the updater's serialized lifecycle. It runs on updater startup
 and after staging, abandonment, successful activation, or recovered rollback.
 During activation/recovery it completes before the updater publishes a terminal
 result, so a restarting Atlas remains paused until selection and retention are
-settled. Each cleanup target is recorded in schema-1 updater state before
+settled. Each cleanup target is recorded in updater state before
 removal. A restart re-evaluates current selections and helper references before
 resuming partial cleanup.
 

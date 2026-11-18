@@ -123,8 +123,8 @@ only a positively identified rehearsal tree after the owner accepts the result.
 
 ## Approval-driven code-only release and rollback
 
-For a normal `rollback.codeOnlyCompatible` Release, run the current Release's
-one-time `sudo /opt/atlas/current/deploy/bootstrap.sh` first. Use **Install** on
+For a normal `rollback.codeOnlyCompatible` Release, the surviving services must
+already be installed (Phase 4 `atlas setup`). Use **Install** on
 the private Updates page. The surviving updater records approval and progress,
 waits for Atlas's preparation/handoff checkpoint, stops only Atlas, atomically
 selects the candidate, and requires its exact identity plus healthy storage
@@ -148,10 +148,11 @@ maintenance required or for recovery outside the normal web contract.
    Preserve publication reservations.
 3. Stop writers only in the approved maintenance window. Refresh
    `recovery-config/current`, verify both embedded SQLite builds, take and
-   verify a pre-upgrade snapshot, and record Atlas commit/release, Bun,
-   OpenCode client/server, Git, gh, and schema versions.
-4. Verify and extract the published archive selected by `atlas-release.json`
-   (or use `stage-release.sh` only for an unpublished manual rehearsal). Require
+   verify a pre-upgrade snapshot, and record Atlas commit/release, OpenCode
+   client/server, Git, gh, and schema versions.
+4. Download the published `atlas-linux-x64` selected by `atlas-release.json`
+   and build its Release folder with `buildReleaseFolder`
+   (`src/release-layout.ts`), which refuses a SHA-256 or identity mismatch. Require
    `rollback.codeOnlyCompatible` for ordinary code-only rollback; otherwise
    follow its non-empty manual-maintenance instructions. Run migrations by
    selecting the immutable versioned release and starting Atlas while admission
