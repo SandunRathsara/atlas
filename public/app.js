@@ -31,7 +31,7 @@
     if (!status) return;
 
     status.hidden = false;
-    status.className = "alert alert-error alert-soft mt-4 leading-normal";
+    status.className = "ax-banner ax-error";
     status.textContent = requestMessage(event.detail.xhr?.status ?? 0);
   });
 
@@ -314,11 +314,6 @@
 
   const setViewerConnection = (root, state, reason) => {
     if (state === "fresh" || state === "stale" || state === "partial") root.dataset.viewerFreshness = state;
-    const badge = root.querySelector("[data-viewer-connection]");
-    if (badge) {
-      badge.textContent = state === "fresh" ? "Fresh" : state === "auth" ? "Sign-in expired" : state === "stale" ? "Stale" : "Partial";
-      badge.className = `badge badge-sm ${state === "fresh" ? "badge-success" : "badge-warning"}`;
-    }
     const status = root.querySelector("[data-viewer-connection-message]");
     if (status) {
       const text = state === "fresh" ? "" : state === "connecting" ? "Connecting to live updates…" : reason || (state === "auth" ? "Your sign-in expired. Sign in again before refreshing this Session view." : "Live Session data is stale; visible content is retained while Atlas reconciles.");

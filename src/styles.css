@@ -329,22 +329,6 @@
     font-weight: 500;
   }
 
-  .ax-bar-title {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    max-width: 50%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: 650;
-    font-size: 16px;
-  }
-
-  .ax-bar-spacer {
-    flex: 1;
-  }
-
   .ax-bar-desk {
     display: none;
   }
@@ -1342,12 +1326,6 @@
     line-height: 1.4;
   }
 
-  .ax-error-text {
-    font-size: 13px;
-    color: var(--t-failed);
-    font-weight: 500;
-  }
-
   .ax-input {
     width: 100%;
     min-height: 44px;
@@ -1673,34 +1651,6 @@
     }
   }
 
-  /* Toast */
-  .ax-toast {
-    position: fixed;
-    left: 50%;
-    bottom: calc(96px + env(safe-area-inset-bottom));
-    z-index: 50;
-    transform: translateX(-50%);
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    max-width: calc(100vw - 32px);
-    padding: 12px 16px;
-    border-radius: 14px;
-    background: var(--a-text);
-    color: var(--a-bg);
-    font-weight: 500;
-    box-shadow: 0 10px 30px rgb(0 0 0 / 0.25);
-  }
-
-  .ax-toast .ax-ic {
-    color: var(--f-succeeded);
-  }
-
-  .ax-toast-inline {
-    position: static;
-    transform: none;
-  }
-
   /* Exact-time tooltip (hover or focus) */
   .ax-time {
     position: relative;
@@ -1977,9 +1927,6 @@
     overflow-wrap: anywhere;
   }
 
-  .ax-term .ax-term-ok { color: #30D158; }
-  .ax-term .ax-term-dim { color: #8C8C93; }
-  .ax-term .ax-term-err { color: #FF6961; }
 
   .ax-mono {
     font-family: var(--a-font-mono);
@@ -2087,137 +2034,7 @@
     padding: 0;
   }
 
-  /* ── Legacy daisyUI markup, restyled to the kit ───────────────────── */
-  .alert {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 12px 14px;
-    border: 0;
-    border-radius: 14px;
-    font-size: 14px;
-    line-height: 1.45;
-    color: var(--a-text);
-    background: color-mix(in srgb, var(--f-running) 12%, var(--a-card));
-    box-shadow: none;
-    text-align: left;
-    grid-auto-flow: row;
-  }
-
-  .alert.alert-warning { background: color-mix(in srgb, var(--f-waiting) 13%, var(--a-card)); }
-  .alert.alert-error { background: color-mix(in srgb, var(--f-failed) 12%, var(--a-card)); }
-  .alert.alert-success { background: color-mix(in srgb, var(--f-succeeded) 12%, var(--a-card)); }
-  .alert.alert-info { background: color-mix(in srgb, var(--f-running) 12%, var(--a-card)); }
-  .alert.alert-warning::before,
-  .alert.alert-error::before,
-  .alert.alert-success::before,
-  .alert.alert-info::before {
-    content: "";
-    flex-shrink: 0;
-    width: 4px;
-    align-self: stretch;
-    border-radius: 2px;
-    background: var(--t-running);
-  }
-  .alert.alert-warning::before { background: var(--t-waiting); }
-  .alert.alert-error::before { background: var(--t-failed); }
-  .alert.alert-success::before { background: var(--t-succeeded); }
-
-  .btn {
-    max-width: 100%;
-    min-height: 40px;
-    height: auto;
-    border-radius: 12px;
-    font-weight: 600;
-    font-size: 15px;
-    white-space: normal;
-    box-shadow: none;
-  }
-
-  .btn-primary {
-    border-color: transparent;
-    background: var(--a-btn);
-    color: var(--a-btn-text);
-  }
-
-  .btn:not(.btn-primary):not(.btn-secondary):not(.btn-accent):not(.btn-info):not(.btn-success):not(.btn-warning):not(.btn-error):not(.btn-ghost):not(.btn-link) {
-    background: none;
-    border: 0;
-    box-shadow: inset 0 0 0 1.5px var(--a-sep);
-    color: var(--a-text);
-  }
-
-  .btn-ghost {
-    color: var(--a-link);
-  }
-
-  .btn-error {
-    background: none;
-    border: 0;
-    color: var(--t-failed);
-    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--f-failed) 40%, transparent);
-  }
-
-  .btn-xs {
-    min-height: 32px;
-    padding-inline: 10px;
-    font-size: 13px;
-    border-radius: 10px;
-  }
-
-  .input,
-  .select,
-  .textarea {
-    border: 0;
-    border-radius: 12px;
-    background: var(--a-card);
-    box-shadow: inset 0 0 0 1.5px var(--a-ring);
-    font-size: 16px;
-  }
-
-  .input,
-  .select {
-    min-height: 44px;
-  }
-
-  .input:focus-within,
-  .select:focus-within,
-  .textarea:focus-within {
-    outline: none;
-    box-shadow: inset 0 0 0 2px var(--a-btn);
-  }
-
-  .rounded-box.border.border-edge.bg-base-100 {
-    border: 0;
-  }
-
-  .badge {
-    border: 0;
-    border-radius: 999px;
-    font-weight: 650;
-    font-size: 12.5px;
-    background: var(--a-fill);
-    color: var(--a-sec);
-  }
-
-  .badge.badge-info { background: color-mix(in srgb, var(--f-running) 16%, transparent); color: var(--t-running); }
-  .badge.badge-warning { background: color-mix(in srgb, var(--f-waiting) 18%, transparent); color: var(--t-waiting); }
-  .badge.badge-success { background: color-mix(in srgb, var(--f-succeeded) 16%, transparent); color: var(--t-succeeded); }
-  .badge.badge-error { background: color-mix(in srgb, var(--f-failed) 14%, transparent); color: var(--t-failed); }
-
-  .grid > *,
-  .flex > * {
-    min-width: 0;
-  }
-
-  .flex > .btn {
-    min-width: max-content;
-  }
-
-  .font-mono {
-    overflow-wrap: anywhere;
-  }
-
+  /* ── Global helpers ──────────────────────────────────────────────── */
   h1 {
     overflow-wrap: anywhere;
   }
@@ -2229,62 +2046,6 @@
   .htmx-request .htmx-indicator,
   .htmx-indicator.htmx-request {
     display: inline;
-  }
-
-  .atlas-table {
-    overflow-x: auto;
-  }
-
-  .table-compact {
-    width: max-content;
-    min-width: 100%;
-  }
-
-  .table-compact :where(th, td) {
-    padding-block: 0.625rem;
-    padding-inline: 1rem;
-    font-size: 0.875rem;
-    line-height: 1.5;
-    vertical-align: top;
-    border-color: var(--a-sep);
-  }
-
-  .table-compact tbody td:first-child {
-    min-width: 12rem;
-    max-width: 20rem;
-  }
-
-  .table-compact tbody td:not(:first-child) {
-    white-space: nowrap;
-  }
-
-  .table-compact :where(thead th) {
-    color: var(--a-sec);
-    font-size: 12.5px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  .table-compact :where(tbody tr:hover),
-  .table-compact :where(tbody tr:hover th),
-  .table-compact :where(tbody tr:hover td) {
-    background-color: var(--a-fill2);
-  }
-
-  .table-compact .font-mono {
-    overflow-wrap: break-word;
-  }
-
-  .record-actions {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.25rem;
-  }
-
-  .record-actions > * {
-    min-width: max-content;
-    flex-shrink: 0;
   }
 }
 
@@ -2442,9 +2203,6 @@
     padding-bottom: 64px;
   }
 
-  .ax-toast {
-    bottom: 32px;
-  }
 }
 
 @media (min-width: 760px) and (max-width: 1023.98px) {
