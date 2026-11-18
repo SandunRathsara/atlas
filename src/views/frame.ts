@@ -80,10 +80,12 @@ const LIVE_LABEL: Record<LiveGroup, string> = {
   settled: "Settled",
 };
 
-const liveHref = (row: InboxRow) =>
-  row.session
+/** Where an Inbox item opens. `?from=inbox` keeps the Inbox tab selected and the back link on Inbox. */
+export const inboxItemHref = (row: InboxRow) =>
+  `${row.session
     ? `/sessions/${encodeURIComponent(row.session.atlasId)}`
-    : `/repositories/${encodeURIComponent(row.repositoryId)}/specs/${encodeURIComponent(row.issueNumber)}`;
+    : `/repositories/${encodeURIComponent(row.repositoryId)}/specs/${encodeURIComponent(row.issueNumber)}`}?from=inbox`;
+const liveHref = inboxItemHref;
 
 const sessionWord = (row: InboxRow) => {
   const state = row.session?.state;

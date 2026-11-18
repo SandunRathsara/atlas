@@ -658,6 +658,7 @@ export const createApp = (options: AppOptions) => {
       currentPath,
       currentSessionFilter: currentLocation.searchParams.get("status") ?? "active",
       selectedSpec: selectedSpecForPath(currentPath),
+      fromInbox: currentLocation.searchParams.get("from") === "inbox",
       specsRefresh: relevant.map((repository) => persistence.getRefreshState(repository.githubId, "specs")),
     };
   };

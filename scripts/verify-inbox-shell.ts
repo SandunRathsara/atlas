@@ -217,17 +217,17 @@ const assertShell = (body: string) => {
   assert(body.split('class="ax-notlive"').length - 1 >= 2);
   assert.match(body, /class="ax-live-item"[^>]*aria-label="[^"]*, not live/);
   // Not-started row links to its Spec and carries no Session pill.
-  assert.match(body, /href="\/repositories\/1\/specs\/3"[^>]*>(?:(?!<\/a>)[\s\S])*?<\/a>/);
-  assert(!/href="\/repositories\/1\/specs\/3"[^>]*>(?:(?!<\/a>)[\s\S])*?ax-pill/.test(body));
+  assert.match(body, /href="\/repositories\/1\/specs\/3\?from=inbox"[^>]*>(?:(?!<\/a>)[\s\S])*?<\/a>/);
+  assert(!/href="\/repositories\/1\/specs\/3\?from=inbox"[^>]*>(?:(?!<\/a>)[\s\S])*?ax-pill/.test(body));
   assert(body.includes("alpha · Spec #"));
   assert(body.includes("beta · Spec #"));
   assert(body.includes('aria-label="Repository filter: All Repositories"'));
   assert(body.includes("View all Sessions"));
   assert(body.includes('id="inbox-view-all-sessions"'));
   assert(body.includes('href="/sessions?status=all"'));
-  assert(body.includes(`href="/sessions/${waitingId}"`));
+  assert(body.includes(`href="/sessions/${waitingId}?from=inbox"`));
   assert(body.includes("/repositories/1/specs/3"));
-  assert(body.includes(`href="/sessions/${doneId}"`));
+  assert(body.includes(`href="/sessions/${doneId}?from=inbox"`));
   db.close();
 }
 

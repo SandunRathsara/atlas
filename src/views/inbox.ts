@@ -4,7 +4,7 @@
 import type { Inbox, InboxRow, RefreshState, Repository } from "../persistence.ts";
 import { escapeHtml, safeExternalUrl } from "./html.ts";
 import { icon } from "./icons.ts";
-import { renderLiveList } from "./frame.ts";
+import { inboxItemHref, renderLiveList } from "./frame.ts";
 import {
   ageShort,
   banner,
@@ -32,6 +32,8 @@ export type InboxContext = {
   currentPath: string;
   currentSessionFilter?: string;
   selectedSpec?: { repositoryId: string; issueNumber: string };
+  /** Opened from the Inbox (`?from=inbox`): keep the Inbox tab and lead back to it. */
+  fromInbox?: boolean;
   specsRefresh: Array<RefreshState | undefined>;
 };
 
@@ -48,10 +50,7 @@ const GROUP_LABEL: Record<Group, string> = {
 /** Settled rows shown before the rest fold under "Show N more". */
 const SETTLED_VISIBLE = 5;
 
-const itemHref = (row: InboxRow) =>
-  row.session
-    ? `/sessions/${encodeURIComponent(row.session.atlasId)}`
-    : `/repositories/${encodeURIComponent(row.repositoryId)}/specs/${encodeURIComponent(row.issueNumber)}`;
+const itemHref = inboxItemHref;
 
 const rowsIn = (inbox: InboxContext, group: Group) => inbox.list.rows.filter((row) => row.group === group);
 

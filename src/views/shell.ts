@@ -136,7 +136,9 @@ export const renderShell = ({
   startBar?: string;
   bodyClass?: string;
 }) => {
-  const current = tab ?? tabForPath(inbox.currentPath);
+  // Items opened from the Inbox stay in the Inbox: tab selected, back link to it.
+  const current = inbox.fromInbox ? "inbox" : tab ?? tabForPath(inbox.currentPath);
+  if (inbox.fromInbox && header?.back) header = { ...header, back: { ...header.back, href: "/inbox", label: "Inbox" } };
   const classes = [bodyClass, startBar ? "ax-has-startbar" : ""].filter(Boolean).join(" ");
   const filterAction = FILTERED_PAGES.has(inbox.currentPath) ? inbox.currentPath : "/inbox";
   const heading = header
