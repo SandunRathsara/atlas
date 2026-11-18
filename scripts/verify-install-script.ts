@@ -5,7 +5,8 @@
 //
 // Covers: not root (refused before any download, sudo command printed),
 // latest URL, pinned version (`+` sent as %2B, missing `v` added), bad
-// version, SHA mismatch, metadata mismatch, aarch64, musl, exit code passed
+// version, SHA mismatch, metadata mismatch, aarch64, musl, no curl (wget is
+// never used), exit code passed
 // through, root-only download folder under ATLAS_INSTALL_TMP_PARENT (TMPDIR
 // ignored), no terminal and no answers (root-only folder kept, next command
 // printed), temp folder removed; plus `sh -n`, `dash -n`, `shellcheck -s sh`.
@@ -187,7 +188,9 @@ files = fixture("none");
   const noSha = await install(["--answers", "a.json"], { bin: makeBin("nosha", { id }, ["sha256sum"]) });
   check("sha256sum missing refused", noSha.code === 1 && noSha.out.includes("sha256sum is missing"), noSha.out);
   const noCurl = await install(["--answers", "a.json"], { bin: makeBin("nocurl", { id }, ["curl"]) });
-  check("no curl/wget refused", noCurl.code === 1 && noCurl.out.includes("curl or wget is needed"), noCurl.out);
+  check("no curl refused", noCurl.code === 1 && noCurl.out.includes("curl is needed") && noCurl.requests.length === 0, noCurl.out);
+  const noCurlWget = await install(["--answers", "a.json"], { bin: makeBin("wgetonly", { id, wget: "echo wget-used >>\"" + log + "\"; exit 1" }, ["curl"]) });
+  check("wget is never used", noCurlWget.code === 1 && !noCurlWget.log.includes("wget-used"), noCurlWget.out + noCurlWget.log);
 }
 
 // ---------- 5. setup exit code is passed through ----------

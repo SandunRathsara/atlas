@@ -10,7 +10,7 @@
 #
 # Options: --version <vX.Y.Z+build.N> (or ATLAS_VERSION) pins a Release; every
 # other argument is passed to `atlas setup` (see docs/INSTALL.md).
-# Needs: root, Linux x86_64 with glibc, curl or wget, sha256sum, coreutils.
+# Needs: root, Linux x86_64 with glibc, curl, sha256sum, coreutils.
 # Prompts read /dev/tty, so `curl | sudo sh` works. The whole script is one
 # function called on the last line, so a cut-off download runs nothing.
 # Test hooks: ATLAS_INSTALL_BASE_URL replaces https://github.com/SandunRathsara/atlas/releases;
@@ -63,16 +63,14 @@ atlas_install() {
     die "this system uses musl libc (for example Alpine). Atlas needs glibc: use Debian, Ubuntu, Fedora, or similar."
   fi
   { have getconf && getconf GNU_LIBC_VERSION >/dev/null 2>&1; } || die "glibc was not found. Atlas needs a glibc Linux (Debian, Ubuntu, Fedora, ...)."
-  if have curl; then
-    if [ -n "${ATLAS_INSTALL_BASE_URL:-}" ]; then
-      fetch() { curl -fsSL --retry 3 -o "$2" "$1"; }
-    else
-      fetch() { curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$2" "$1"; }
-    fi
-  elif have wget; then
-    fetch() { wget -q -O "$2" "$1"; }
+  # curl only: --proto/--proto-redir keep every hop, redirects included, on
+  # HTTPS. (wget cannot refuse an https -> http redirect.) Only the test hook
+  # may use other schemes.
+  have curl || die "curl is needed (apt install curl)."
+  if [ -n "${ATLAS_INSTALL_BASE_URL:-}" ]; then
+    fetch() { curl -fsSL --retry 3 -o "$2" "$1"; }
   else
-    die "curl or wget is needed (apt install curl)."
+    fetch() { curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 -o "$2" "$1"; }
   fi
 
   # 2. which Release
