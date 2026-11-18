@@ -92,8 +92,11 @@ const assertRestrictedFile = (path: string, label: string, expectedOwnerUid?: nu
   }
 
   const uid = expectedOwnerUid ?? (typeof process.getuid === "function" ? process.getuid() : undefined);
-  if (!stat.isFile() || (exactMode === undefined ? (stat.mode & 0o077) !== 0 : (stat.mode & 0o777) !== exactMode) ||
-      (uid !== undefined && stat.uid !== uid)) {
+  // `atlas setup` installs secrets root-owned and group-readable (root:<group> 0640),
+  // so the service user can read but never change them.
+  const rootShared = expectedOwnerUid === undefined && exactMode === undefined && stat.uid === 0 && (stat.mode & 0o027) === 0;
+  if (!stat.isFile() || (!rootShared && ((exactMode === undefined ? (stat.mode & 0o077) !== 0 : (stat.mode & 0o777) !== exactMode) ||
+      (uid !== undefined && stat.uid !== uid)))) {
     throw new CredentialError(`${label} must be a private regular file`);
   }
   return stat;

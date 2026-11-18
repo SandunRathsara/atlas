@@ -7,7 +7,7 @@
 // the scripts can call back into `atlas ops` (scrub, restored-state check,
 // SQLite version). The TypeScript tools run in-process.
 import { Database } from "bun:sqlite";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import snapshot from "../../deploy/atlas-snapshot.sh" with { type: "text" };
@@ -60,7 +60,43 @@ const sqliteVersion = () => {
   }
 };
 
+const ACTIVE_SESSION_STATES = ["preparing", "running", "waiting", "idle"] as const;
+
+export type SessionSummary = { active: Record<string, number>; schema: number | null; readable: boolean };
+
+/**
+ * Active Session counts and schema version of an Atlas database, read-only.
+ * `atlas setup` runs this as the service user, so root never opens a file in
+ * the service-owned data folder.
+ */
+export const sessionSummary = (path: string): SessionSummary => {
+  if (!existsSync(path)) return { active: {}, schema: null, readable: true };
+  let database: Database | undefined;
+  try {
+    database = new Database(path, { readonly: true });
+    const active: Record<string, number> = {};
+    const rows = database.query(
+      `SELECT state, COUNT(*) AS count FROM sessions WHERE state IN (${ACTIVE_SESSION_STATES.map(() => "?").join(", ")}) GROUP BY state`,
+    ).all(...ACTIVE_SESSION_STATES) as Array<{ state: string; count: number }>;
+    for (const row of rows) active[row.state] = row.count;
+    const schema = (database.query("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number | null }).version;
+    return { active, schema, readable: true };
+  } catch {
+    return { active: {}, schema: null, readable: false };
+  } finally {
+    database?.close();
+  }
+};
+
 const IN_PROCESS: Record<string, (args: string[]) => number | Promise<number>> = {
+  "session-summary": ([path]) => {
+    if (!path) {
+      process.stderr.write("usage: atlas ops session-summary <atlas.sqlite>\n");
+      return 2;
+    }
+    process.stdout.write(`${JSON.stringify(sessionSummary(path))}\n`);
+    return 0;
+  },
   "scrub-opencode-credentials": async (args) => (await import("../ops/scrub-opencode-credentials.ts")).run(args),
   "check-restored-state": async (args) => (await import("../ops/check-restored-state.ts")).run(args),
   "sqlite-version": () => sqliteVersion(),
@@ -71,15 +107,22 @@ const usage = () => {
   return 2;
 };
 
-/** Writes the embedded tools into a new private folder and returns it. */
-export const materializeOps = () => {
+/**
+ * Writes the embedded tools into a new folder and returns it. Private (0700)
+ * by default; `shared` makes it readable but not writable by other accounts,
+ * so root can run a tool as the service user without that user being able to
+ * change it.
+ */
+export const materializeOps = (options: { shared?: boolean } = {}) => {
   const folder = mkdtempSync(join(tmpdir(), "atlas-ops-"));
-  chmodSync(folder, 0o700);
+  const directoryMode = options.shared ? 0o755 : 0o700;
+  chmodSync(folder, directoryMode);
   for (const [path, text] of Object.entries(EMBEDDED_OPS_FILES)) {
     const target = join(folder, path);
-    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+    mkdirSync(dirname(target), { recursive: true, mode: directoryMode });
+    chmodSync(dirname(target), directoryMode);
     writeFileSync(target, text, { mode: 0o600, flag: "wx" });
-    chmodSync(target, path.endsWith(".sh") ? 0o500 : 0o400);
+    chmodSync(target, path.endsWith(".sh") ? (options.shared ? 0o555 : 0o500) : (options.shared ? 0o444 : 0o400));
   }
   return folder;
 };

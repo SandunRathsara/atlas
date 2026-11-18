@@ -83,6 +83,13 @@ export const setUpTailscale = async (
 
   const existing = await currentServe(host, binary, dns);
   if (existing.known && existing.target === local) return { kind: "served", url };
+  if (!existing.known) {
+    // Unknown is not "empty": serving could replace someone else's config.
+    host.out(`Tailscale: could not read the current serve config, so something may already serve ${url}/.`);
+    if (!host.prompter || !await askYesNo(host, `Serve Atlas (${local}) at ${url}/ anyway, replacing whatever is there?`)) {
+      return { kind: "skipped", reason: `Tailscale: left the serve config alone. Check \`tailscale serve status\`, then: tailscale serve --bg --https=443 ${local}` };
+    }
+  }
   if (existing.known && existing.target) {
     host.out(`Tailscale already serves ${url}/ -> ${existing.target}.`);
     if (!host.prompter || !await askYesNo(host, `Replace it with Atlas (${local})?`)) {

@@ -9,34 +9,49 @@
 //   7. start, wait for /health, then optionally Tailscale Serve
 // Re-runs keep secrets and config unless a flag or answer says otherwise; a
 // changed file is backed up first.
-import { Database } from "bun:sqlite";
-import { createPrivateKey, randomBytes } from "node:crypto";
-import { copyFileSync, chmodSync, existsSync, mkdirSync, lstatSync, readFileSync, readlinkSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+//
+// Trust boundary: the service user is assumed hostile. Root never follows a
+// path that account can change: config lives in root-only /etc/atlas, the
+// GitHub App key has a fixed path, and everything inside the data folder is
+// created or read by the service user itself (`host.runAs`).
+import { createHash, createPrivateKey, randomBytes } from "node:crypto";
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import journaldConfig from "../../deploy/journald/atlas.conf" with { type: "text" };
-import { materializeOps } from "../commands/ops.ts";
-import { compareReleaseTags, assertReleaseMetadata, RELEASE_ASSET_NAME, type ReleaseMetadata } from "../release.ts";
+import { materializeOps, type SessionSummary } from "../commands/ops.ts";
+import { compareReleaseTags, assertReleaseMetadata, MAX_RELEASE_ASSET_BYTES, RELEASE_ASSET_NAME, type ReleaseMetadata } from "../release.ts";
 import { buildReleaseFolder, releaseFolderIntact, releaseFolderName } from "../release-layout.ts";
 import { installShippedSupportServices } from "../updater.ts";
 import { checkActivationHealth } from "../updater-server.ts";
 import { MAINTENANCE_UNIT_NAMES, renderMaintenanceUnits, renderUnits, UNIT_NAMES } from "../units.ts";
 import { parseSetupArgs, SETUP_USAGE, UsageError, type Answers, type SetupOptions } from "./answers.ts";
 import {
-  at, backupFile, ensureDirectory, lstat, parseEnv, readText, replaceSymlink, ROOT_OWNER, updateEnv, writeFileAtomic, type Owner,
+  assertSafeParents, at, backupFile, ensureDirectory, fileMatches, lstat, parseEnv, readFileSafe, readText, replaceSymlink,
+  rootOnly, ROOT_OWNER, UnsafePathError, updateEnv, writeFileAtomic, type Owner,
 } from "./files.ts";
-import { realHost, type Account, type SetupHost } from "./host.ts";
+import { realHost, type Account, type RunAs, type SetupHost } from "./host.ts";
 import { DEFAULT_OPENCODE, preflight, printFindings } from "./preflight.ts";
 import { funnelHint, setUpTailscale } from "./tailscale.ts";
 
 const PREFIX = "/opt/atlas";
 const CONFIG = "/etc/atlas";
+/** Fixed: never taken from an env file. */
+const KEY_PATH = `${CONFIG}/github-app.pem`;
+const DEFAULT_USER = "atlas";
+/** Groups that can become root (or as good as). */
+const PRIVILEGED_GROUPS = ["root", "sudo", "wheel", "admin", "adm", "docker", "lxd", "incus", "libvirt", "disk"];
+/** atlas.env keys that name paths; trusted only from a root-only atlas.env. */
+const PATH_KEYS = [
+  "ATLAS_DATABASE_PATH", "ATLAS_SESSION_ROOT", "ATLAS_CREDENTIAL_REGISTRY_PATH", "ATLAS_RECOVERY_CONFIG_ROOT", "OPENCODE_SERVICE_FILE",
+  "ATLAS_RECOVERY_STATUS_PATH", "ATLAS_GITHUB_ENV_PATH", "ATLAS_SUPPLIER_KEY_PATH", "ATLAS_UPDATER_KEY_PATH", "ATLAS_SUPPLIER_SOCKET",
+  "ATLAS_UPDATER_SOCKET",
+];
 const UNIT_DIR = "/etc/systemd/system";
 const BACKUP_ROOT = "/var/backups/atlas";
 const BIN_LINK = "/usr/local/bin/atlas";
 const JOURNALD = "/etc/systemd/journald@atlas.conf";
 const START_ORDER = ["atlas-credentials.service", "atlas-updater.service", "atlas.service"] as const;
 const STOP_ORDER = ["atlas.service", "atlas-updater.service", "atlas-credentials.service"] as const;
-const ACTIVE_SESSION_STATES = ["preparing", "running", "waiting", "idle"] as const;
 
 /** A planned stop: the message is already user-facing. */
 export class SetupStop extends Error {}
@@ -57,15 +72,19 @@ type Existing = {
 };
 
 type Config = {
+  /** uid/gid are -1 until a new account is created. */
   user: Account;
   group: string;
   gid: number;
+  /** Create the service account (consented). */
+  createUser: boolean;
+  /** Why this account can become root; empty when it cannot. */
+  privileged: string[];
   organization: string;
   appId: string;
   installationId: string;
-  /** PEM to copy in; null keeps the installed key. */
-  privateKeySource: string | null;
-  privateKeyPath: string;
+  /** PEM to install at KEY_PATH; null keeps the installed key. */
+  privateKey: { bytes: Buffer; from: string } | null;
   origin: string | undefined;
   port: number;
   webhookPort: number;
@@ -79,46 +98,120 @@ type Config = {
 
 // ---------- reading ----------
 
-const loadSource = (host: SetupHost, options: SetupOptions) => {
-  if (options.sourceDir) {
-    const directory = resolve(options.sourceDir);
+type Source = { binary: string; metadata: ReleaseMetadata; stage: string };
+
+/** Root-owned parent for the staged copy of the Release (on disk, not tmpfs). */
+const STAGE_PARENT = "/var/tmp";
+
+/**
+ * Copies the Release to install into a new root-owned folder and reads it only
+ * from there, so nobody can change it between the checks and the install.
+ * As root, the source folder, its parents, and each file must be root-only.
+ */
+const loadSource = (host: SetupHost, options: SetupOptions): Source => {
+  const fromExec = !options.sourceDir;
+  let directory: string;
+  try {
+    directory = fromExec ? dirname(realpathSync(host.execPath)) : realpathSync(resolve(options.sourceDir!));
+  } catch {
+    throw new SetupStop(fromExec ? "No Release to install was found next to this binary. Use install.sh, or pass --source-dir <folder>." : `${options.sourceDir} does not exist`);
+  }
+  const names = fromExec
+    ? { binary: "atlas", metadata: "RELEASE_METADATA.json", checksum: null }
+    : { binary: RELEASE_ASSET_NAME, metadata: "atlas-release.json", checksum: `${RELEASE_ASSET_NAME}.sha256` };
+  const unsafe = (what: string) => new SetupStop(
+    `${what} must be owned by root and not writable by any other account. Download the Release into a root-only folder (install.sh does this) and run setup again.`,
+  );
+  if (host.isRoot) {
+    const stat = readdirStat(directory);
+    if (!stat || !rootOnly(host, stat)) throw unsafe(directory);
+    try {
+      assertSafeParents(host, directory);
+    } catch (error) {
+      if (error instanceof UnsafePathError) throw unsafe(`Every folder above ${directory}`);
+      throw error;
+    }
+  }
+  const stage = mkdtempSync(join(STAGE_PARENT, "atlas-setup-"));
+  try {
+    // Readable and executable by the service user (it runs `atlas ops session-summary`), writable only by root.
+    chmodSync(stage, 0o755);
+    const copy = (name: string, target: string, mode: number, limit: number, optional = false) => {
+      const file = readFileSafe(join(directory, name), limit);
+      if (!file) {
+        if (optional && !lstat({ root: "" }, join(directory, name))) return null;
+        throw new SetupStop(`${join(directory, name)} is missing or not a regular file`);
+      }
+      if (host.isRoot && !rootOnly(host, file.stat)) throw unsafe(join(directory, name));
+      writeFileSync(join(stage, target), file.bytes, { mode, flag: "wx" });
+      chmodSync(join(stage, target), mode);
+      return file.bytes;
+    };
+    const binary = copy(names.binary, "atlas", 0o555, MAX_RELEASE_ASSET_BYTES)!;
+    const metadataBytes = copy(names.metadata, "atlas-release.json", 0o444, 64 * 1024)!;
+    const checksum = names.checksum ? copy(names.checksum, "atlas-linux-x64.sha256", 0o444, 4096, true) : null;
     let metadata: ReleaseMetadata;
     try {
-      metadata = assertReleaseMetadata(JSON.parse(readFileSync(join(directory, "atlas-release.json"), "utf8")));
+      metadata = assertReleaseMetadata(JSON.parse(metadataBytes.toString("utf8")));
     } catch (error) {
-      throw new SetupStop(`${directory}/atlas-release.json is missing or invalid: ${(error as Error).message}`);
+      throw new SetupStop(`${join(directory, names.metadata)} is invalid: ${(error as Error).message}`);
     }
-    const checksum = join(directory, `${RELEASE_ASSET_NAME}.sha256`);
-    if (existsSync(checksum) && readFileSync(checksum, "utf8").trim().split(/\s+/u)[0] !== metadata.asset.sha256) {
-      throw new SetupStop(`${checksum} does not match atlas-release.json`);
+    if (checksum && checksum.toString("utf8").trim().split(/\s+/u)[0] !== metadata.asset.sha256) {
+      throw new SetupStop(`${join(directory, names.checksum!)} does not match ${names.metadata}`);
     }
-    return { binary: join(directory, RELEASE_ASSET_NAME), metadata };
+    if (binary.byteLength !== metadata.asset.size || createHash("sha256").update(binary).digest("hex") !== metadata.asset.sha256) {
+      throw new SetupStop(`${join(directory, names.binary)} does not match the SHA-256 in ${names.metadata}`);
+    }
+    return { binary: join(stage, "atlas"), metadata, stage };
+  } catch (error) {
+    rmSync(stage, { recursive: true, force: true });
+    throw error;
   }
-  const directory = dirname(realpathSync(host.execPath));
-  try {
-    const metadata = assertReleaseMetadata(JSON.parse(readFileSync(join(directory, "RELEASE_METADATA.json"), "utf8")));
-    return { binary: join(directory, "atlas"), metadata };
-  } catch {
-    throw new SetupStop("No Release to install was found next to this binary. Use install.sh, or pass --source-dir <folder>.");
-  }
+};
+
+const readdirStat = (directory: string) => {
+  const stat = lstat({ root: "" }, directory);
+  return stat?.isDirectory() ? stat : null;
 };
 
 const unitValue = (text: string, pattern: RegExp) => pattern.exec(text)?.[1]?.trim();
 
+/** Text of a file only root can have written (root-owned, not group/other writable), else null. */
+const readTrusted = (host: SetupHost, path: string) => {
+  const file = readFileSafe(at(host, path));
+  return file && rootOnly(host, file.stat) ? file.bytes.toString("utf8") : null;
+};
+
 const readExisting = (host: SetupHost): Existing => {
-  const unit = readText(host, `${UNIT_DIR}/atlas.service`);
-  const openCodeUnit = readText(host, `${UNIT_DIR}/opencode.service`) ?? "";
+  for (const name of ["atlas.service", "opencode.service"]) {
+    const path = `${UNIT_DIR}/${name}`;
+    if (lstat(host, path) && readTrusted(host, path) === null) {
+      throw new SetupStop(`${path} is not a regular file owned by root and writable only by root, so systemd may already run something another account controls. Check it, then fix it: chown root:root ${path} && chmod 0644 ${path}`);
+    }
+  }
+  const unit = readTrusted(host, `${UNIT_DIR}/atlas.service`);
+  const openCodeUnit = readTrusted(host, `${UNIT_DIR}/opencode.service`) ?? "";
   const atlasEnvText = readText(host, `${CONFIG}/atlas.env`);
+  const atlasEnv = parseEnv(atlasEnvText ?? "");
+  const atlasEnvTrusted = atlasEnvText !== null && readTrusted(host, `${CONFIG}/atlas.env`) !== null;
+  if (atlasEnvText !== null && !atlasEnvTrusted) {
+    // Another account could have written it: keep its secrets, never its paths.
+    host.out(`! ${CONFIG}/atlas.env is not root-only; its paths are ignored and it is rewritten root:root 0600.`);
+    for (const key of PATH_KEYS) atlasEnv.delete(key);
+  }
+  // github.env may still be service-owned (older installs): only its IDs are used, never a path.
   const githubEnvText = readText(host, `${CONFIG}/github.env`);
+  const githubEnvTrusted = githubEnvText !== null && readTrusted(host, `${CONFIG}/github.env`) !== null;
   const layout = unit === null
     ? (atlasEnvText !== null ? "current" : "none")
     : /\/bun\b|src\/server\.ts/u.test(unit) ? "old" : "current";
   const units = `${unit ?? ""}\n${openCodeUnit}`;
   return {
     layout,
-    atlasEnvText,
-    githubEnvText,
-    atlasEnv: parseEnv(atlasEnvText ?? ""),
+    // Rewritten from a fresh header unless only root could have written them.
+    atlasEnvText: atlasEnvTrusted ? atlasEnvText : null,
+    githubEnvText: githubEnvTrusted ? githubEnvText : null,
+    atlasEnv,
     githubEnv: parseEnv(githubEnvText ?? ""),
     unitUser: unitValue(units, /^User=(\S+)$/mu),
     unitGroup: unitValue(units, /^Group=(\S+)$/mu),
@@ -143,25 +236,22 @@ const isBtrfs = async (host: SetupHost, dataDir: string) => {
   return result.code === 0 && result.stdout.trim() === "btrfs";
 };
 
-type SessionCheck = { active: Record<string, number>; schema: number | null; readable: boolean };
+type SessionCheck = SessionSummary;
 
-const readSessions = (host: SetupHost, dataDir: string): SessionCheck => {
-  const path = at(host, `${dataDir}/atlas.sqlite`);
-  if (!existsSync(path)) return { active: {}, schema: null, readable: true };
-  let database: Database | undefined;
+/** Active Sessions, read by the service user through the staged binary (root never opens the database). */
+const readSessions = async (host: SetupHost, binary: string, reader: RunAs | undefined, dataDir: string): Promise<SessionCheck> => {
+  const path = `${dataDir}/atlas.sqlite`;
+  if (!lstat(host, path)) return { active: {}, schema: null, readable: true };
+  if (!reader) return { active: {}, schema: null, readable: false };
+  const result = await host.runAs(reader, [binary, "ops", "session-summary", at(host, path)], { timeoutMs: 30_000 });
   try {
-    database = new Database(path, { readonly: true });
-    const active: Record<string, number> = {};
-    const rows = database.query(
-      `SELECT state, COUNT(*) AS count FROM sessions WHERE state IN (${ACTIVE_SESSION_STATES.map(() => "?").join(", ")}) GROUP BY state`,
-    ).all(...ACTIVE_SESSION_STATES) as Array<{ state: string; count: number }>;
-    for (const row of rows) active[row.state] = row.count;
-    const schema = (database.query("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number | null }).version;
-    return { active, schema, readable: true };
+    const parsed = JSON.parse(result.stdout) as SessionSummary;
+    const counts = Object.values(parsed.active ?? {});
+    if (result.code !== 0 || typeof parsed.readable !== "boolean" || !counts.every((count) => Number.isSafeInteger(count) && count >= 0) ||
+        !(parsed.schema === null || Number.isSafeInteger(parsed.schema))) throw new Error();
+    return { active: parsed.active, schema: parsed.schema, readable: parsed.readable };
   } catch {
     return { active: {}, schema: null, readable: false };
-  } finally {
-    database?.close();
   }
 };
 
@@ -170,6 +260,10 @@ const readSessions = (host: SetupHost, dataDir: string): SessionCheck => {
 const ORG = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u;
 const DIGITS = /^[1-9]\d{0,19}$/u;
 const PLAIN_PATH = /^\/[A-Za-z0-9._/@+-]*[^/]$/u;
+const USER_NAME = /^[a-z_][a-z0-9_-]{0,30}$/u;
+/** Folders the data folder must not be (or be inside). */
+const SYSTEM_FOLDERS = ["/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/opt/atlas", "/proc", "/root", "/run", "/sbin", "/sys", "/usr", "/var/backups/atlas"];
+const SYSTEM_EXACT = ["/home", "/opt", "/srv", "/tmp", "/var", "/var/lib", "/var/tmp", "/mnt", "/media"];
 
 const validateOrigin = (value: string) => {
   try {
@@ -180,10 +274,19 @@ const validateOrigin = (value: string) => {
   }
 };
 
+const pemError = (text: string) => {
+  try {
+    const key = createPrivateKey(text);
+    return key.asymmetricKeyType === "rsa" ? null : "is not an RSA private key (GitHub App keys are RSA)";
+  } catch {
+    return "is not a readable PEM private key";
+  }
+};
+
+/** The operator named this file, so root reads it. */
 const validatePem = (path: string) => {
   try {
-    const key = createPrivateKey(readFileSync(path, "utf8"));
-    return key.asymmetricKeyType === "rsa" ? null : "is not an RSA private key (GitHub App keys are RSA)";
+    return pemError(readFileSync(path, "utf8"));
   } catch {
     return "is not a readable PEM private key";
   }
@@ -209,7 +312,8 @@ const resolveAnswer = async (
     if (error) throw new SetupStop(`${spec.flag} ${spec.explicit}: ${spec.label} ${error}`);
     return spec.explicit;
   }
-  if (spec.existing !== undefined) return spec.existing;
+  // A stored value is used only while it is still valid; otherwise it counts as missing.
+  if (spec.existing !== undefined && spec.validate(spec.existing) === null) return spec.existing;
   if (!host.prompter) {
     if (spec.fallback !== undefined || spec.optional) return spec.fallback ?? "";
     throw new SetupStop(`Missing answer: ${spec.label}. Pass ${spec.flag} or put it in --answers.`);
@@ -224,6 +328,22 @@ const resolveAnswer = async (
   }
 };
 
+/** Why `account` (or `group`) can become root; best effort. Empty when it cannot. */
+const privilegeReasons = async (host: SetupHost, account: Account, group: string) => {
+  const reasons: string[] = [];
+  if (account.uid === 0 || account.gid === 0) reasons.push("it is root");
+  const groups = (await host.run(["id", "-nG", "--", account.name], { timeoutMs: 10_000 })).stdout.trim().split(/\s+/u).filter(Boolean);
+  for (const name of new Set([...groups, group])) if (PRIVILEGED_GROUPS.includes(name)) reasons.push(`group ${name}`);
+  const sudo = await host.run(["sudo", "-n", "-l", "-U", account.name], { timeoutMs: 10_000 });
+  if (sudo.code === 0 && /may run the following commands/iu.test(sudo.stdout)) reasons.push("sudo rules");
+  return reasons;
+};
+
+const riskText = (name: string, reasons: string[]) => [
+  `${name} can become root (${reasons.join(", ")}).`,
+  "Atlas runs AI coding Sessions as this account, so anything that takes over a Session could take over this whole machine.",
+];
+
 const gatherConfig = async (
   host: SetupHost,
   answers: Answers,
@@ -232,23 +352,49 @@ const gatherConfig = async (
   mode: Mode,
 ): Promise<Config> => {
   const fresh = mode === "fresh";
-  const userName = await resolveAnswer(host, {
-    label: "Service user (runs Atlas; not root)", flag: "--user", explicit: answers.user, existing: existing.unitUser,
-    fallback: host.invokingUser && host.invokingUser !== "root" ? host.invokingUser : undefined,
-    validate: (value) => {
-      const account = host.user(value);
-      return !account ? "does not exist (create it with: useradd -m <name>)" : account.uid === 0 ? "must not be root" : null;
-    },
+  // An installed host keeps its service user unless --user says otherwise.
+  const kept = answers.user === undefined && existing.unitUser !== undefined && USER_NAME.test(existing.unitUser) &&
+    (host.user(existing.unitUser)?.uid ?? 0) !== 0 ? existing.unitUser : undefined;
+  const userName = kept ?? await resolveAnswer(host, {
+    label: "Service user (runs Atlas; a dedicated account is safest)", flag: "--user", explicit: answers.user, fallback: DEFAULT_USER,
+    validate: (value) => (!USER_NAME.test(value) ? "is not a valid account name" : host.user(value)?.uid === 0 ? "must not be root" : null),
   });
-  const user = host.user(userName);
-  if (!user || user.uid === 0) throw new SetupStop(`Service user ${userName} does not exist or is root.`);
-  const group = await resolveAnswer(host, {
-    label: "Service group", flag: "--group", explicit: answers.group, existing: existing.unitGroup,
-    fallback: host.group(user.name) !== null ? user.name : undefined,
-    validate: (value) => (host.group(value) === null ? "does not exist" : host.group(value) === 0 ? "must not be root" : null),
-  });
-  const gid = host.group(group);
+  const account = host.user(userName);
+  if (account?.uid === 0) throw new SetupStop(`Service user ${userName} must not be root.`);
+  let group: string;
+  if (account) {
+    group = await resolveAnswer(host, {
+      label: "Service group", flag: "--group", explicit: answers.group, existing: kept ? existing.unitGroup : undefined,
+      fallback: host.group(account.name) !== null ? account.name : undefined,
+      validate: (value) => (host.group(value) === null ? "does not exist" : host.group(value) === 0 ? "must not be root" : null),
+    });
+  } else {
+    // A new account gets its own group.
+    if (answers.group !== undefined && answers.group !== userName) throw new SetupStop(`--group: a new account ${userName} gets its own group ${userName}.`);
+    group = userName;
+  }
+  const gid = account ? host.group(group) : -1;
   if (gid === null || gid === 0) throw new SetupStop(`Service group ${group} does not exist or is root.`);
+
+  // Never run as an account that can become root without an explicit yes.
+  const privileged = account ? await privilegeReasons(host, account, group) : [];
+  if (privileged.length > 0) {
+    const [risk, impact] = riskText(userName, privileged);
+    if (kept) {
+      host.out(`! ${risk} ${impact}`);
+      host.out(`  Kept, because this install already runs as ${userName}. To move: atlas setup --user atlas --create-user`);
+    } else if (answers.allowPrivilegedUser) {
+      host.out(`! ${risk} Allowed by --allow-privileged-user.`);
+    } else if (host.prompter) {
+      host.out(`! ${risk}`);
+      host.out(`  ${impact}`);
+      if (!await askYesNo(host, `Run Atlas as ${userName} anyway?`)) {
+        throw new SetupStop("Nothing was changed. Use a dedicated account instead: --user atlas --create-user");
+      }
+    } else {
+      throw new SetupStop(`${risk} ${impact} Use a dedicated account (--user atlas --create-user), or pass --allow-privileged-user.`);
+    }
+  }
 
   const organization = await resolveAnswer(host, {
     label: "GitHub organization", flag: "--org", explicit: answers.organization, existing: existing.githubEnv.get("ATLAS_GITHUB_ORGANIZATION"),
@@ -263,18 +409,30 @@ const gatherConfig = async (
     existing: existing.githubEnv.get("ATLAS_GITHUB_INSTALLATION_ID"),
     validate: (value) => (DIGITS.test(value) ? null : "must be a number"),
   });
-  const installedKey = existing.githubEnv.get("ATLAS_GITHUB_APP_PRIVATE_KEY_PATH") ?? `${CONFIG}/github-app.pem`;
-  const keyInstalled = lstat(host, installedKey)?.isFile() === true;
-  const privateKeySource = answers.privateKeyPath !== undefined || !keyInstalled
-    ? await resolveAnswer(host, {
-      label: "GitHub App private key file (.pem)", flag: "--private-key", explicit: answers.privateKeyPath,
-      validate: (value) => {
-        const error = validatePem(value);
-        return error ? `${error}` : null;
-      },
-    })
-    : null;
-  const privateKeyPath = privateKeySource === null ? installedKey : `${CONFIG}/github-app.pem`;
+
+  // The key always lives at KEY_PATH. A path from github.env (which older
+  // installs let the service user write) is read only as that user.
+  const askForKey = async () => {
+    const source = await resolveAnswer(host, {
+      label: "GitHub App private key file (.pem)", flag: "--private-key", explicit: answers.privateKeyPath, validate: validatePem,
+    });
+    return { bytes: readFileSync(source), from: source };
+  };
+  let privateKey: Config["privateKey"] = null;
+  if (answers.privateKeyPath !== undefined) {
+    privateKey = await askForKey();
+  } else if (!readFileSafe(at(host, KEY_PATH))) {
+    const legacy = existing.githubEnv.get("ATLAS_GITHUB_APP_PRIVATE_KEY_PATH");
+    if (legacy && legacy !== KEY_PATH && PLAIN_PATH.test(legacy) && account) {
+      const read = await host.runAs({ user: account.name, group }, ["cat", "--", at(host, legacy)], { timeoutMs: 10_000 });
+      if (read.code === 0 && read.stdout.length <= 64 * 1024 && pemError(read.stdout) === null) {
+        privateKey = { bytes: Buffer.from(read.stdout), from: `${legacy} (read as ${account.name})` };
+      } else {
+        host.out(`! The GitHub App key named in github.env (${legacy}) could not be read as ${account.name}.`);
+      }
+    }
+    privateKey ??= await askForKey();
+  }
 
   const originAnswer = await resolveAnswer(host, {
     label: "Browser URL for Atlas, https://… (Enter: use Tailscale or set later)", flag: "--origin",
@@ -294,10 +452,27 @@ const gatherConfig = async (
   const dataDir = await resolveAnswer(host, {
     label: "Data folder", flag: "--data-dir", explicit: answers.dataDir,
     existing: existingDatabase ? dirname(existingDatabase) : undefined, fallback: "/var/lib/atlas",
-    validate: (value) => (PLAIN_PATH.test(value) && !value.split("/").includes("..") && value !== "/" ? null : "must be a plain absolute path"),
+    validate: (value) => {
+      if (!PLAIN_PATH.test(value) || value.split("/").includes("..") || value === "/") return "must be a plain absolute path";
+      if (SYSTEM_EXACT.includes(value) || SYSTEM_FOLDERS.some((folder) => value === folder || value.startsWith(`${folder}/`))) {
+        return "must be a folder of its own, not a system folder";
+      }
+      return null;
+    },
   });
+
+  let createUser = false;
+  if (!account) {
+    const question = `Create the system account ${userName} (no password, no login shell, home ${dataDir}/home)?`;
+    if (answers.createUser) createUser = true;
+    else if (host.prompter) createUser = await askYesNo(host, question);
+    if (!createUser) {
+      throw new SetupStop(`Service user ${userName} does not exist. Re-run with --create-user to create it, or pass --user <existing account>.`);
+    }
+  }
   return {
-    user, group, gid, organization, appId, installationId, privateKeySource, privateKeyPath,
+    user: account ?? { name: userName, uid: -1, gid: -1, home: `${dataDir}/home` },
+    group, gid, createUser, privileged, organization, appId, installationId, privateKey,
     origin: originAnswer || undefined, port, webhookPort, dataDir,
     ...tools, btrfs: await isBtrfs(host, dataDir),
   };
@@ -322,24 +497,26 @@ const step = async (context: Context, description: string, action: () => unknown
   if (!context.options.dryRun) await action();
 };
 
-/** Writes a file only when its text differs; backs up the old text first. Always enforces mode and owner. */
+/**
+ * Makes `path` a single-link file with exactly this text, mode, and owner.
+ * Anything else is replaced by a fresh file (never chmod/chown in place); a
+ * changed text is backed up first.
+ */
 const writeManaged = (context: Context, path: string, text: string | Uint8Array, mode: number, owner: Owner) => {
   const { host } = context;
-  const before = lstat(host, path);
-  const same = before?.isFile() === true && Buffer.from(readFileSync(at(host, path))).equals(Buffer.from(text));
-  if (!same) {
-    if (before) {
+  if (fileMatches(host, path, text, mode, owner)) return;
+  const before = readFileSafe(at(host, path));
+  const sameText = before?.bytes.equals(Buffer.from(text)) === true;
+  if (!sameText) {
+    if (lstat(host, path)) {
       ensureDirectory(host, BACKUP_ROOT, 0o700, ROOT_OWNER);
       backupFile(host, path, context.backupDir);
     } else {
       context.created.push(path);
     }
-    writeFileAtomic(host, path, text, mode, owner);
     context.changed.add(path);
-    return;
   }
-  chmodSync(at(host, path), mode);
-  host.chown(at(host, path), owner.uid, owner.gid);
+  writeFileAtomic(host, path, text, mode, owner);
 };
 
 const secret = () => randomBytes(32).toString("base64url");
@@ -357,14 +534,15 @@ const atlasEnvText = (context: Context, config: Config, existing: Existing, secr
     ATLAS_ORIGIN: config.origin ?? (answers.origin === "" ? undefined : existing.atlasEnv.get("ATLAS_ORIGIN")),
     ATLAS_PORT: keep("ATLAS_PORT", String(config.port), answers.port !== undefined),
     ATLAS_WEBHOOK_PORT: keep("ATLAS_WEBHOOK_PORT", String(config.webhookPort), answers.webhookPort !== undefined),
-    ATLAS_GITHUB_ENV_PATH: keep("ATLAS_GITHUB_ENV_PATH", `${CONFIG}/github.env`),
+    // Fixed: root-only files in a root-only folder.
+    ATLAS_GITHUB_ENV_PATH: `${CONFIG}/github.env`,
     ATLAS_DATABASE_PATH: keep("ATLAS_DATABASE_PATH", `${data}/atlas.sqlite`, explicitData),
     ATLAS_SESSION_ROOT: keep("ATLAS_SESSION_ROOT", `${data}/sessions`, explicitData),
     ATLAS_CREDENTIAL_REGISTRY_PATH: keep("ATLAS_CREDENTIAL_REGISTRY_PATH", `${data}/session-scopes.json`, explicitData),
     ATLAS_SUPPLIER_SOCKET: keep("ATLAS_SUPPLIER_SOCKET", "/run/atlas/supplier.sock"),
-    ATLAS_SUPPLIER_KEY_PATH: keep("ATLAS_SUPPLIER_KEY_PATH", `${CONFIG}/supplier.key`),
+    ATLAS_SUPPLIER_KEY_PATH: `${CONFIG}/supplier.key`,
     ATLAS_UPDATER_SOCKET: keep("ATLAS_UPDATER_SOCKET", "/run/atlas-updater/updater.sock"),
-    ATLAS_UPDATER_KEY_PATH: keep("ATLAS_UPDATER_KEY_PATH", `${CONFIG}/updater.key`),
+    ATLAS_UPDATER_KEY_PATH: `${CONFIG}/updater.key`,
     // Always the current Release's wrapper (older installs pointed into the source tree).
     ATLAS_GIT_BINARY: `${PREFIX}/current/bin/git`,
     ATLAS_RECOVERY_CONFIG_ROOT: keep("ATLAS_RECOVERY_CONFIG_ROOT", `${data}/recovery-config`, explicitData),
@@ -375,12 +553,14 @@ const atlasEnvText = (context: Context, config: Config, existing: Existing, secr
   });
 };
 
+const GITHUB_ENV_HEADER = "# Written by `atlas setup`. root:<service group> 0640.\n";
+
 const githubEnvText = (config: Config, existing: Existing) =>
-  updateEnv(existing.githubEnvText ?? "# Written by `atlas setup`. Owned by the service user, 0600.\n", {
+  updateEnv((existing.githubEnvText ?? GITHUB_ENV_HEADER).replace("# Written by `atlas setup`. Owned by the service user, 0600.\n", GITHUB_ENV_HEADER), {
     ATLAS_GITHUB_ORGANIZATION: config.organization,
     ATLAS_GITHUB_INSTALLATION_ID: config.installationId,
     ATLAS_GITHUB_APP_ID: config.appId,
-    ATLAS_GITHUB_APP_PRIVATE_KEY_PATH: config.privateKeyPath,
+    ATLAS_GITHUB_APP_PRIVATE_KEY_PATH: KEY_PATH,
   });
 
 const systemctl = async (host: SetupHost, ...args: string[]) => {
@@ -438,12 +618,9 @@ const restoreAdopt = async (context: Context, links: Record<string, string | nul
   for (const unit of STOP_ORDER) await host.run(["systemctl", "stop", unit], { timeoutMs: 120_000 });
   for (const path of context.created) rmSync(at(host, path), { force: true });
   for (const path of context.changed) {
-    const saved = at(host, `${context.backupDir}${path}`);
-    const stat = lstatSync(saved, { throwIfNoEntry: false });
-    if (!stat) continue;
-    copyFileSync(saved, at(host, path));
-    chmodSync(at(host, path), stat.mode & 0o777);
-    host.chown(at(host, path), stat.uid, stat.gid);
+    const saved = readFileSafe(at(host, `${context.backupDir}${path}`), 64 * 1024 * 1024);
+    if (!saved) continue;
+    writeFileAtomic(host, path, saved.bytes, saved.stat.mode & 0o7777, host.owner(saved.stat));
   }
   for (const [path, target] of Object.entries(links)) {
     if (target) replaceSymlink(host, path, target);
@@ -467,10 +644,11 @@ const confirmSessions = async (host: SetupHost, options: SetupOptions, sessions:
   throw new SetupStop("Stopped: wait for Sessions to finish, or re-run with --confirm-running-sessions.");
 };
 
-const writeOpenCodeConfig = async (host: SetupHost, dataDir: string) => {
-  const folder = materializeOps();
+/** Installs the OpenCode config as the service user (the folder is theirs). */
+const writeOpenCodeConfig = async (host: SetupHost, account: RunAs, dataDir: string) => {
+  const folder = materializeOps({ shared: true });
   try {
-    const result = await host.run(["bash", join(folder, "install-opencode-config.sh"), at(host, `${dataDir}/opencode-config`)], { timeoutMs: 60_000 });
+    const result = await host.runAs(account, ["bash", join(folder, "install-opencode-config.sh"), at(host, `${dataDir}/opencode-config`)], { timeoutMs: 60_000 });
     if (result.code !== 0) throw new Error(`OpenCode configuration install failed: ${result.stderr.trim()}`);
   } finally {
     rmSync(folder, { recursive: true, force: true });
@@ -507,6 +685,33 @@ export const runSetup = async (args: string[], hostOverride?: SetupHost): Promis
 
 const setup = async (host: SetupHost, options: SetupOptions): Promise<number> => {
   const source = loadSource(host, options);
+  try {
+    return await install(host, options, source);
+  } finally {
+    rmSync(source.stage, { recursive: true, force: true });
+  }
+};
+
+const NOLOGIN = ["/usr/sbin/nologin", "/sbin/nologin", "/usr/bin/nologin"];
+const DATA_SUBDIRS = ["/sessions", "/opencode-runtime", "/opencode-config", "/opencode-data", "/opencode-data/opencode",
+  "/opencode-state", "/opencode-state/opencode", "/opencode-cache"];
+
+/** Stops before any change when the data folder belongs to someone else. */
+const checkDataDir = (host: SetupHost, config: Config) => {
+  const stat = lstat(host, config.dataDir);
+  if (!stat) return;
+  if (!stat.isDirectory()) throw new SetupStop(`${config.dataDir} exists and is not a folder.`);
+  const owner = host.owner(stat).uid;
+  if (owner === 0) {
+    if (readdirSync(at(host, config.dataDir)).length > 0) {
+      throw new SetupStop(`${config.dataDir} is a root-owned folder that is not empty. Pick an empty or new data folder (--data-dir).`);
+    }
+  } else if (owner !== config.user.uid) {
+    throw new SetupStop(`${config.dataDir} belongs to another account (uid ${owner}). Pick a new data folder (--data-dir).`);
+  }
+};
+
+const install = async (host: SetupHost, options: SetupOptions, source: Source): Promise<number> => {
   const existing = readExisting(host);
   const mode: Mode = existing.layout === "old" ? "adopt" : existing.layout === "current" ? "rerun" : "fresh";
   const answers = options.answers;
@@ -554,9 +759,11 @@ const setup = async (host: SetupHost, options: SetupOptions): Promise<number> =>
   const token = !options.rotateToken && existing.atlasEnv.get("ATLAS_SHARED_TOKEN") || secret();
   const webhook = !options.rotateWebhookSecret && existing.atlasEnv.get("ATLAS_GITHUB_WEBHOOK_SECRET") || secret();
   const tokenIsNew = token !== existing.atlasEnv.get("ATLAS_SHARED_TOKEN");
-  const userOwner: Owner = { uid: config.user.uid, gid: config.gid };
-  const groupOwner: Owner = { uid: 0, gid: config.gid };
   const runAs = { user: config.user.name, group: config.group };
+  checkDataDir(host, config);
+  // Owners are known once a new account exists (see the first step).
+  const userOwner = (): Owner => ({ uid: config.user.uid, gid: config.gid });
+  const groupOwner = (): Owner => ({ uid: 0, gid: config.gid });
 
   // 5. adopt: sessions, backup, stop (recorded so a failure can be undone)
   const links: Record<string, string | null> = {
@@ -564,7 +771,8 @@ const setup = async (host: SetupHost, options: SetupOptions): Promise<number> =>
     [`${PREFIX}/services/current`]: readLink(host, `${PREFIX}/services/current`),
     [BIN_LINK]: readLink(host, BIN_LINK),
   };
-  const sessionsBefore = readSessions(host, config.dataDir);
+  const reader = config.createUser ? undefined : runAs;
+  const sessionsBefore = await readSessions(host, source.binary, reader, config.dataDir);
   const wasActive: string[] = [];
   if (mode === "adopt") {
     await confirmSessions(host, options, sessionsBefore, "Adopting restarts Atlas.");
@@ -573,8 +781,8 @@ const setup = async (host: SetupHost, options: SetupOptions): Promise<number> =>
       for (const name of [...UNIT_NAMES, ...MAINTENANCE_UNIT_NAMES]) backupFile(host, `${UNIT_DIR}/${name}`, context.backupDir);
       for (const name of ["atlas.env", "github.env"]) backupFile(host, `${CONFIG}/${name}`, context.backupDir);
       const text = rollbackText(context.backupDir, links).join("\n");
-      mkdirSync(at(host, context.backupDir), { recursive: true, mode: 0o700 });
-      writeFileSync(at(host, `${context.backupDir}/ROLLBACK.txt`), `${text}\n`, { mode: 0o600 });
+      ensureDirectory(host, context.backupDir, 0o700, ROOT_OWNER);
+      writeFileAtomic(host, `${context.backupDir}/ROLLBACK.txt`, `${text}\n`, 0o600, ROOT_OWNER);
     });
     for (const unit of [...STOP_ORDER, "atlas-snapshot.timer", "atlas-space-check.timer"]) {
       if (!options.dryRun && await isActive(host, unit)) wasActive.push(unit);
@@ -587,7 +795,7 @@ const setup = async (host: SetupHost, options: SetupOptions): Promise<number> =>
   const undo = async (reason: string) => {
     host.out(`✗ ${reason}`);
     if (mode !== "adopt") return;
-    const sessionsAfter = readSessions(host, config.dataDir);
+    const sessionsAfter = await readSessions(host, source.binary, reader, config.dataDir);
     if (sessionsAfter.schema === sessionsBefore.schema) {
       host.out("Restoring the old install (the database was not changed)…");
       try {
@@ -612,34 +820,48 @@ const setup = async (host: SetupHost, options: SetupOptions): Promise<number> =>
     });
     const maintenance = config.btrfs ? renderMaintenanceUnits({ group: config.group, prefix: PREFIX, dataDir: config.dataDir }) : null;
 
-    await step(context, `folders: ${PREFIX} (root 0755), ${CONFIG} (root:${config.group} 0750), ${config.dataDir} (${config.user.name} 0700)`, () => {
-      for (const path of [PREFIX, `${PREFIX}/releases`, `${PREFIX}/services`, `${PREFIX}/services/releases`]) ensureDirectory(host, path, 0o755, ROOT_OWNER);
-      ensureDirectory(host, CONFIG, 0o750, groupOwner);
-      for (const path of ["", "/sessions", "/opencode-runtime", "/opencode-config", "/opencode-data", "/opencode-data/opencode",
-        "/opencode-state", "/opencode-state/opencode", "/opencode-cache"]) {
-        if (!lstat(host, `${config.dataDir}${path}`)) ensureDirectory(host, `${config.dataDir}${path}`, 0o700, userOwner);
-      }
-      if (config.btrfs) ensureDirectory(host, BACKUP_ROOT, 0o700, ROOT_OWNER);
-    });
-    if (config.privateKeySource) {
-      const keySource = config.privateKeySource;
-      await step(context, `copy the GitHub App key to ${config.privateKeyPath} (${config.user.name} 0600)`, () =>
-        writeManaged(context, config.privateKeyPath, readFileSync(keySource), 0o600, userOwner));
-    } else {
-      await step(context, `keep the GitHub App key at ${config.privateKeyPath}`, () => {
-        chmodSync(at(host, config.privateKeyPath), 0o600);
-        host.chown(at(host, config.privateKeyPath), userOwner.uid, userOwner.gid);
+    if (config.createUser) {
+      const shell = NOLOGIN.find((candidate) => host.executable(candidate)) ?? NOLOGIN[0]!;
+      await step(context, `create the system account ${config.user.name} (own group, no login, home ${config.user.home})`, async () => {
+        const result = await host.run(["useradd", "--system", "--user-group", "--home-dir", config.user.home, "--no-create-home",
+          "--shell", shell, config.user.name], { timeoutMs: 60_000 });
+        const created = host.user(config.user.name);
+        const gid = host.group(config.user.name);
+        if (result.code !== 0 || !created || created.uid === 0 || gid === null || gid === 0) {
+          throw new SetupStop(`Could not create the account ${config.user.name}: ${(result.stderr || result.stdout).trim() || "not found afterwards"}`);
+        }
+        config.user = created;
+        config.gid = gid;
       });
     }
-    await step(context, `write ${CONFIG}/github.env (${config.user.name} 0600)`, () =>
-      writeManaged(context, `${CONFIG}/github.env`, githubEnvText(config, existing), 0o600, userOwner));
+    const subdirs = [...DATA_SUBDIRS, ...(config.user.home.startsWith(`${config.dataDir}/`) ? [config.user.home.slice(config.dataDir.length)] : [])];
+    await step(context, `folders: ${PREFIX} (root 0755), ${CONFIG} (root:${config.group} 0750), ${config.dataDir} (${config.user.name} 0700)`, async () => {
+      for (const path of [PREFIX, `${PREFIX}/releases`, `${PREFIX}/services`, `${PREFIX}/services/releases`]) ensureDirectory(host, path, 0o755, ROOT_OWNER);
+      ensureDirectory(host, CONFIG, 0o750, groupOwner());
+      if (config.btrfs) ensureDirectory(host, BACKUP_ROOT, 0o700, ROOT_OWNER);
+      checkDataDir(host, config);
+      ensureDirectory(host, config.dataDir, 0o700, userOwner());
+      // Inside the data folder only the service user creates anything.
+      const missing = subdirs.map((path) => at(host, `${config.dataDir}${path}`));
+      const result = await host.runAs(runAs, ["mkdir", "-p", "-m", "0700", "--", ...missing], { timeoutMs: 30_000 });
+      if (result.code !== 0) throw new Error(`Could not create folders in ${config.dataDir} as ${config.user.name}: ${result.stderr.trim()}`);
+    });
+    await step(context, config.privateKey
+      ? `install the GitHub App key from ${config.privateKey.from} at ${KEY_PATH} (root:${config.group} 0640)`
+      : `keep the GitHub App key at ${KEY_PATH} (root:${config.group} 0640)`, () => {
+      const bytes = config.privateKey?.bytes ?? readFileSafe(at(host, KEY_PATH))?.bytes;
+      if (!bytes) throw new SetupStop(`${KEY_PATH} is missing; pass --private-key <file>.`);
+      writeManaged(context, KEY_PATH, bytes, 0o640, groupOwner());
+    });
+    await step(context, `write ${CONFIG}/github.env (root:${config.group} 0640)`, () =>
+      writeManaged(context, `${CONFIG}/github.env`, githubEnvText(config, existing), 0o640, groupOwner()));
     await step(context, `write ${CONFIG}/atlas.env (root 0600)${tokenIsNew ? " with a new sign-in token" : ""}`, () =>
       writeManaged(context, `${CONFIG}/atlas.env`, atlasEnvText(context, config, existing, { token, webhook }), 0o600, ROOT_OWNER));
-    await step(context, `keys: ${CONFIG}/supplier.key (${config.user.name} 0600), ${CONFIG}/updater.key (root:${config.group} 0640)`, () => {
+    await step(context, `keys: ${CONFIG}/supplier.key and ${CONFIG}/updater.key (root:${config.group} 0640)`, () => {
       const supplier = readText(host, `${CONFIG}/supplier.key`);
-      writeManaged(context, `${CONFIG}/supplier.key`, supplier && supplier.trim().length >= 32 ? supplier : hexKey(), 0o600, userOwner);
+      writeManaged(context, `${CONFIG}/supplier.key`, supplier && supplier.trim().length >= 32 ? supplier : hexKey(), 0o640, groupOwner());
       const updater = readText(host, `${CONFIG}/updater.key`);
-      writeManaged(context, `${CONFIG}/updater.key`, updater && updater.trim().length >= 32 ? updater : hexKey(), 0o640, groupOwner);
+      writeManaged(context, `${CONFIG}/updater.key`, updater && updater.trim().length >= 32 ? updater : hexKey(), 0o640, groupOwner());
     });
     await step(context, `Release folder ${PREFIX}/releases/${releaseFolderName(source.metadata)} (read-only)`, () =>
       buildReleaseFolder({ binaryPath: source.binary, metadata: source.metadata, releasesRoot: at(host, `${PREFIX}/releases`), runAs }));
@@ -692,7 +914,7 @@ const setup = async (host: SetupHost, options: SetupOptions): Promise<number> =>
     if (!lstat(host, JOURNALD)) {
       await step(context, `journal namespace config ${JOURNALD}`, () => writeManaged(context, JOURNALD, journaldConfig, 0o644, ROOT_OWNER));
     }
-    await step(context, `OpenCode headless config in ${config.dataDir}/opencode-config/opencode`, () => writeOpenCodeConfig(host, config.dataDir));
+    await step(context, `OpenCode headless config in ${config.dataDir}/opencode-config/opencode`, () => writeOpenCodeConfig(host, runAs, config.dataDir));
 
     // 7. services
     const restart = mode !== "rerun" || context.changed.size > 0;
@@ -745,6 +967,7 @@ const setup = async (host: SetupHost, options: SetupOptions): Promise<number> =>
   const dns = tailscale.kind === "served" ? new URL(tailscale.url).hostname : null;
   host.out("");
   host.out(`✓ Atlas ${selected.metadata.identity.tag} is running.`);
+  host.out(`  Runs as:  ${config.user.name}${config.createUser ? " (new system account)" : ""}${config.privileged.length > 0 ? ` ! can become root: ${config.privileged.join(", ")}` : ""}`);
   host.out(`  Open:     ${origin ? `${origin}/` : `nothing yet: sign-in needs HTTPS. Run setup with --origin or --tailscale=yes.`}`);
   host.out(tokenIsNew
     ? `  Sign-in token (shown once): ${token}`
@@ -752,6 +975,11 @@ const setup = async (host: SetupHost, options: SetupOptions): Promise<number> =>
   host.out(`  Webhook:  http://127.0.0.1:${config.webhookPort}/webhooks/github (secret: ATLAS_GITHUB_WEBHOOK_SECRET in ${CONFIG}/atlas.env)`);
   host.out(`  ${funnelHint(config.webhookPort, dns)}`);
   if (!config.openCodePresent) host.out("  ! OpenCode is missing: Sessions cannot start until it is installed.");
+  if (mode === "fresh" && config.openCodePresent) {
+    const data = config.dataDir;
+    host.out(`  OpenCode sign-in: sudo -u ${config.user.name} env HOME=${config.user.home} XDG_CONFIG_HOME=${data}/opencode-config \\`);
+    host.out(`      XDG_DATA_HOME=${data}/opencode-data XDG_STATE_HOME=${data}/opencode-state XDG_CACHE_HOME=${data}/opencode-cache ${config.openCode} auth login`);
+  }
   else if (mode !== "fresh" && context.changed.has(`${UNIT_DIR}/opencode.service`)) {
     host.out("  ! OpenCode was not restarted. When no Session is running: sudo systemctl restart opencode.service");
   }

@@ -21,6 +21,10 @@ export type Answers = {
   openCode?: string;
   dataDir?: string;
   tailscale?: Tailscale;
+  /** Consent to create the service account (a system account, no login). */
+  createUser?: boolean;
+  /** Consent to run Atlas as an account that can become root (sudo, wheel, docker, …). */
+  allowPrivilegedUser?: boolean;
 };
 
 export type SetupOptions = {
@@ -57,10 +61,11 @@ const ANSWER_KEYS: Record<string, keyof Answers> = {
   "--tailscale": "tailscale",
 };
 
-const JSON_KEYS: Record<string, "string" | "number"> = {
+const JSON_KEYS: Record<string, "string" | "number" | "boolean"> = {
   user: "string", group: "string", organization: "string", appId: "string", installationId: "string",
   privateKeyPath: "string", origin: "string", port: "number", webhookPort: "number", git: "string",
-  gh: "string", openCode: "string", dataDir: "string", tailscale: "string",
+  gh: "string", openCode: "string", dataDir: "string", tailscale: "string", createUser: "boolean",
+  allowPrivilegedUser: "boolean",
 };
 
 export const SETUP_USAGE = `usage: atlas setup [options]
@@ -70,7 +75,9 @@ older /opt/atlas install. Run as root. Missing answers are asked on the terminal
 
   --answers <file>          JSON answers (keys: ${Object.keys(JSON_KEYS).join(", ")})
   --source-dir <dir>        folder holding atlas-linux-x64, .sha256, atlas-release.json
-  --user/--group <name>     service account (not root)
+  --user/--group <name>     service account (default: a dedicated "atlas" account)
+  --create-user             create the service account if it is missing
+  --allow-privileged-user   allow a service account that can become root (not advised)
   --org <login>             GitHub organization
   --app-id/--installation-id <n>
   --private-key <file>      GitHub App private key (PEM); copied to /etc/atlas
@@ -150,6 +157,8 @@ export const parseSetupArgs = (args: string[], env: Record<string, string | unde
       case "--rotate-webhook-secret": options.rotateWebhookSecret = true; break;
       case "--adopt": options.adopt = true; break;
       case "--confirm-running-sessions": options.confirmRunningSessions = true; break;
+      case "--create-user": flagAnswers.createUser = true; break;
+      case "--allow-privileged-user": flagAnswers.allowPrivilegedUser = true; break;
       case "--root": options.root = value(); break;
       case "--source-dir": options.sourceDir = value(); break;
       case "--answers": answersPath = value(); break;

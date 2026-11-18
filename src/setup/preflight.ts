@@ -50,7 +50,17 @@ const checkTool = async (
     });
     return null;
   }
-  const output = await host.run([path, "--version"], { timeoutMs: 15_000 });
+  // Root runs this tool through the units, so it must be a system tool only
+  // root can change. Even then setup only probes it as `nobody`.
+  const problem = /^\/(home|root)(\/|$)/u.test(path) ? `is under a home folder` : host.toolProblem(path);
+  if (problem) {
+    result.failures.push({
+      problem: `${name} at ${path} is not safe to run from root-owned services: ${problem}`,
+      fix: `install ${name} system-wide, owned by root (for example /usr/bin/${name}), or pass --${name} <path>`,
+    });
+    return null;
+  }
+  const output = await host.runAs(null, [path, "--version"], { timeoutMs: 15_000 });
   const version = output.code === 0 ? parseToolVersion(output.stdout) : null;
   if (!version) {
     result.failures.push({ problem: `${path} --version failed`, fix: `check that ${path} runs, or pass --${name} <path>` });
@@ -59,13 +69,6 @@ const checkTool = async (
   if (compareVersions(version, minimum) < 0) {
     result.failures.push({ problem: `${name} ${version} is too old (Atlas needs ${minimum}+)`, fix: `upgrade ${name}: ${install}` });
     return null;
-  }
-  // The updater runs with ProtectHome=true and cannot see tools under /home or /root.
-  if (/^\/(home|root)\//u.test(path)) {
-    result.warnings.push({
-      problem: `${name} is under a home folder (${path}); the updater cannot see it, so updates will be blocked`,
-      fix: `install ${name} system-wide (for example /usr/bin/${name}) and pass --${name}`,
-    });
   }
   return { path, version };
 };

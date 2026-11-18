@@ -1,25 +1,31 @@
 #!/usr/bin/env bun
 // Proves `atlas setup` without root: every run uses `--root <tmp>` and a fake
-// host (systemctl, tailscale, git, gh, stat -f, health). Ownership is recorded
-// by the fake chown (by inode); modes are real.
+// host (systemctl, tailscale, git, gh, stat -f, health, id, useradd). Ownership
+// is recorded by the fake fchown/chown (by inode + birth time, shared across
+// runs; unrecorded means root); modes are real. `runAs` emulates the service
+// user: it may create or read only what that account owns.
 //
 // Covers: fresh install (files, modes, owners, units, release dirs read-only),
 // dry run, idempotent re-run, re-run with a changed answer and rotation,
 // preflight failures (nothing changed), health failure, Btrfs units, adopt from
 // the older layout (data and secrets byte-identical, backup, stop order,
-// running-Session gate, automatic restore), and every Tailscale branch.
+// running-Session gate, automatic restore), every Tailscale branch, the
+// service-user policy (dedicated account, privileged accounts), unsafe source
+// folders and tools, and a hostile service user planting paths for root.
 //
 // Usage: bun scripts/verify-setup.ts
 import { Database } from "bun:sqlite";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import {
-  existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync,
+  cpSync, existsSync, fstatSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync,
+  writeFileSync, type Stats,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { sessionSummary } from "../src/commands/ops.ts";
 import clientManifestJson from "@opencode/client/package.json" with { type: "json" };
 import { createReleaseMetadata, RELEASE_ASSET_NAME, type ReleaseMetadata } from "../src/release.ts";
-import type { RunResult, SetupHost } from "../src/setup/host.ts";
+import type { RunAs, RunResult, SetupHost } from "../src/setup/host.ts";
 import { runSetup } from "../src/setup/run.ts";
 const clientManifest = clientManifestJson as { version: string };
 
@@ -31,6 +37,7 @@ const removeBase = () => {
 };
 removeBase();
 mkdirSync(base, { recursive: true });
+const stagesBefore = readdirSync("/var/tmp").filter((name) => name.startsWith("atlas-setup-")).sort();
 let failures = 0;
 let checks = 0;
 const check = (label: string, ok: boolean, detail = "") => {
@@ -81,20 +88,36 @@ type Scenario = {
   /** Existing serve target for https://<dns>:443/. */
   serving?: string;
   prompts?: string[] | null;
+  /** `tailscale serve status` fails. */
+  serveStatusFails?: boolean;
+  /** Host tools root must not run (path -> problem). */
+  unsafeTools?: Record<string, string>;
 };
 
 const DNS = "atlas-box.tail1234.ts.net";
+type FakeAccount = { name: string; uid: number; gid: number; home: string; groups: string[] };
 const USER = { name: "svc", uid: 1500, gid: 1500, home: "/home/svc" };
-const ACCOUNTS: Record<string, { name: string; uid: number; gid: number; home: string }> = {
-  svc: USER,
-  omega: { name: "omega", uid: 1000, gid: 1000, home: "/home/omega" },
-  root: { name: "root", uid: 0, gid: 0, home: "/root" },
+const ACCOUNTS: Record<string, FakeAccount> = {
+  svc: { ...USER, groups: ["svc"] },
+  omega: { name: "omega", uid: 1000, gid: 1000, home: "/home/omega", groups: ["omega", "sudo"] },
+  root: { name: "root", uid: 0, gid: 0, home: "/root", groups: ["root"] },
+};
+
+// Fake ownership, shared by every host (a re-run sees what earlier runs set).
+const owners = new Map<string, { uid: number; gid: number }>();
+const ownerKey = (stat: Pick<Stats, "ino" | "birthtimeMs">) => `${stat.ino}:${stat.birthtimeMs}`;
+const ownerOf = (stat: Pick<Stats, "ino" | "birthtimeMs">) => owners.get(ownerKey(stat)) ?? { uid: 0, gid: 0 };
+/** Marks a real path (not followed) as owned by uid/gid in the fake. */
+const own = (full: string, uid: number, gid: number) => owners.set(ownerKey(lstatSync(full)), { uid, gid });
+const ownTree = (full: string, uid: number, gid: number) => {
+  own(full, uid, gid);
+  if (lstatSync(full).isDirectory()) for (const entry of readdirSync(full)) ownTree(join(full, entry), uid, gid);
 };
 
 const makeHost = (root: string, scenario: Scenario = {}) => {
   const calls: string[][] = [];
   const output: string[] = [];
-  const owners = new Map<number, { uid: number; gid: number }>();
+  const accounts: Record<string, FakeAccount> = { ...ACCOUNTS };
   const active = new Set<string>();
   let clock = Date.parse("2026-11-18T10:00:00Z");
   let serving = scenario.serving;
@@ -114,6 +137,17 @@ const makeHost = (root: string, scenario: Scenario = {}) => {
     if (command === "/usr/bin/git") return result(0, `git version ${scenario.gitVersion ?? "2.39.5"}\n`);
     if (command === "/usr/bin/gh") return result(0, `gh version ${scenario.ghVersion ?? "2.23.0"} (2023-02-01)\n`);
     if (command === "stat") return result(0, scenario.btrfs ? "btrfs\n" : "ext2/ext3\n");
+    if (command === "id" && args[0] === "-nG") {
+      const account = accounts[args.at(-1)!];
+      return account ? result(0, `${account.groups.join(" ")}\n`) : result(1, "", "no such user\n");
+    }
+    if (command === "sudo") return result(1, "", "sudo: a password is required\n");
+    if (command === "useradd") {
+      const name = args.at(-1)!;
+      const home = args[args.indexOf("--home-dir") + 1]!;
+      accounts[name] = { name, uid: 990, gid: 990, home, groups: [name] };
+      return result(0);
+    }
     if (command === "bash") {
       const child = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" });
       return result(child.exitCode ?? 1, child.stdout.toString(), child.stderr.toString());
@@ -136,6 +170,7 @@ const makeHost = (root: string, scenario: Scenario = {}) => {
       }
       if (args[0] === "version") return result(0, "1.104.2\n  tailscale commit: x\n");
       if (args[0] === "serve" && args[1] === "status") {
+        if (scenario.serveStatusFails) return result(1, "", "error: failed to fetch serve config\n");
         return result(0, serving ? JSON.stringify({ TCP: { "443": { HTTPS: true } }, Web: { [`${DNS}:443`]: { Handlers: { "/": { Proxy: serving } } } } }) : "{}");
       }
       if (args[0] === "serve") {
@@ -151,6 +186,50 @@ const makeHost = (root: string, scenario: Scenario = {}) => {
     return result(127, "", `${command}: not faked`);
   };
 
+  // ---- the service user, emulated: it reaches only what its uid owns ----
+  const uidOf = (account: RunAs) => (account ? accounts[account.user]?.uid ?? -2 : 65534);
+  const mayRead = (uid: number, full: string) => {
+    if (!existsSync(full)) return false;
+    const stat = statSync(realpathSync(full));
+    return ownerOf(stat).uid === uid ? (stat.mode & 0o400) !== 0 : (stat.mode & 0o004) !== 0;
+  };
+  const runAs = async (account: RunAs, argv: string[]): Promise<RunResult> => {
+    calls.push(["runAs", account?.user ?? "nobody", ...argv]);
+    const uid = uidOf(account);
+    const gid = account ? accounts[account.user]?.gid ?? -2 : 65534;
+    const [command, ...args] = argv;
+    if (args[0] === "ops" && args[1] === "session-summary") {
+      const database = args[2]!;
+      if (existsSync(database) && !mayRead(uid, database)) return result(0, JSON.stringify({ active: {}, schema: null, readable: false }));
+      return result(0, JSON.stringify(sessionSummary(database)));
+    }
+    if (command === "cat") {
+      const file = args.at(-1)!;
+      return mayRead(uid, file) ? result(0, readFileSync(file, "utf8")) : result(1, "", `cat: ${file}: Permission denied\n`);
+    }
+    if (command === "mkdir") {
+      const modeArg = Number.parseInt(args[args.indexOf("-m") + 1]!, 8);
+      for (const target of args.slice(args.indexOf("--") + 1)) {
+        if (existsSync(target)) continue; // mkdir -p: an existing folder (or link to one) is left alone
+        let parent = dirname(target);
+        while (!existsSync(parent)) parent = dirname(parent);
+        if (ownerOf(statSync(realpathSync(parent))).uid !== uid) return result(1, "", `mkdir: ${target}: Permission denied\n`);
+        const created: string[] = [];
+        for (let current = target; !existsSync(current); current = dirname(current)) created.unshift(current);
+        for (const folder of created) {
+          mkdirSync(folder, { mode: modeArg });
+          own(folder, uid, gid);
+        }
+      }
+      return result(0);
+    }
+    if (command === "bash") {
+      const child = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" });
+      return result(child.exitCode ?? 1, child.stdout.toString(), child.stderr.toString());
+    }
+    return await run(argv);
+  };
+
   const host: SetupHost = {
     root,
     platform: "linux",
@@ -160,11 +239,18 @@ const makeHost = (root: string, scenario: Scenario = {}) => {
     execPath: "/nonexistent/atlas",
     run,
     which: (name) => [...tools].find((path) => path.endsWith(`/${name}`)) ?? null,
-    executable: (path) => tools.has(path),
+    executable: (path) => tools.has(path) || /\/nologin$/u.test(path),
+    toolProblem: (path) => scenario.unsafeTools?.[path] ?? null,
     systemdBooted: () => scenario.systemd ?? true,
-    user: (name) => ACCOUNTS[name] ?? null,
-    group: (name) => ACCOUNTS[name]?.gid ?? null,
-    chown: (path, uid, gid) => owners.set(lstatSync(path).ino, { uid, gid }),
+    user: (name) => {
+      const account = accounts[name];
+      return account ? { name: account.name, uid: account.uid, gid: account.gid, home: account.home } : null;
+    },
+    group: (name) => accounts[name]?.gid ?? null,
+    chown: (path, uid, gid) => own(path, uid, gid),
+    fchown: (descriptor, uid, gid) => owners.set(ownerKey(fstatSync(descriptor)), { uid, gid }),
+    owner: (stat) => ownerOf(stat as Stats),
+    runAs,
     fetch: (async (url: string | URL) => {
       calls.push(["fetch", String(url)]);
       if (!(scenario.healthy ?? true) || !active.has("atlas.service")) return new Response("down", { status: 503 });
@@ -188,7 +274,8 @@ const makeHost = (root: string, scenario: Scenario = {}) => {
   return {
     host, calls, output, asked, active,
     text: () => output.join("\n"),
-    owner: (path: string) => owners.get(lstatSync(join(root, path)).ino),
+    owner: (path: string) => ownerOf(lstatSync(join(root, path))),
+    accounts,
     serving: () => serving,
   };
 };
@@ -234,12 +321,13 @@ const freshRoot = newRoot();
   const owners: Array<[string, number, number, number]> = [
     ["etc/atlas", 0o750, 0, USER.gid],
     ["etc/atlas/atlas.env", 0o600, 0, 0],
-    ["etc/atlas/github.env", 0o600, USER.uid, USER.gid],
-    ["etc/atlas/github-app.pem", 0o600, USER.uid, USER.gid],
-    ["etc/atlas/supplier.key", 0o600, USER.uid, USER.gid],
+    ["etc/atlas/github.env", 0o640, 0, USER.gid],
+    ["etc/atlas/github-app.pem", 0o640, 0, USER.gid],
+    ["etc/atlas/supplier.key", 0o640, 0, USER.gid],
     ["etc/atlas/updater.key", 0o640, 0, USER.gid],
     ["var/lib/atlas", 0o700, USER.uid, USER.gid],
     ["var/lib/atlas/sessions", 0o700, USER.uid, USER.gid],
+    ["var/lib/atlas/opencode-data/opencode", 0o700, USER.uid, USER.gid],
     ["opt/atlas", 0o755, 0, 0],
     ["opt/atlas/releases", 0o755, 0, 0],
     ["opt/atlas/services", 0o755, 0, 0],
@@ -283,6 +371,12 @@ const freshRoot = newRoot();
   check("fresh: token shown once", fake.text().split(atlasEnv.get("ATLAS_SHARED_TOKEN")!).length === 2);
   check("fresh: webhook secret never shown", !fake.text().includes(atlasEnv.get("ATLAS_GITHUB_WEBHOOK_SECRET")!));
   check("fresh: HTTPS warning", fake.text().includes("sign-in needs HTTPS"));
+  check("fresh: service user reported", fake.text().includes("Runs as:  svc"), fake.text());
+  const gitCalls = fake.calls.filter((call) => call.includes("/usr/bin/git"));
+  check("fresh: tools probed as nobody", gitCalls.length > 0 && gitCalls.every((call, index) =>
+    call[0] === "runAs" ? call.join(" ") === "runAs nobody /usr/bin/git --version" : gitCalls[index - 1]?.[0] === "runAs"), JSON.stringify(gitCalls));
+  check("fresh: data subfolders made by the service user", fake.calls.some((call) => call[0] === "runAs" && call[1] === "svc" && call[2] === "mkdir"));
+  check("fresh: OpenCode config installed as the service user", fake.calls.some((call) => call[0] === "runAs" && call[1] === "svc" && call[2] === "bash"));
 }
 
 // ---------- 2. re-run: identical, nothing restarted ----------
@@ -420,12 +514,17 @@ const oldLayout = (root: string, sessionState: string | null) => {
   const oldBundle = p(root, "opt/atlas/services/releases/bootstrap-1-2");
   mkdirSync(oldBundle, { recursive: true });
   symlinkSync(oldBundle, p(root, "opt/atlas/services/current"));
+  // The older install let the service user own its secrets and data.
+  for (const name of ["github.env", "github-app.pem", "supplier.key"]) own(p(root, `etc/atlas/${name}`), 1000, 1000);
+  ownTree(data, 1000, 1000);
   return { oldRelease, oldBundle };
 };
 const adoptArgs = (extra: string[] = []) => ["--source-dir", release1.dir, "--tailscale", "no", "--health-timeout", "5", ...extra];
 const dataAndSecrets = (root: string) => ({
   data: tree(p(root, "var/lib/atlas"), (path) => path === "opencode-config/opencode/opencode.json"),
-  secrets: ["github.env", "github-app.pem", "supplier.key", "updater.key"].map((name) => read(root, `etc/atlas/${name}`)),
+  secrets: ["github-app.pem", "supplier.key", "updater.key"].map((name) => read(root, `etc/atlas/${name}`)),
+  github: ["ATLAS_GITHUB_ORGANIZATION", "ATLAS_GITHUB_APP_ID", "ATLAS_GITHUB_INSTALLATION_ID", "ATLAS_GITHUB_APP_PRIVATE_KEY_PATH"]
+    .map((key) => env(root, "etc/atlas/github.env").get(key)),
   env: [...env(root, "etc/atlas/atlas.env")].filter(([key]) => !["ATLAS_GIT_BINARY", "ATLAS_RECOVERY_STATUS_PATH"].includes(key)),
 });
 {
@@ -456,7 +555,16 @@ const dataAndSecrets = (root: string) => ({
   check("adopt: exit 0", code === 0, fake.text());
   const after = dataAndSecrets(root);
   check("adopt: data byte-identical", same(before.data, after.data));
-  check("adopt: secrets byte-identical", same(before.secrets, after.secrets) && same(before.env, after.env));
+  check("adopt: secrets byte-identical", same(before.secrets, after.secrets) && same(before.env, after.env) && same(before.github, after.github),
+    JSON.stringify([before.github, after.github]));
+  for (const name of ["github.env", "github-app.pem", "supplier.key"]) {
+    const owner = fake.owner(`etc/atlas/${name}`);
+    check(`adopt: ${name} now root:omega 0640`, owner.uid === 0 && owner.gid === 1000 && mode(root, `etc/atlas/${name}`) === 0o640,
+      `${JSON.stringify(owner)} ${mode(root, `etc/atlas/${name}`).toString(8)}`);
+  }
+  check("adopt: privileged user kept, warned once", fake.text().split("omega can become root (group sudo)").length === 2 &&
+    fake.text().includes("Kept, because this install already runs as omega"), fake.text());
+  check("adopt: Sessions read as the service user", fake.calls.some((call) => call[0] === "runAs" && call[1] === "omega" && call[4] === "session-summary"));
   check("adopt: git wrapper rewritten", env(root, "etc/atlas/atlas.env").get("ATLAS_GIT_BINARY") === "/opt/atlas/current/bin/git");
   check("adopt: recovery status removed off Btrfs", !env(root, "etc/atlas/atlas.env").has("ATLAS_RECOVERY_STATUS_PATH"));
   check("adopt: service user from old units", read(root, "etc/systemd/system/atlas.service").includes("User=omega"));
@@ -559,6 +667,223 @@ const tailscaleRun = async (label: string, scenario: Scenario, extra: string[]) 
   writeFileSync(file, JSON.stringify({ nope: 1 }));
   check("answers file: unknown key refused", await runSetup(["--source-dir", release1.dir, "--answers", file], makeHost(newRoot()).host) === 2);
 }
+
+// ---------- 11. service user ----------
+/** answers() without --user svc: the default dedicated account. */
+const defaultUserArgs = (extra: string[] = []) => answers(extra).filter((_, index) => index !== 2 && index !== 3);
+for (const extra of [[], ["--yes"]]) {
+  const root = newRoot();
+  const fake = makeHost(root);
+  const code = await runSetup(defaultUserArgs(extra), fake.host);
+  check(`user: missing atlas account refused ${extra.join(" ")}`, code === 1 &&
+    fake.text().includes("Service user atlas does not exist. Re-run with --create-user"), fake.text());
+  check(`user: refusal changed nothing ${extra.join(" ")}`, readdirSync(root).length === 0 && !fake.calls.some((call) => call[0] === "useradd"));
+}
+for (const [label, extra, prompts] of [
+  ["flag", ["--create-user"], null],
+  ["prompt", [], ["y"]],
+] as Array<[string, string[], string[] | null]>) {
+  const root = newRoot();
+  const fake = makeHost(root, { openCode: true, prompts });
+  const code = await runSetup(defaultUserArgs(extra), fake.host);
+  check(`user ${label}: created`, code === 0, fake.text());
+  const useradd = fake.calls.find((call) => call[0] === "useradd")?.join(" ");
+  check(`user ${label}: useradd system account`, useradd === "useradd --system --user-group --home-dir /var/lib/atlas/home --no-create-home --shell /usr/sbin/nologin atlas", useradd);
+  const unit = read(root, "etc/systemd/system/atlas.service");
+  check(`user ${label}: units run as atlas`, unit.includes("User=atlas\n") && unit.includes("Group=atlas\n"));
+  for (const dir of ["var/lib/atlas", "var/lib/atlas/home", "var/lib/atlas/sessions"]) {
+    check(`user ${label}: ${dir} owned by atlas`, fake.owner(dir).uid === 990 && mode(root, dir) === 0o700, JSON.stringify(fake.owner(dir)));
+  }
+  check(`user ${label}: github.env root:atlas`, fake.owner("etc/atlas/github.env").uid === 0 && fake.owner("etc/atlas/github.env").gid === 990);
+  check(`user ${label}: reported`, fake.text().includes("Runs as:  atlas (new system account)"), fake.text());
+  check(`user ${label}: OpenCode sign-in hint`, fake.text().includes("sudo -u atlas env HOME=/var/lib/atlas/home XDG_CONFIG_HOME=/var/lib/atlas/opencode-config"), fake.text());
+}
+{
+  const root = newRoot();
+  const fake = makeHost(root);
+  const code = await runSetup(answers(["--user", "omega"]), fake.host);
+  check("privileged: refused without a terminal", code === 1 && fake.text().includes("omega can become root (group sudo)") &&
+    fake.text().includes("--allow-privileged-user"), fake.text());
+  check("privileged: refusal changed nothing", readdirSync(root).length === 0);
+}
+{
+  const root = newRoot();
+  const fake = makeHost(root);
+  const code = await runSetup(answers(["--user", "omega", "--allow-privileged-user"]), fake.host);
+  check("privileged: allowed by flag", code === 0 && fake.text().includes("Allowed by --allow-privileged-user") &&
+    fake.text().includes("can become root: group sudo"), fake.text());
+}
+for (const [answer, expected] of [["n", 1], ["y", 0]] as Array<[string, number]>) {
+  const root = newRoot();
+  const fake = makeHost(root, { prompts: [answer] });
+  const code = await runSetup(answers(["--user", "omega"]), fake.host);
+  check(`privileged: prompt ${answer}`, code === expected && fake.asked.some((question) => question.includes("Run Atlas as omega anyway?")) &&
+    fake.text().includes("anything that takes over a Session could take over this whole machine"), fake.text());
+  if (answer === "n") check("privileged: no changes after n", readdirSync(root).length === 0);
+}
+
+// ---------- 12. unsafe Release source, unsafe tools ----------
+const copyRelease = (name: string) => {
+  const dir = join(base, name);
+  cpSync(release1.dir, dir, { recursive: true });
+  return dir;
+};
+for (const [label, prepare, expect] of [
+  ["source folder owned by the service user", (dir: string) => own(dir, 1500, 1500), "must be owned by root"],
+  ["source file group-writable", (dir: string) => Bun.spawnSync(["chmod", "0664", join(dir, "atlas-release.json")]), "must be owned by root"],
+  ["source binary owned by the service user", (dir: string) => own(join(dir, RELEASE_ASSET_NAME), 1500, 1500), "must be owned by root"],
+  ["binary changed", (dir: string) => writeFileSync(join(dir, RELEASE_ASSET_NAME), "#!/bin/sh\nexit 0\n", { mode: 0o755 }), "does not match the SHA-256"],
+] as Array<[string, (dir: string) => unknown, string]>) {
+  const dir = copyRelease(`unsafe-${label.replace(/\W+/gu, "-")}`);
+  prepare(dir);
+  const root = newRoot();
+  const fake = makeHost(root);
+  const code = await runSetup(["--source-dir", dir, ...answers().slice(2)], fake.host);
+  check(`source ${label}: refused`, code === 1 && fake.text().includes(expect), fake.text());
+  check(`source ${label}: nothing written`, readdirSync(root).length === 0);
+}
+{
+  const parent = join(base, "svc-owned-parent");
+  mkdirSync(parent);
+  own(parent, 1500, 1500);
+  cpSync(release1.dir, join(parent, "release"), { recursive: true });
+  const root = newRoot();
+  const fake = makeHost(root);
+  const code = await runSetup(["--source-dir", join(parent, "release"), ...answers().slice(2)], fake.host);
+  check("source parent owned by the service user: refused", code === 1 && fake.text().includes("Every folder above"), fake.text());
+}
+{
+  const root = newRoot();
+  const fake = makeHost(root, { unsafeTools: { "/usr/bin/git": "/usr/bin/git must be owned by root and not writable by group or others" } });
+  const code = await runSetup(answers(), fake.host);
+  check("unsafe git: refused", code === 1 && fake.text().includes("git at /usr/bin/git is not safe to run"), fake.text());
+  check("unsafe git: never run", !fake.calls.some((call) => call.includes("/usr/bin/git")) && readdirSync(root).length === 0);
+}
+
+// ---------- 13. Tailscale serve status unknown ----------
+{
+  const { root, fake } = await tailscaleRun("status unknown no tty", { tailscale: "running", serveStatusFails: true }, ["--tailscale", "yes"]);
+  check("tailscale unknown: not served without a terminal", !fake.calls.some((call) => call[1] === "serve" && call[2] === "--bg") &&
+    fake.text().includes("could not read the current serve config") && !env(root, "etc/atlas/atlas.env").has("ATLAS_ORIGIN"), fake.text());
+}
+{
+  const { fake } = await tailscaleRun("status unknown n", { tailscale: "running", serveStatusFails: true, prompts: ["n"] }, ["--tailscale", "yes"]);
+  check("tailscale unknown: asked, n leaves it alone", fake.asked.some((question) => question.includes("replacing whatever is there")) &&
+    !fake.calls.some((call) => call[1] === "serve" && call[2] === "--bg"));
+}
+{
+  const { fake } = await tailscaleRun("status unknown y", { tailscale: "running", serveStatusFails: true, prompts: ["y"] }, ["--tailscale", "yes"]);
+  check("tailscale unknown: y serves", fake.calls.some((call) => call[1] === "serve" && call[2] === "--bg"));
+}
+
+// ---------- 14. hostile service user ----------
+// Plants paths (as the service user could on an older install) and re-runs
+// setup. Nothing outside /etc/atlas, the backups, and the data folder may
+// change owner, mode, or content.
+const ownedTree = (root: string) => {
+  const out: Record<string, string> = {};
+  const skip = (relative: string) => ["etc/atlas", "var/backups", "var/lib/atlas"].some((prefix) => relative === prefix || relative.startsWith(`${prefix}/`));
+  const walk = (relative: string) => {
+    if (skip(relative)) return;
+    const full = p(root, relative);
+    const stat = lstatSync(full);
+    const owner = ownerOf(stat);
+    const head = `${(stat.mode & 0o7777).toString(8)} ${owner.uid}:${owner.gid}`;
+    if (stat.isDirectory()) {
+      out[relative || "."] = head;
+      for (const entry of readdirSync(full).sort()) walk(join(relative, entry));
+    } else if (stat.isSymbolicLink()) out[relative] = `${head} -> ${readlinkSync(full)}`;
+    else out[relative] = `${head} ${createHash("sha256").update(readFileSync(full)).digest("hex")}`;
+  };
+  walk("");
+  return out;
+};
+const diff = (left: Record<string, string>, right: Record<string, string>) =>
+  [...new Set([...Object.keys(left), ...Object.keys(right)])].filter((key) => left[key] !== right[key]).map((key) => `${key}: ${left[key]} => ${right[key]}`);
+const plantHostile = (root: string, options: { removeKey: boolean }) => {
+  mkdirSync(p(root, "victim/dir"), { recursive: true, mode: 0o755 });
+  mkdirSync(p(root, "victim/dir2"), { recursive: true, mode: 0o755 });
+  writeFileSync(p(root, "victim/dir/keep.txt"), "victim\n", { mode: 0o644 });
+  writeFileSync(p(root, "victim/secret.pem"), readFileSync(pemPath), { mode: 0o600 });
+  // An older install's service-owned github.env naming a root-only file as "the key".
+  writeFileSync(p(root, "etc/atlas/github.env"), [
+    "ATLAS_GITHUB_ORGANIZATION=acme", "ATLAS_GITHUB_APP_ID=12345", "ATLAS_GITHUB_INSTALLATION_ID=67890",
+    "ATLAS_GITHUB_APP_PRIVATE_KEY_PATH=/victim/secret.pem", "LD_PRELOAD=/var/lib/atlas/evil.so", "",
+  ].join("\n"), { mode: 0o600 });
+  own(p(root, "etc/atlas/github.env"), 1500, 1500);
+  if (options.removeKey) rmSync(p(root, "etc/atlas/github-app.pem"));
+  // Data folder links pointing root at files it must not touch.
+  const data = p(root, "var/lib/atlas");
+  for (const [name, target] of [["sessions", "victim/dir"], ["opencode-cache", "victim/dir2"], ["atlas.sqlite", "victim/secret.pem"]]) {
+    rmSync(join(data, name), { recursive: true, force: true });
+    symlinkSync(p(root, target), join(data, name));
+    own(join(data, name), 1500, 1500);
+  }
+};
+{
+  const root = newRoot();
+  check("hostile: fresh install", await runSetup(answers(), makeHost(root).host) === 0);
+  plantHostile(root, { removeKey: false });
+  // atlas.env that another account could have written: its paths must be ignored.
+  writeFileSync(p(root, "etc/atlas/atlas.env"), `${read(root, "etc/atlas/atlas.env")}ATLAS_SUPPLIER_KEY_PATH=/victim/secret.pem\n`.replace(
+    /^ATLAS_DATABASE_PATH=.*$/mu, "ATLAS_DATABASE_PATH=/victim/dir/atlas.sqlite"), { mode: 0o600 });
+  own(p(root, "etc/atlas/atlas.env"), 1500, 1500);
+  const before = ownedTree(root);
+  const fake = makeHost(root);
+  const code = await runSetup(["--source-dir", release1.dir, "--tailscale", "no", "--health-timeout", "5", "--confirm-running-sessions"], fake.host);
+  check("hostile re-run: exit 0", code === 0, fake.text());
+  const changes = diff(before, ownedTree(root));
+  check("hostile re-run: nothing outside the intended folders changed", changes.length === 0, changes.join("\n"));
+  const githubEnv = env(root, "etc/atlas/github.env");
+  check("hostile re-run: github.env names the fixed key, drops planted lines", githubEnv.get("ATLAS_GITHUB_APP_PRIVATE_KEY_PATH") === "/etc/atlas/github-app.pem" &&
+    !githubEnv.has("LD_PRELOAD"), read(root, "etc/atlas/github.env"));
+  check("hostile re-run: github.env root:svc 0640", fake.owner("etc/atlas/github.env").uid === 0 && mode(root, "etc/atlas/github.env") === 0o640);
+  check("hostile re-run: key unchanged", read(root, "etc/atlas/github-app.pem") === readFileSync(pemPath, "utf8"));
+  const atlasEnv = env(root, "etc/atlas/atlas.env");
+  check("hostile re-run: untrusted atlas.env paths ignored", fake.text().includes("atlas.env is not root-only") &&
+    atlasEnv.get("ATLAS_DATABASE_PATH") === "/var/lib/atlas/atlas.sqlite" && atlasEnv.get("ATLAS_SUPPLIER_KEY_PATH") === "/etc/atlas/supplier.key" &&
+    fake.owner("etc/atlas/atlas.env").uid === 0 && mode(root, "etc/atlas/atlas.env") === 0o600, read(root, "etc/atlas/atlas.env"));
+  check("hostile re-run: database read as svc only", fake.calls.some((call) => call[0] === "runAs" && call[1] === "svc" && call[4] === "session-summary") &&
+    fake.text().includes("the Session database could not be read"), fake.text());
+}
+{
+  const root = newRoot();
+  check("hostile no key: fresh install", await runSetup(answers(), makeHost(root).host) === 0);
+  plantHostile(root, { removeKey: true });
+  const before = ownedTree(root);
+  const fake = makeHost(root);
+  const code = await runSetup(["--source-dir", release1.dir, "--tailscale", "no", "--health-timeout", "5", "--confirm-running-sessions"], fake.host);
+  check("hostile no key: stops", code === 1 && fake.text().includes("could not be read as svc") && fake.text().includes("Missing answer: GitHub App private key"), fake.text());
+  check("hostile no key: victim never read into /etc/atlas", !existsSync(p(root, "etc/atlas/github-app.pem")));
+  const changes = diff(before, ownedTree(root));
+  check("hostile no key: nothing outside the intended folders changed", changes.length === 0, changes.join("\n"));
+}
+{
+  // Legit older install: the key lived in the data folder, owned by the service user.
+  const root = newRoot();
+  check("legacy key: fresh install", await runSetup(answers(), makeHost(root).host) === 0);
+  writeFileSync(p(root, "var/lib/atlas/app.pem"), readFileSync(pemPath), { mode: 0o600 });
+  own(p(root, "var/lib/atlas/app.pem"), 1500, 1500);
+  writeFileSync(p(root, "etc/atlas/github.env"), read(root, "etc/atlas/github.env").replace("/etc/atlas/github-app.pem", "/var/lib/atlas/app.pem"));
+  rmSync(p(root, "etc/atlas/github-app.pem"));
+  const fake = makeHost(root);
+  const code = await runSetup(["--source-dir", release1.dir, "--tailscale", "no", "--health-timeout", "5"], fake.host);
+  check("legacy key: read as svc and installed", code === 0 && read(root, "etc/atlas/github-app.pem") === readFileSync(pemPath, "utf8") &&
+    fake.calls.some((call) => call[0] === "runAs" && call[1] === "svc" && call[2] === "cat") && mode(root, "etc/atlas/github-app.pem") === 0o640, fake.text());
+  check("legacy key: old file untouched", fake.owner("var/lib/atlas/app.pem").uid === 1500 && mode(root, "var/lib/atlas/app.pem") === 0o600);
+}
+
+{
+  const root = newRoot();
+  check("unit owned by svc: fresh install", await runSetup(answers(), makeHost(root).host) === 0);
+  own(p(root, "etc/systemd/system/atlas.service"), 1500, 1500);
+  const fake = makeHost(root);
+  const code = await runSetup(["--source-dir", release1.dir, "--tailscale", "no", "--health-timeout", "5"], fake.host);
+  check("unit owned by svc: stops", code === 1 && fake.text().includes("atlas.service is not a regular file owned by root"), fake.text());
+}
+
+const stagesAfter = readdirSync("/var/tmp").filter((name) => name.startsWith("atlas-setup-")).sort();
+check("staged Release copies removed", same(stagesBefore, stagesAfter), stagesAfter.join(","));
 
 removeBase();
 if (failures > 0) {
