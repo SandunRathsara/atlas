@@ -31,4 +31,10 @@ fi
 
 identity=$(jq -r 'if .atlas.release.published == true then .atlas.release.tag + " (" + .atlas.release.gitSha + ")" else "development checkout" end' <<<"$response")
 opencode_version=$(jq -r '.openCode.version // "version unavailable"' <<<"$response")
-echo "Atlas process and persistence are healthy; OpenCode is ready ($opencode_version): $identity"
+client_version=$(jq -r '.openCode.clientVersion // "unknown"' <<<"$response")
+echo "Atlas process and persistence are healthy; OpenCode is ready ($opencode_version, client $client_version): $identity"
+# A client/server version difference is diagnostic only; it never fails health.
+version_warning=$(jq -r '.openCode.versionWarning // empty | tostring' <<<"$response")
+if [[ -n "$version_warning" ]]; then
+  echo "warning: OpenCode version: $version_warning"
+fi

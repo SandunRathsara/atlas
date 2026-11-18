@@ -1,0 +1,12 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "update": "disable",
+  "permissions": [
+    { "action": "read", "resource": "*.env", "effect": "allow" },
+    { "action": "read", "resource": "*.env.*", "effect": "allow" },
+    { "action": "question", "resource": "*", "effect": "deny" }
+  ],
+  "policies": [
+    { "action": "tool.use", "resource": "question:*", "effect": "deny" }
+  ]
+}

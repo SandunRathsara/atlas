@@ -24,7 +24,7 @@ import {
 } from "./persistence.ts";
 import { createPreparationService } from "./preparation.ts";
 import type { CredentialBoundary } from "./credentials.ts";
-import { createOpenCodeHandoffService } from "./opencode.ts";
+import { createOpenCodeHandoffService, openCodeClientVersion, openCodeVersionWarning } from "./opencode.ts";
 import type { OpenCodeHandoffService } from "./opencode.ts";
 import { createUpdatePauseCoordinator } from "./update-pause.ts";
 import {
@@ -507,10 +507,16 @@ export const createApp = (options: AppOptions) => {
   const updates = options.updates ?? createUnavailableUpdateService(persistence, releaseIdentity);
   const currentOpenCodeReadiness = () => {
     const readiness = openCodeService.readiness?.();
-    if (readiness) return { ready: readiness.ready, reason: readiness.reason, version: readiness.version };
+    // clientVersion/versionWarning are diagnostics only; they never change `ready`, HTTP status, or the update path.
+    const diagnostics = (serverVersion: string | undefined) => ({
+      clientVersion: openCodeClientVersion,
+      versionWarning: openCodeVersionWarning(openCodeClientVersion, serverVersion),
+    });
+    if (readiness) return { ready: readiness.ready, reason: readiness.reason, version: readiness.version, ...diagnostics(readiness.version) };
     return {
       ready: openCodeService.transportState() === "connected",
       reason: "The OpenCode service is unavailable or incompatible.",
+      ...diagnostics(undefined),
     };
   };
 

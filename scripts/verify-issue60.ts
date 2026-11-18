@@ -1,3 +1,4 @@
+import "./isolate-opencode.ts";
 import { strict as assert } from "node:assert";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

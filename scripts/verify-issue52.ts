@@ -1,14 +1,17 @@
+import "./isolate-opencode.ts";
 import { strict as assert } from "node:assert";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app.ts";
-import { createOpenCodeHandoffService } from "../src/opencode.ts";
+import { createOpenCodeHandoffService, openCodeClientVersion } from "../src/opencode.ts";
 import { createPersistence, type Persistence, type SpecInput } from "../src/persistence.ts";
 
 type FixtureOptions = {
-  health: unknown;
-  healthText?: string;
+  /** Raw `GET /api/info` body; OpenCode 2.3.2 does not wrap it in `{ data }`. */
+  info: Record<string, unknown>;
+  infoText?: string;
+  infoStatus?: number;
   registration?: "primary" | "fallback";
   registrationVersion?: string;
   filePassword?: string;
@@ -22,18 +25,30 @@ const root = join(tmpdir(), `atlas-issue-52-${crypto.randomUUID()}`);
 await mkdir(root, { recursive: true, mode: 0o700 });
 
 const json = (value: unknown, status = 200) => Response.json(value, { status });
-const sessionInfo = (id: string, directory: string) => ({
+// Error bodies observed from OpenCode 2.3.2.
+const unauthorized = () => json({ _tag: "UnauthorizedError", message: "Authentication required" }, 401);
+const sessionNotFound = (sessionID: string) => json({ _tag: "SessionNotFoundError", sessionID, message: `Session not found: ${sessionID}` }, 404);
+const serverInfo = (version: string) => ({
+  version,
+  pid: process.pid,
+  hostname: "fixture",
+  urls: [],
+  paths: { tmp: "/tmp/opencode" },
+  capabilities: { persistentPty: true },
+});
+const sessionInfo = (id: string, directory: string, title: string) => ({
   id,
   projectID: "fixture",
   cost: 0,
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
   time: { created: 1, updated: 1 },
+  title,
   location: { directory },
 });
 
 const fixture = async (name: string, options: FixtureOptions) => {
   const requests: RecordedRequest[] = [];
-  const sessions = new Map<string, { directory: string }>();
+  const sessions = new Map<string, { directory: string; title: string; prompts: Map<string, unknown> }>();
   const password = "fixture-secret";
   const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
   const server = Bun.serve({
@@ -41,50 +56,67 @@ const fixture = async (name: string, options: FixtureOptions) => {
     port: 0,
     async fetch(request) {
       const url = new URL(request.url);
-      if (request.headers.get("Authorization") !== authorization) return json({ error: "unauthorized" }, 401);
+      if (request.headers.get("Authorization") !== authorization) return unauthorized();
       const body = request.method === "POST" ? JSON.parse(await request.text()) as Record<string, unknown> : undefined;
       requests.push({ method: request.method, path: url.pathname, ...(body ? { body } : {}) });
 
-      if (url.pathname === "/api/health") {
-        if (options.healthText !== undefined) return new Response(options.healthText, { headers: { "Content-Type": "application/json" } });
-        return json(options.health);
+      if (url.pathname === "/api/info") {
+        if (options.infoText !== undefined) return new Response(options.infoText, { headers: { "Content-Type": "application/json" } });
+        return json(options.info, options.infoStatus ?? 200);
       }
       if (url.pathname === "/api/event") {
         if (options.eventContentType) return new Response("{}", { headers: { "Content-Type": options.eventContentType } });
         return new Response(new ReadableStream({
           start(controller) {
-            controller.enqueue(new TextEncoder().encode('data: {"id":"connected","created":1,"type":"server.connected","data":{}}\n\n'));
+            controller.enqueue(new TextEncoder().encode('data: {"id":"evt_connected","created":1,"type":"server.connected","data":{}}\n\n'));
           },
         }), { headers: { "Content-Type": "text/event-stream" } });
       }
       if (options.malformedPaths?.includes(url.pathname)) return new Response("{", { headers: { "Content-Type": "application/json" } });
       if (url.pathname === "/api/session" && request.method === "POST") {
         const id = String(body?.id);
+        // 2.3.2 dedupes a repeated caller id: HTTP 200 with the existing Session unchanged, never 409.
+        const existing = sessions.get(id);
+        if (existing) return json({ data: sessionInfo(id, existing.directory, existing.title) });
         const directory = String((body?.location as { directory?: unknown } | undefined)?.directory);
-        sessions.set(id, { directory });
-        return json({ data: sessionInfo(id, directory) });
+        const title = String(body?.title);
+        sessions.set(id, { directory, title, prompts: new Map() });
+        return json({ data: sessionInfo(id, directory, title) });
       }
       if (url.pathname === "/api/session/active") return json({ data: {} });
 
-      const match = /^\/api\/session\/([^/]+)(?:\/(prompt|permission|form|inbox))?$/.exec(url.pathname);
+      const match = /^\/api\/session\/([^/]+)(?:\/(prompt|permission|form|inbox|message\/[^/]+))?$/.exec(url.pathname);
       if (match) {
         const id = decodeURIComponent(match[1]!);
         const saved = sessions.get(id);
-        if (!saved) return json({ error: "not found" }, 404);
-        if (!match[2]) return json({ data: sessionInfo(id, saved.directory) });
+        if (!saved) return sessionNotFound(id);
+        if (!match[2]) return json({ data: sessionInfo(id, saved.directory, saved.title) });
         if (match[2] === "prompt" && request.method === "POST") {
-          return json({ data: { id: body?.id, sessionID: id, timeCreated: 1, type: "user", payload: { text: body?.text }, delivery: "queue" } });
+          // 2.3.2 dedupes a repeated caller message id by returning the original inbox item.
+          const promptId = String(body?.id);
+          if (!saved.prompts.has(promptId)) {
+            saved.prompts.set(promptId, { id: promptId, sessionID: id, time: { created: 1 }, type: "user", payload: { text: body?.text }, delivery: "steer" });
+          }
+          return json({ data: saved.prompts.get(promptId) });
+        }
+        if (match[2].startsWith("message/")) {
+          const messageID = decodeURIComponent(match[2].slice("message/".length));
+          const prompt = saved.prompts.get(messageID) as { payload: { text: unknown } } | undefined;
+          if (!prompt) return json({ _tag: "MessageNotFoundError", sessionID: id, messageID, message: `Message not found: ${messageID}` }, 404);
+          return json({ data: { id: messageID, time: { created: 1 }, text: prompt.payload.text, type: "user" } });
         }
         return json({ data: [] });
       }
-      return json({ error: "unexpected fixture route" }, 404);
+      return json({ _tag: "NotFound", message: "unexpected fixture route" }, 404);
     },
   });
   const url = `http://127.0.0.1:${server.port}`;
   const serviceFile = join(root, `${name}.json`);
+  // Primary mirrors the flat 0600 registration written by `opencode serve --service`.
   const registration = options.registration === "fallback"
     ? { service: { endpoint: { url, password: options.filePassword ?? password }, ...(options.registrationVersion !== undefined ? { version: options.registrationVersion } : {}) } }
     : {
+      id: `svc_${name}`,
       url,
       pid: process.pid,
       password: options.filePassword ?? password,
@@ -182,21 +214,35 @@ const github = {
 };
 
 try {
-  const successfulCases: Array<[string, FixtureOptions, string?]> = [
+  const installedClient = JSON.parse(await readFile(join(import.meta.dir, "../node_modules/@opencode/client/package.json"), "utf8")) as { name: string; version: string };
+  assert.equal(installedClient.name, "@opencode/client");
+  assert.equal(openCodeClientVersion, installedClient.version, "clientVersion must come from the installed client package");
+  const [clientMajor, clientMinor] = installedClient.version.split(".");
+  const sameLine = `${clientMajor}.${clientMinor}.999-fixture`;
+
+  // [name, options, expected observed version, expect a version-skew warning]
+  const successfulCases: Array<[string, FixtureOptions, string | undefined, boolean]> = [
     ["primary-different", {
-      health: { healthy: true, version: "9.9.9-fixture", pid: process.pid },
+      info: serverInfo("9.9.9-fixture"),
       registrationVersion: "9.9.9-fixture",
-    }, "9.9.9-fixture"],
+    }, "9.9.9-fixture", true],
+    ["primary-same-line", {
+      info: serverInfo(sameLine),
+      registrationVersion: sameLine,
+    }, sameLine, false],
+    ["primary-unregistered-version", {
+      info: serverInfo(installedClient.version),
+    }, installedClient.version, false],
     ["primary-empty", {
-      health: { healthy: true, version: "", pid: process.pid },
+      info: serverInfo(""),
       registrationVersion: "",
-    }],
+    }, undefined, false],
     ["fallback-absent", {
-      health: { healthy: true },
+      info: { pid: process.pid },
       registration: "fallback",
-    }],
+    }, undefined, false],
   ];
-  for (const [name, options, expectedVersion] of successfulCases) {
+  for (const [name, options, expectedVersion, expectWarning] of successfulCases) {
     await withFixture(name, options, async ({ requests, persistence, service }) => {
       const atlasId = `ses_${crypto.randomUUID()}`;
       preparedSession(persistence, atlasId);
@@ -230,11 +276,27 @@ try {
       assert.equal(Object.hasOwn(body.openCode, "expectedVersion"), false);
       if (expectedVersion === undefined) assert.equal(Object.hasOwn(body.openCode, "version"), false);
       else assert.equal(body.openCode.version, expectedVersion);
+      assert.equal(body.openCode.clientVersion, installedClient.version, `${name} must report the installed client version`);
+      if (expectWarning) {
+        assert.equal(typeof body.openCode.versionWarning, "string", `${name} must warn on a major.minor mismatch`);
+        assert((body.openCode.versionWarning as string).includes(expectedVersion!) && (body.openCode.versionWarning as string).includes(installedClient.version));
+      } else {
+        assert.equal(body.openCode.versionWarning, null, `${name} must not warn without a known major.minor mismatch`);
+      }
+      const activation = await app.fetch(new Request("http://atlas.test/health?activation=1", { headers: { Authorization: "Bearer secret" } }));
+      assert.equal(activation.status, 200, "a version warning must not change activation health");
+      assert.equal(Object.hasOwn(await activation.json() as object, "openCode"), false, "activation health must stay independent of OpenCode");
+      // The warning is surfaced where OpenCode readiness already is; the update path must never consult OpenCode (ADR-0002).
+      const detailPage = await (await app.fetch(new Request(`http://atlas.test/sessions/${atlasId}`, { headers: { Authorization: "Bearer secret" } }))).text();
+      assert.equal(detailPage.includes("data-opencode-version-warning"), expectWarning, `${name} Session detail diagnostic notice`);
+      if (expectWarning) assert(detailPage.includes("does not pause launches or affect Atlas updates") && !detailPage.includes("OpenCode launches are paused"));
+      const updatesPage = await (await app.fetch(new Request("http://atlas.test/updates", { headers: { Authorization: "Bearer secret" } }))).text();
+      assert.equal(updatesPage.includes("data-opencode-version-warning"), false, "the Updates page must not depend on OpenCode");
     });
   }
 
   await withFixture("later-decode-failure", {
-    health: { healthy: true, version: "future-beta", pid: process.pid },
+    info: serverInfo("future-beta"),
     registrationVersion: "future-beta",
     malformedPaths: ["/api/session/active"],
   }, async ({ requests, persistence, service }) => {
@@ -252,9 +314,11 @@ try {
     assert.equal(persistence.getSession(atlasId)?.state, "preparing", "a decoding failure must not invent a terminal outcome");
   });
 
+  // 2.3.2 has no `healthy` flag; a server that cannot answer `/api/info` successfully is not ready.
   await withFixture("unhealthy", {
-    health: { healthy: false, version: "future-beta", pid: process.pid },
-    registrationVersion: "future-beta",
+    info: { _tag: "InternalServerError", message: "fixture failure" },
+    infoStatus: 500,
+    registration: "fallback",
   }, async ({ requests, persistence, service }) => {
     const atlasId = "ses_54545454-5454-4454-8454-545454545454";
     preparedSession(persistence, atlasId);
@@ -269,9 +333,9 @@ try {
   });
 
   const rejected: Array<[string, FixtureOptions]> = [
-    ["undecodable-health", { health: {}, healthText: "{" }],
-    ["invalid-auth", { health: { healthy: true, version: "future-beta", pid: process.pid }, registrationVersion: "future-beta", filePassword: "wrong" }],
-    ["invalid-event-stream", { health: { healthy: true, version: "future-beta", pid: process.pid }, registrationVersion: "future-beta", eventContentType: "application/json" }],
+    ["undecodable-info", { info: {}, infoText: "{" }],
+    ["invalid-auth", { info: serverInfo("future-beta"), registrationVersion: "future-beta", filePassword: "wrong" }],
+    ["invalid-event-stream", { info: serverInfo("future-beta"), registrationVersion: "future-beta", eventContentType: "application/json" }],
   ];
   for (const [name, options] of rejected) {
     await withFixture(name, options, async ({ service }) => {
@@ -324,6 +388,14 @@ try {
     const body = await response.json() as { openCode: Record<string, unknown> };
     assert.equal(body.openCode.ready, false);
     assert.equal(Object.hasOwn(body.openCode, "version"), false);
+    assert.equal(body.openCode.clientVersion, openCodeClientVersion);
+    assert.equal(body.openCode.versionWarning, null, "an unknown server version must not warn");
+    const skewed = createApp({ persistence, sharedToken: "secret", github, openCode: { ...openCode, readiness: () => ({ ready: false, state: "stale" as const, reason: "not ready", version: "99.0.0" }) } });
+    const skewedResponse = await skewed.fetch(new Request("http://atlas.test/health", { headers: { Authorization: "Bearer secret" } }));
+    assert.equal(skewedResponse.status, 200, "a version warning must not change the health HTTP status");
+    const skewedBody = await skewedResponse.json() as { openCode: Record<string, unknown> };
+    assert.equal(skewedBody.openCode.ready, false, "a version warning must not change readiness");
+    assert.equal(typeof skewedBody.openCode.versionWarning, "string");
     persistence.close();
     const degraded = await app.fetch(new Request("http://atlas.test/health", { headers: { Authorization: "Bearer secret" } }));
     assert.equal(degraded.status, 503, "unhealthy persistence must determine the health HTTP status");
@@ -337,6 +409,7 @@ try {
       const kind = new URL(request.url).pathname.slice(1);
       const responses: Record<string, unknown> = {
         ready: { atlas: { process: true }, persistence: { healthy: true }, openCode: { ready: true, version: "future-beta" } },
+        "ready-version-warning": { atlas: { process: true }, persistence: { healthy: true }, openCode: { ready: true, version: "9.9.9", clientVersion: "2.3.2", versionWarning: "skew" } },
         "ready-no-version": { atlas: { process: true }, persistence: { healthy: true }, openCode: { ready: true } },
         process: { atlas: { process: false }, persistence: { healthy: true }, openCode: { ready: true } },
         persistence: { atlas: { process: true }, persistence: { healthy: false }, openCode: { ready: true } },
@@ -359,6 +432,7 @@ try {
   };
   assert.equal((await runHealthCheck("ready")).exitCode, 0);
   assert.equal((await runHealthCheck("ready-no-version")).exitCode, 0, "deployment health must not require a non-empty version");
+  assert.equal((await runHealthCheck("ready-version-warning")).exitCode, 0, "a version warning must not fail deployment health");
   assert.equal((await runHealthCheck("process")).exitCode, 1);
   assert.equal((await runHealthCheck("persistence")).exitCode, 1);
   assert.equal((await runHealthCheck("opencode")).exitCode, 1, "the normal operator health diagnostic must retain OpenCode readiness");

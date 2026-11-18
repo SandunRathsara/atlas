@@ -1,3 +1,4 @@
+import "./isolate-opencode.ts";
 import { strict as assert } from "node:assert";
 import { createApp } from "../src/app.ts";
 import {

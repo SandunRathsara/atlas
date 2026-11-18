@@ -180,6 +180,9 @@ const renderViewerMessage = (message: ViewerSessionNode["messages"][number], nex
   if (message.type === "model-switched") {
     return `<li class="${messageFrame}" data-message-id="${escapeHtml(message.id)}"><p class="font-medium">Model selected: <code class="font-mono">${escapeHtml(message.model.providerID)}/${escapeHtml(message.model.id)}</code></p></li>`;
   }
+  if (message.type === "idle") {
+    return `<li class="${messageFrame}" data-message-id="${escapeHtml(message.id)}"><p class="font-medium">Execution ${escapeHtml(message.outcome)}</p>${message.error ? `<p class="mt-2 whitespace-pre-wrap break-words text-sm text-muted">${escapeHtml(message.error.message)}</p>` : ""}</li>`;
+  }
   return `<li class="${messageFrame}" data-message-id="${escapeHtml(message.id)}"><p class="font-medium">Location changed</p><p class="mt-2 text-sm text-muted">${escapeHtml(message.location.directory)}</p></li>`;
 };
 
@@ -352,7 +355,7 @@ export const renderSessionDetailPage = ({
   pullRequestsRefresh?: RefreshState;
   viewerRequestUrl?: string;
   viewerLimit?: number;
-  openCodeReadiness?: { ready: boolean; reason?: string };
+  openCodeReadiness?: { ready: boolean; reason?: string; versionWarning?: string | null };
   persistenceHealth?: { healthy: boolean; reason?: string | null };
   sessionDirectoryAvailable?: boolean;
   inbox?: InboxContext;

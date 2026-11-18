@@ -28,7 +28,7 @@ registry=${ATLAS_OPENCODE_REGISTRY_URL:-https://registry.npmjs.org}
 metadata="$staging/registry.json"
 encoded_version=$(jq -rn --arg value "$version" '$value | @uri')
 "$curl_binary" --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-  "${registry%/}/@opencode-ai%2fcli-linux-x64/$encoded_version" --output "$metadata"
+  "${registry%/}/@opencode%2fcli-linux-x64/$encoded_version" --output "$metadata"
 
 metadata_version=$(jq -er '.version | select(type == "string" and length > 0)' "$metadata") || {
   echo "registry metadata has no package version" >&2
@@ -62,19 +62,19 @@ if find "$staging/package" -type l -print -quit | grep -q .; then
   echo "package contains a symlink" >&2
   exit 1
 fi
-source_binary="$staging/package/bin/opencode2"
+source_binary="$staging/package/bin/opencode"
 [[ -f "$source_binary" && ! -L "$source_binary" ]] || { echo "package has no usable OpenCode server executable" >&2; exit 1; }
 
 binary_stage="$staging/tools/opencode/$version/bin"
 mkdir -p "$binary_stage"
-install -m 0555 "$source_binary" "$binary_stage/opencode2"
+install -m 0555 "$source_binary" "$binary_stage/opencode"
 rm -rf -- "$staging/package" "$archive" "$metadata"
 
-binary="$binary_stage/opencode2"
+binary="$binary_stage/opencode"
 probe="$staging/probe"
 mkdir -p "$probe/home" "$probe/config" "$probe/data" "$probe/state"
 actual=$(env -i HOME="$probe/home" PATH=/usr/bin:/bin XDG_CONFIG_HOME="$probe/config" XDG_DATA_HOME="$probe/data" XDG_STATE_HOME="$probe/state" "$binary" --version)
-[[ "$actual" == "opencode2 v$version" ]] || { echo "OpenCode server version mismatch: $actual" >&2; exit 1; }
+[[ "$actual" == "opencode v$version" ]] || { echo "OpenCode server version mismatch: $actual" >&2; exit 1; }
 [[ ! -e "$probe/state/opencode/service.json" ]] || { echo "version probe registered an OpenCode service" >&2; exit 1; }
 rm -rf -- "$probe"
 

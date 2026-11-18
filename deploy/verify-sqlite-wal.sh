@@ -34,18 +34,46 @@ bun_sqlite=$(
   exit 1
 }
 
-opencode_output=$(
-  XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-/var/lib/atlas/opencode-config} \
-  XDG_DATA_HOME=${XDG_DATA_HOME:-/var/lib/atlas/opencode-data} \
-  XDG_STATE_HOME=${XDG_STATE_HOME:-/var/lib/atlas/opencode-state} \
-  XDG_CACHE_HOME=${XDG_CACHE_HOME:-/var/lib/atlas/opencode-cache} \
-  "$ATLAS_OPENCODE_BINARY" db 'SELECT sqlite_version() AS sqlite_version' --format tsv
-)
-opencode_sqlite=$(printf '%s\n' "$opencode_output" | grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+$' | tail -n 1)
-[[ -n "$opencode_sqlite" ]] && fixed_version "$opencode_sqlite" || {
-  echo "OpenCode's embedded SQLite could not be proven to include the accepted WAL-reset fix" >&2
+# OpenCode has no database CLI. The selected executable is a Bun single-file
+# executable whose server opens its database through bun:sqlite, so ask that
+# same executable's embedded Bun runtime (BUN_BE_BUN=1, documented by Bun) for
+# its SQLite build. The probe runs with a scrubbed environment in a throwaway
+# HOME/XDG/working directory and never reads or writes live OpenCode state.
+probe=$(mktemp -d)
+trap 'rm -rf -- "$probe"' EXIT
+mkdir -p "$probe/home" "$probe/config" "$probe/data" "$probe/state" "$probe/cache" "$probe/work"
+embedded_bun() {
+  (
+    cd "$probe/work"
+    env -i HOME="$probe/home" PATH=/usr/bin:/bin \
+      XDG_CONFIG_HOME="$probe/config" XDG_DATA_HOME="$probe/data" \
+      XDG_STATE_HOME="$probe/state" XDG_CACHE_HOME="$probe/cache" \
+      BUN_BE_BUN=1 "$ATLAS_OPENCODE_BINARY" "$@"
+  )
+}
+cannot_prove() {
+  echo "OpenCode's embedded SQLite could not be proven to include the accepted WAL-reset fix: $*" >&2
   exit 1
 }
+# A build without the Bun CLI (for example bun build --trim) ignores
+# BUN_BE_BUN and answers as OpenCode; that cannot prove anything.
+opencode_bun=$(embedded_bun --version) || cannot_prove "the executable does not expose its embedded Bun runtime"
+[[ "$opencode_bun" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || cannot_prove "the executable did not answer as its embedded Bun runtime"
+opencode_output=$(
+  embedded_bun --eval 'import { Database } from "bun:sqlite"; const db = new Database(":memory:"); const row = db.query("SELECT sqlite_version() AS version, sqlite_source_id() AS source").get(); console.log(row.version); console.log(row.source); db.close();'
+) || cannot_prove "the embedded Bun runtime could not query bun:sqlite"
+opencode_sqlite=$(sed -n 1p <<<"$opencode_output")
+opencode_sqlite_source=$(sed -n 2p <<<"$opencode_output")
+[[ "$opencode_sqlite" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || cannot_prove "unexpected SQLite version output"
+[[ "$opencode_sqlite_source" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2}\ [0-9a-f]{64}$ ]] || cannot_prove "unexpected SQLite source ID output"
+fixed_version "$opencode_sqlite" || cannot_prove "embedded SQLite $opencode_sqlite predates the fix"
+# The runtime answer covers OpenCode's database only if the executable carries
+# no second SQLite build. Every SQLite build embeds its source ID, so require
+# exactly one distinct ID and require it to be the one the runtime reported.
+source_ids=$(LC_ALL=C grep -aoE '[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9a-f]{64}' "$ATLAS_OPENCODE_BINARY" | sort -u || true)
+[[ "$source_ids" == "$opencode_sqlite_source" ]] || cannot_prove "the executable does not embed exactly the one SQLite build its runtime reported"
+rm -rf -- "$probe"
+trap - EXIT
 
 record_root=$(realpath -m "${ATLAS_RECOVERY_CONFIG_ROOT:-/var/lib/atlas/recovery-config}")
 record="$record_root/current/checksums/sqlite-wal-versions"
@@ -61,7 +89,10 @@ trap 'rm -f -- "$temporary"' EXIT
   printf 'bun_version=%s\n' "$ATLAS_BUN_VERSION"
   printf 'bun_sqlite_version=%s\n' "$bun_sqlite"
   printf 'opencode_version=%s\n' "$opencode_version"
+  printf 'opencode_bun_version=%s\n' "$opencode_bun"
   printf 'opencode_sqlite_version=%s\n' "$opencode_sqlite"
+  printf 'opencode_sqlite_source_id=%s\n' "$opencode_sqlite_source"
+  printf 'opencode_sqlite_method=embedded-bun-runtime\n'
   printf 'wal_reset_fix=verified\n'
 } > "$temporary"
 chmod 0400 "$temporary"

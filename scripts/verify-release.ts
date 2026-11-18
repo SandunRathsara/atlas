@@ -1,3 +1,4 @@
+import "./isolate-opencode.ts";
 import { strict as assert } from "node:assert";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

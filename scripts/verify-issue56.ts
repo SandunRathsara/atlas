@@ -1,3 +1,4 @@
+import "./isolate-opencode.ts";
 import { strict as assert } from "node:assert";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -348,22 +349,25 @@ const openCodeFixture = async () => {
     port: 0,
     async fetch(request) {
       const url = new URL(request.url);
-      if (request.headers.get("Authorization") !== authorization) return json({ error: "unauthorized" }, 401);
+      // Response shapes mirror OpenCode 2.3.2: raw `/api/info`, `{ data }` envelopes, and `_tag` error bodies.
+      if (request.headers.get("Authorization") !== authorization) return json({ _tag: "UnauthorizedError", message: "Authentication required" }, 401);
       const body = request.method === "POST" ? JSON.parse(await request.text()) as Record<string, unknown> : undefined;
       requests.push({ method: request.method, path: url.pathname, ...(body ? { body } : {}) });
-      if (url.pathname === "/api/health") return json({ healthy: true, version: "fixture" });
+      if (url.pathname === "/api/info") {
+        return json({ version: "fixture", pid: process.pid, hostname: "fixture", urls: [], paths: { tmp: "/tmp/opencode" }, capabilities: { persistentPty: true } });
+      }
       if (url.pathname === "/api/event") {
         return new Response(new ReadableStream({
           start(controller) {
-            controller.enqueue(new TextEncoder().encode('data: {"id":"connected","created":1,"type":"server.connected","data":{}}\n\n'));
+            controller.enqueue(new TextEncoder().encode('data: {"id":"evt_connected","created":1,"type":"server.connected","data":{}}\n\n'));
           },
         }), { headers: { "Content-Type": "text/event-stream" } });
       }
       if (url.pathname === "/api/session" && request.method === "POST") {
         const id = String(body?.id);
-        const directory = String((body?.location as { directory?: unknown } | undefined)?.directory);
-        sessions.set(id, { directory });
-        return json({ data: sessionInfo(id, directory) });
+        // A repeated caller id is deduped with HTTP 200 and the existing Session, never 409.
+        if (!sessions.has(id)) sessions.set(id, { directory: String((body?.location as { directory?: unknown } | undefined)?.directory) });
+        return json({ data: sessionInfo(id, sessions.get(id)!.directory) });
       }
       if (url.pathname === "/api/session/active") {
         if (holdActive) {
@@ -374,19 +378,25 @@ const openCodeFixture = async () => {
       }
       const messageMatch = /^\/api\/session\/([^/]+)\/message\/([^/]+)$/.exec(url.pathname);
       if (messageMatch) {
-        const message = messages.get(decodeURIComponent(messageMatch[2]!));
-        return message ? json({ data: { ...message, timeCreated: 1, type: "user" } }) : json({ error: "not found" }, 404);
+        const sessionID = decodeURIComponent(messageMatch[1]!);
+        const messageID = decodeURIComponent(messageMatch[2]!);
+        if (!sessions.has(sessionID)) return json({ _tag: "SessionNotFoundError", sessionID, message: `Session not found: ${sessionID}` }, 404);
+        const message = messages.get(messageID);
+        return message
+          ? json({ data: { id: message.id, time: { created: 1 }, text: message.text, type: "user" } })
+          : json({ _tag: "MessageNotFoundError", sessionID, messageID, message: `Message not found: ${messageID}` }, 404);
       }
       const match = /^\/api\/session\/([^/]+)(?:\/(prompt|permission|form|inbox))?$/.exec(url.pathname);
       if (match) {
         const id = decodeURIComponent(match[1]!);
         const saved = sessions.get(id);
-        if (!saved) return json({ error: "not found" }, 404);
+        if (!saved) return json({ _tag: "SessionNotFoundError", sessionID: id, message: `Session not found: ${id}` }, 404);
         if (!match[2]) return json({ data: sessionInfo(id, saved.directory) });
         if (match[2] === "prompt" && request.method === "POST") {
           const idValue = String(body?.id);
-          const text = String(body?.text);
-          messages.set(idValue, { id: idValue, sessionID: id, text });
+          // A repeated caller message id is deduped: the original item is kept, even for different text.
+          if (!messages.has(idValue)) messages.set(idValue, { id: idValue, sessionID: id, text: String(body?.text) });
+          const text = messages.get(idValue)!.text;
           promptStarted = true;
           if (holdPrompt) await promptRelease;
           holdPrompt = false;
@@ -394,25 +404,26 @@ const openCodeFixture = async () => {
             loseNextPromptResponse = false;
             return json({ error: "response lost after acceptance" }, 500);
           }
-          return json({ data: { id: idValue, sessionID: id, timeCreated: 1, type: "user", payload: { text } } });
+          return json({ data: { id: idValue, sessionID: id, time: { created: 1 }, type: "user", payload: { text }, delivery: "steer" } });
         }
         if (match[2] === "inbox") {
           return json({ data: [...messages.values()].filter((message) => message.sessionID === id).map((message) => ({
             id: message.id,
             sessionID: id,
-            timeCreated: 1,
+            time: { created: 1 },
             type: "user",
             payload: { text: message.text },
+            delivery: "steer",
           })) });
         }
         return json({ data: [] });
       }
-      return json({ error: "unexpected fixture route" }, 404);
+      return json({ _tag: "NotFound", message: "unexpected fixture route" }, 404);
     },
   });
 
   const serviceFile = join(root, "opencode-service.json");
-  writeFileSync(serviceFile, JSON.stringify({ url: `http://127.0.0.1:${server.port}`, pid: process.pid, password }), { mode: 0o600 });
+  writeFileSync(serviceFile, JSON.stringify({ id: "svc_issue56", version: "fixture", url: `http://127.0.0.1:${server.port}`, pid: process.pid, password }), { mode: 0o600 });
   return {
     requests,
     sessions,

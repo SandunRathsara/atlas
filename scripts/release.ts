@@ -18,7 +18,7 @@ if (command === "validate") {
   const root = join(import.meta.dir, "..");
   const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
     engines?: { bun?: string };
-    dependencies?: { "@opencode-ai/client"?: string };
+    dependencies?: { "@opencode/client"?: string };
   };
   const pins = Object.fromEntries(
     (await readFile(join(root, "deploy/pins.env"), "utf8"))
@@ -30,9 +30,18 @@ if (command === "validate") {
   if (!packageJson.engines?.bun || packageJson.engines.bun !== pins.ATLAS_BUN_VERSION) {
     throw new Error("package.json and deploy/pins.env must agree on the Bun runtime");
   }
-  if (!packageJson.dependencies?.["@opencode-ai/client"] ||
-      packageJson.dependencies["@opencode-ai/client"] !== pins.ATLAS_OPENCODE_CLIENT_VERSION) {
+  if (!packageJson.dependencies?.["@opencode/client"] ||
+      packageJson.dependencies["@opencode/client"] !== pins.ATLAS_OPENCODE_CLIENT_VERSION) {
     throw new Error("package.json and deploy/pins.env must agree on the packaged OpenCode client");
+  }
+  // Atlas reports the installed client version on /health, so the frozen lockfile must resolve exactly the pin.
+  const lock = await readFile(join(root, "bun.lock"), "utf8");
+  const resolved = /"@opencode\/client": \["@opencode\/client@([^"]+)"/u.exec(lock)?.[1];
+  if (resolved !== pins.ATLAS_OPENCODE_CLIENT_VERSION) {
+    throw new Error("bun.lock and deploy/pins.env must agree on the packaged OpenCode client");
+  }
+  if (lock.includes("@opencode-ai/")) {
+    throw new Error("bun.lock must not contain the retired @opencode-ai packages");
   }
   const metadata = createReleaseMetadata(tag, gitSha, {
     bun: packageJson.engines.bun,

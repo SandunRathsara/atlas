@@ -55,6 +55,8 @@ install -d -m 0700 -o "$service_user" -g "$service_group" "$data_root"
 install -d -m 0755 -o root -g root /opt/atlas/releases
 chown "$service_user:$service_group" "$config_root/github.env"
 chmod 0600 "$config_root/github.env"
+install -d -m 0700 -o "$service_user" -g "$service_group" "$data_root/opencode-config"
+"$root/install-opencode-config.sh" "$data_root/opencode-config"
 
 supplier_key="$config_root/supplier.key"
 if [[ -e "$supplier_key" || -L "$supplier_key" ]]; then
@@ -107,4 +109,4 @@ fi
 
 systemctl restart atlas-updater.service
 
-echo "Atlas credential supplier and updater bootstrap complete; OpenCode was not restarted"
+echo "Atlas credential supplier, updater, and headless OpenCode configuration bootstrap complete; OpenCode was not restarted"

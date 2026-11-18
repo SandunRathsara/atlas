@@ -79,6 +79,10 @@ rm -f -- \
   "$target/opencode-data/opencode/oauth.json" \
   "$target/session-scopes.json"
 find "$target" -type s -print -quit | grep -q . && { echo "restored socket remained after endpoint scrubbing; restore target retained" >&2; exit 1; }
+# The scrub above removed every OpenCode config document. Re-install only the
+# selected release's credential-free headless configuration so the restored
+# tree carries the same update/permission/policy settings as production.
+"$root/install-opencode-config.sh" "$target/opencode-config" >/dev/null
 printf '%s\n' \
   'Atlas isolated restore rehearsal only.' \
   'Credentials, provider configuration, discovery, webhook routing, and supplier registration were scrubbed.' \

@@ -16,8 +16,8 @@ version drift on every managed Git invocation and service start. OpenCode is
 different: `ATLAS_OPENCODE_BINARY` follows the operator-controlled
 `/opt/atlas/tools/opencode/current` selection. Its server version is not an
 Atlas release pin. The Atlas release still installs the exact
-`@opencode-ai/client` dependency in `package.json`; staging a server does not
-replace or pair that client.
+`@opencode/client` dependency (`2.3.2`) in `package.json`; staging a server
+does not replace or pair that client.
 
 Published releases are produced from authoritative
 `vMAJOR.MINOR.PATCH+build.BUILD` tags by `.github/workflows/release.yml`. See
@@ -29,9 +29,11 @@ makes the tree read-only, and atomically renames the staging directory. It
 never overwrites `/opt/atlas/current` or an existing release.
 
 `stage-opencode.sh <exact-server-version> <directory>` queries npm registry
-metadata for that exact `@opencode-ai/cli-linux-x64` version, requires its
-SHA-512 integrity and secure tarball URL, verifies the download, runs only
-`opencode2 --version`, and leaves an immutable server-only tree. Its
+metadata for that exact `@opencode/cli-linux-x64` version, requires its
+SHA-512 integrity and secure tarball URL, verifies the download, installs the
+package's `bin/opencode` as `tools/opencode/<version>/bin/opencode`, runs only
+`opencode --version` (which must print `opencode v<version>`), and leaves an
+immutable server-only tree. Its
 `OPENCODE_ARTIFACTS` manifest records the chosen version, registry integrity,
 and binary SHA-256. There is no default or latest lookup, and no Atlas
 client/schema/protocol package is downloaded.
@@ -65,12 +67,17 @@ OpenCode service untouched.
   `HOME`, `PATH`, working directory, crash restart, bounded journal rate, and
   `/etc/atlas/atlas.env`. It connects to, but does not own, either surviving
   service socket.
-- `systemd/opencode.service` independently runs the operator-selected V2 server as
-  `omega`, bound to `127.0.0.1` with a dynamic port and `--service` discovery.
-  Its preflight follows `current`, validates the executable, and reports its
-  observed version without inspecting Atlas client packages. The unit uses
-  `--log-level WARN`, bounds journal rate, and deliberately does **not** load
-  Atlas's secret environment file.
+- `systemd/opencode.service` independently runs the operator-selected server as
+  `omega`, bound to `127.0.0.1:49475` with `--service` discovery. The fixed port
+  keeps it off OpenCode's default background-service port, which an
+  interactive OpenCode for the same `omega` user may use. Atlas still finds the
+  URL and password through the registration file
+  (`OPENCODE_SERVICE_FILE`, `opencode-state/opencode/service.json`), not the
+  port. Its preflight follows `current`, validates the executable, and reports
+  its observed version without inspecting Atlas client packages. It refuses to
+  start without the headless configuration below. The unit uses
+  `--log-level warn` (lowercase; the server rejects `WARN`), bounds journal
+  rate, and deliberately does **not** load Atlas's secret environment file.
 - Atlas's private app listener and loopback webhook listener remain separate;
   their ports come from `atlas.env`. Funnel must target only the webhook port.
 - `check-health.sh` is the normal operator diagnostic for the private,
@@ -79,8 +86,46 @@ OpenCode service untouched.
   requires exact candidate tag/SHA and healthy Atlas persistence from
   `/health?activation=1`, where OpenCode is not evaluated or reported.
 
+`check-health.sh` also prints the OpenCode client version and, when `/health`
+reports one, the `openCode.versionWarning` text. A version warning is
+diagnostic only and never fails the check.
+
 The private health route is authenticated and exists only on the private app.
 The webhook app has no health, login, Session, event, or OpenCode routes.
+
+## Headless OpenCode configuration
+
+Atlas Sessions run unattended, so OpenCode must not stop to ask a person.
+`opencode/opencode.json` is the global configuration for the service's
+`XDG_CONFIG_HOME`. `install-opencode-config.sh <config-home>` installs it as
+`<config-home>/opencode/opencode.json` (owner of `<config-home>`, mode `0400`).
+`bootstrap.sh` runs it for `/var/lib/atlas/opencode-config`.
+The installer:
+
+- never restarts OpenCode; the server reads the file at the latest on its next
+  start;
+- keeps a differing earlier file as `opencode.json.replaced-<UTC time>`;
+- refuses to run beside an `opencode.jsonc`.
+
+| Setting | Effect |
+| --- | --- |
+| `"update": "disable"` | No update checks or installs by any OpenCode process using this config. `serve` does not run the periodic check itself; this setting also covers interactive clients. It is global-only; project files cannot change it. |
+| `permissions` allow `read` on `*.env` and `*.env.*` | Replaces OpenCode's default `ask` for `.env` files. |
+| `permissions` deny `question` | Removes the `question` tool from the agents' tool list. |
+| `policies` deny `tool.use` on `question:*` | Hard backstop. If a repository's own config re-allows `question`, the call still fails with "Blocked by configuration policy" and no form opens. |
+
+The split is deliberate. Policies can only deny and never grant, so the `.env`
+allow rules must stay `permissions`. Global policies outrank project config;
+global permissions do not.
+
+Limits (Waiting is still possible):
+
+- A Session's repository may ship its own `opencode.json(c)` or `.opencode/`.
+  Project permissions override these global ones, so a repository that asks
+  for `.env` reads, shell commands, or other actions still makes the Session
+  wait for approval.
+- Only the `question` form is blocked unconditionally.
+- Idle servers still fetch the public model catalog from `models.opencode.ai`.
 
 ## Target layout
 
@@ -100,7 +145,7 @@ The webhook app has no health, login, Session, event, or OpenCode routes.
 | `/var/lib/atlas/opencode-data/opencode` | OpenCode data, database, logs, shells, snapshots, tool output |
 | `/var/lib/atlas/opencode-data/opencode/log` | OpenCode file logs; human-installed size/retention bound |
 | `/var/lib/atlas/opencode-state/opencode` | OpenCode state and service registration |
-| `/var/lib/atlas/opencode-config/opencode` | Copied OpenCode configuration/plugins |
+| `/var/lib/atlas/opencode-config/opencode` | Copied OpenCode configuration/plugins; `opencode.json` is the Atlas headless configuration and the generated server password |
 | `/var/lib/atlas/opencode-cache` | OpenCode cache kept inside the coherent snapshot scope |
 | `/var/lib/atlas/opencode-runtime` | Stable service working directory, never a Session clone |
 | `/var/lib/atlas/recovery-config/current` | Protected required configuration and rollback records |
@@ -280,9 +325,17 @@ complete shared subvolume. `atlas-snapshot.sh` keeps seven daily and four weekly
 points as a union and prunes only exact-name, exact-marker, read-only Atlas
 subvolumes. `atlas-space-check.timer` refreshes status every five minutes.
 `verify-sqlite-wal.sh` follows `current` and records its observed OpenCode
-version plus both actual fixed embedded SQLite builds, and
+version plus both actual fixed embedded SQLite builds. OpenCode has no database
+command, so the script asks the selected executable's own embedded Bun runtime
+(`BUN_BE_BUN=1`, in a throwaway scrubbed environment that never touches live
+OpenCode state) for `sqlite_version()` and `sqlite_source_id()`. It then
+requires the executable to contain exactly that one SQLite build. Limits: this
+assumes OpenCode opens its database through Bun's built-in `bun:sqlite`, as
+2.3.2 does. A build without the embedded Bun CLI, or with a second SQLite
+build, fails closed and cannot be verified this way.
 `restore-rehearsal.sh` validates a writable restore before scrubbing known
-runtime endpoints without starting a service. The exact conditional recovery,
+runtime endpoints without starting a service, then re-installs only the
+credential-free headless OpenCode configuration. The exact conditional recovery,
 release, rollback, and rehearsal procedure is in [RECOVERY.md](RECOVERY.md).
 
 ## Human-only cutover order
@@ -292,7 +345,7 @@ The following is a handoff, not an instruction for an agent to execute:
 1. Re-inventory the host and confirm `/opt/atlas`, `/var/lib/atlas`,
    `/etc/atlas`, `/var/backups/atlas`, and `/run/atlas` do not conflict. Leave
    the exFAT disk untouched. Record current OpenCode/agent PIDs and do not
-   start the new unit while the live beta server remains active.
+   start the new unit while the existing live server remains active.
 2. Obtain and checksum the pinned Bun, Git, and gh binaries. Run
    `stage-opencode.sh` with an explicitly chosen exact server version in a
    disposable isolated directory. Verify its registry integrity manifest,
@@ -311,7 +364,9 @@ The following is a handoff, not an instruction for an agent to execute:
 4. Extract and checksum a published release using its `atlas-release.json`
    contract (or use `stage-release.sh` only for a deliberate unpublished manual
    staging rehearsal), select it, and run the one-time
-   `sudo /opt/atlas/current/deploy/bootstrap.sh` credential setup. Separately
+   `sudo /opt/atlas/current/deploy/bootstrap.sh` credential setup, which also
+   installs the headless OpenCode configuration without restarting OpenCode.
+   Separately
    install the staged
    OpenCode version, atomically switch `/opt/atlas/tools/opencode/current`, and
    run `check-opencode.sh`. Install the remaining units, run `systemctl daemon-reload`,

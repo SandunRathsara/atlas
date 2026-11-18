@@ -46,7 +46,10 @@ release_root=${roots[0]}
 cmp "$output/atlas-release.json" "$release_root/RELEASE_METADATA.json"
 test -s "$release_root/public/app.css"
 test -d "$release_root/node_modules/hono"
-test -d "$release_root/node_modules/@opencode-ai/client"
+test -d "$release_root/node_modules/@opencode/client"
+test ! -e "$release_root/node_modules/@opencode-ai"
+jq -e --arg version "$ATLAS_OPENCODE_CLIENT_VERSION" '.name == "@opencode/client" and .version == $version' \
+  "$release_root/node_modules/@opencode/client/package.json" >/dev/null
 test -d "$release_root/node_modules/htmx.org"
 test ! -d "$release_root/node_modules/typescript"
 test -f "$release_root/scripts/atlas-gh.ts"
@@ -106,9 +109,10 @@ fi
 
 response=$(printf 'Authorization: Bearer fixture-secret\nAccept: application/json\n' |
   curl --silent --show-error --max-time 10 --header @- "http://127.0.0.1:$port/health")
-jq -e --arg tag "$tag" --arg sha "$commit" \
+jq -e --arg tag "$tag" --arg sha "$commit" --arg client "$ATLAS_OPENCODE_CLIENT_VERSION" \
   '.atlas.process == true and .atlas.release.published == true and .atlas.release.tag == $tag and
-   .atlas.release.gitSha == $sha and .persistence.healthy == true and .openCode.ready == false' \
+   .atlas.release.gitSha == $sha and .persistence.healthy == true and .openCode.ready == false and
+   .openCode.clientVersion == $client and .openCode.versionWarning == null' \
   >/dev/null <<<"$response"
 activation_response=$(printf 'Authorization: Bearer fixture-secret\nAccept: application/json\n' |
   curl --silent --show-error --max-time 10 --header @- "http://127.0.0.1:$port/health?activation=1")

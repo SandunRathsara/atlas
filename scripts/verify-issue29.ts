@@ -1,4 +1,5 @@
-import type { OpenCodeClient, OpenCodeEvent, SessionInfo, SessionMessageInfo } from "@opencode-ai/client";
+import "./isolate-opencode.ts";
+import type { OpenCodeClient, OpenCodeEvent, SessionInfo, SessionMessageInfo } from "@opencode/client";
 import { strict as assert } from "node:assert";
 import { createApp } from "../src/app.ts";
 import { createPersistence } from "../src/persistence.ts";
@@ -106,9 +107,9 @@ const client = {
         eventListener?.({ id: "event-end", created: 4, type: "session.text.ended", data: { sessionID: rootId, assistantMessageID: "msg_root", ordinal: 0, text: "authoritative" } } as OpenCodeEvent);
         eventListener?.({ id: "reasoning-end", created: 5, type: "session.reasoning.ended", data: { sessionID: rootId, assistantMessageID: "msg_root", ordinal: 0, text: "live reasoning" } } as OpenCodeEvent);
         eventListener?.({ id: "tool-input-end", created: 6, type: "session.tool.input.ended", data: { sessionID: rootId, assistantMessageID: "msg_root", id: "tool_root", text: "{\"command\":\"echo live\"}" } } as OpenCodeEvent);
-        eventListener?.({ id: "tool-called", created: 7, type: "session.tool.called", data: { sessionID: rootId, assistantMessageID: "msg_root", id: "tool_root", input: { command: "echo live" }, executed: true, state: {} } } as unknown as OpenCodeEvent);
+        eventListener?.({ id: "tool-called", created: 7, type: "session.tool.called", durable: { aggregateID: rootId, seq: 1, version: 1 }, data: { sessionID: rootId, assistantMessageID: "msg_root", id: "tool_root", input: { command: "echo live" }, executed: true, native: { callState: "fixture" } } } as OpenCodeEvent);
         eventListener?.({ id: "tool-progress", created: 8, type: "session.tool.progress", data: { sessionID: rootId, assistantMessageID: "msg_root", id: "tool_root", metadata: { step: "done" } } } as OpenCodeEvent);
-        eventListener?.({ id: "tool-success", created: 9, type: "session.tool.success", data: { sessionID: rootId, assistantMessageID: "msg_root", id: "tool_root", content: [{ type: "text", text: "live output" }], executed: true } } as unknown as OpenCodeEvent);
+        eventListener?.({ id: "tool-success", created: 9, type: "session.tool.success", durable: { aggregateID: rootId, seq: 2, version: 2 }, data: { sessionID: rootId, assistantMessageID: "msg_root", id: "tool_root", content: [{ type: "text", text: "live output" }], metadata: { exitCode: 0 }, executed: true, native: { resultState: "fixture" } } } as OpenCodeEvent);
       }
       return info(sessionID, sessionID === childId ? rootId : undefined);
     },
@@ -117,8 +118,9 @@ const client = {
       data: input.parentID === rootId ? [info(childId, rootId)] : [],
       cursor: { next: null },
     }),
-    message: async () => messages(rootId)[0]!,
+    message: { get: async () => messages(rootId)[0]! },
     inbox: { list: async () => [] },
+    form: { list: async () => [] },
   },
   message: {
     list: async (input: Record<string, unknown>) => {
@@ -128,7 +130,6 @@ const client = {
     },
   },
   permission: { list: async () => [] },
-  form: { list: async () => [] },
   agent: { list: async () => ({ location: { directory }, data: [{ id: "subagent", name: "subagent", mode: "subagent", hidden: false, request: {}, permissions: [] }] }) },
   shell: { list: async () => ({ location: { directory }, data: [] }) },
 } as unknown as OpenCodeClient;
@@ -149,6 +150,9 @@ const rootMessage = rootProjection.root.messages[0];
 assert(rootMessage?.type === "assistant" && rootMessage.content[0]?.type === "text" && rootMessage.content[0].text === "authoritative", "live text end must replace overlapping canonical text");
 assert(rootMessage?.type === "assistant" && rootMessage.content[1]?.type === "reasoning" && rootMessage.content[1].text === "live reasoning", "live reasoning end must replace overlapping canonical reasoning");
 assert(rootMessage?.type === "assistant" && rootMessage.content[2]?.type === "tool" && rootMessage.content[2].state.status === "completed" && rootMessage.content[2].state.content[0]?.type === "text" && rootMessage.content[2].state.content[0].text === "live output", "live tool success must replace overlapping canonical tool state");
+assert(rootMessage?.type === "assistant" && rootMessage.content[2]?.type === "tool" && rootMessage.content[2].state.status === "completed" && rootMessage.content[2].state.metadata?.exitCode === 0, "live tool success metadata must be applied to the completed tool state");
+assert(rootMessage?.type === "assistant" && rootMessage.content[2]?.type === "tool" && rootMessage.content[2].native?.resultState === "fixture", "live tool result native state must replace the call native state");
+assert(!rootProjection.partialReasons.some((reason) => reason.includes("Pending forms")), "Session-scoped forms must be read through session.form.list");
 assert(messageInputs.some((input) => input.sessionID === rootId && input.order === "desc"), "first root message page should request the newest messages first");
 assert(rootGets >= 2, "hydration overlap should trigger canonical replacement");
 
@@ -299,7 +303,7 @@ const realShapeHtml = renderSessionViewerFragment({
   eventsEndpoint: `/events?session=${atlasSession.atlasId}`,
   requestUrl: `/sessions/${atlasSession.atlasId}/view?shell=sh_generic_real&shellCursor=0&limit=10`,
 });
-assert(realShapeHtml.includes("Output continues") && realShapeHtml.includes("Load next output page") && realShapeHtml.includes("shellCursor=65536"), "real beta-19135 shell pages must show a continuation when cursor is below size");
+assert(realShapeHtml.includes("Output continues") && realShapeHtml.includes("Load next output page") && realShapeHtml.includes("shellCursor=65536"), "real 2.3.2 shell pages must show a continuation when cursor is below size");
 
 const stalledShapeHtml = renderSessionViewerFragment({
   session: atlasSession,

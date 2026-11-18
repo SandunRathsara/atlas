@@ -329,10 +329,13 @@ export const sessionRecoveryNotice = (
   return alertSoft("warning", "alert", `<div><strong>Expected Session resource unavailable.</strong> ${escapeHtml(details)} Atlas retains its last known state and history; it will not recreate resources or infer a terminal outcome. ${ownership}</div>`);
 };
 
-export const openCodeReadinessNotice = (readiness: { ready: boolean; reason?: string } | undefined) =>
-  readiness && !readiness.ready
+export const openCodeReadinessNotice = (readiness: { ready: boolean; reason?: string; versionWarning?: string | null } | undefined) =>
+  `${readiness && !readiness.ready
     ? alertSoft("warning", "status", `<div><strong>OpenCode launches are paused.</strong> ${escapeHtml(readiness.reason ?? "The OpenCode service is unavailable or incompatible.")} Atlas remains available with cached Session data and will reconcile before resuming.</div>`)
-    : "";
+    : ""}${readiness?.versionWarning
+    // Diagnostic only; launches, readiness, and updates never depend on it.
+    ? alertSoft("warning", "status", `<div><strong>OpenCode version mismatch.</strong> ${escapeHtml(readiness.versionWarning)} This notice does not pause launches or affect Atlas updates.</div>`, " data-opencode-version-warning")
+    : ""}`;
 
 export const persistenceHealthNotice = (health: { healthy: boolean; reason?: string | null } | undefined) =>
   health && !health.healthy

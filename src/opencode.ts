@@ -1,10 +1,12 @@
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { OpenCode } from "@opencode-ai/client";
-import type { OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client";
-import { Service } from "@opencode-ai/client/service";
-import type { Endpoint } from "@opencode-ai/client/service";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { OpenCode } from "@opencode/client";
+import type { OpenCodeClient, OpenCodeEvent } from "@opencode/client";
+import { Service } from "@opencode/client/service";
+import type { Endpoint } from "@opencode/client/service";
 import type { Persistence, Session } from "./persistence.ts";
 import { createActivityGate } from "./activity-gate.ts";
 
@@ -28,6 +30,38 @@ type EventEvidence = {
   executionStarted: boolean;
   status?: "idle" | "busy" | "retry";
   updatedAt: number;
+};
+
+// The installed client package is the source of truth; `scripts/release.ts` pins it to deploy/pins.env.
+const readInstalledClientVersion = () => {
+  try {
+    let directory = dirname(fileURLToPath(import.meta.resolve("@opencode/client")));
+    for (let depth = 0; depth < 4; depth += 1) {
+      try {
+        const manifest = JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as { name?: unknown; version?: unknown };
+        if (manifest.name === "@opencode/client") return typeof manifest.version === "string" && manifest.version ? manifest.version : null;
+      } catch {
+        // Keep walking toward the package root.
+      }
+      directory = dirname(directory);
+    }
+  } catch {
+    // An unresolvable client cannot be reported; the warning stays silent.
+  }
+  return null;
+};
+
+export const openCodeClientVersion: string | null = readInstalledClientVersion();
+
+const majorMinor = (version: string) => /^v?(\d+)\.(\d+)(?:\.|$|-)/u.exec(version.trim())?.slice(1, 3).join(".");
+
+/** Diagnostic only: never feeds readiness, discovery, handoff, or the update path (ADR-0001, ADR-0002). */
+export const openCodeVersionWarning = (clientVersion: string | null | undefined, serverVersion: string | null | undefined) => {
+  if (!clientVersion || !serverVersion) return null;
+  const client = majorMinor(clientVersion);
+  const server = majorMinor(serverVersion);
+  if (!client || !server || client === server) return null;
+  return `The OpenCode server reports version ${serverVersion}, but this Atlas release ships OpenCode client ${clientVersion}. Atlas keeps working; if Session handoff or the viewer misbehaves, align the OpenCode server with the client's ${client} release line.`;
 };
 
 const defaultServiceFile = () => join(
@@ -311,22 +345,23 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
       baseUrl: endpoint.url.endsWith("/") ? endpoint.url : `${endpoint.url}/`,
       headers: Service.headers(endpoint),
     });
-    let health;
+    // An authenticated `GET /api/info` answer is the readiness probe; its version is diagnostic only (ADR-0001).
+    let info;
     try {
-      health = await nextClient.health.get(requestOptions(requestTimeoutMs));
+      info = await nextClient.server.info(requestOptions(requestTimeoutMs));
     } catch (error) {
       retryAt = Date.now() + retryDelay;
       retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
       throw error;
     }
-    const healthValue = health as unknown as { healthy?: unknown; version?: unknown };
-    if (healthValue?.healthy !== true) {
+    const infoValue = info as unknown as { version?: unknown } | null;
+    if (!infoValue || typeof infoValue !== "object") {
       retryAt = Date.now() + retryDelay;
       retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
-      throw new Error("OpenCode service did not report healthy");
+      throw new Error("OpenCode service did not report server information");
     }
-    observedVersion = typeof healthValue.version === "string" && healthValue.version.length > 0
-      ? healthValue.version
+    observedVersion = typeof infoValue.version === "string" && infoValue.version.length > 0
+      ? infoValue.version
       : undefined;
 
     const controller = new AbortController();
@@ -461,7 +496,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   const promptEvidence = async (activeClient: OpenCodeClient, session: Session) => {
     if (!session.openCodeSessionId || !session.initialMessageId || !session.exactMessage) return undefined;
     try {
-      const message = await activeClient.session.message(
+      const message = await activeClient.session.message.get(
         { sessionID: session.openCodeSessionId, messageID: session.initialMessageId },
         requestOptions(requestTimeoutMs),
       );
@@ -495,7 +530,7 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
         activeClient.session.get({ sessionID: session.openCodeSessionId }, requestOptions(requestTimeoutMs)),
         activeClient.session.active(requestOptions(requestTimeoutMs)),
         activeClient.permission.list({ sessionID: session.openCodeSessionId }, requestOptions(requestTimeoutMs)),
-        activeClient.form.list({ sessionID: session.openCodeSessionId }, requestOptions(requestTimeoutMs)),
+        activeClient.session.form.list({ sessionID: session.openCodeSessionId }, requestOptions(requestTimeoutMs)),
       ]);
       if (info.location.directory !== session.directory) throw new Error("OpenCode Session location changed");
 

@@ -32,6 +32,8 @@ required=(
   "$root/verify-opencode-commands.sh"
   "$root/verify-sqlite-wal.sh"
   "$root/stage-opencode.sh"
+  "$root/install-opencode-config.sh"
+  "$root/opencode/opencode.json"
   "$root/stage-release.sh"
   "$root/../scripts/build-release.sh"
   "$root/../scripts/release.ts"
@@ -71,7 +73,7 @@ test -x "$root/bootstrap.sh" || { echo "bootstrap command is not executable" >&2
 grep -Fq '"$source_root/deploy/check-activation-health.sh" "$updater_root/check-activation-health.sh"' "$root/bootstrap.sh"
 grep -Fq '"$source_root/src/credentials.ts" "$updater_root/credentials.ts"' "$root/bootstrap.sh"
 
-for script in "$root/bin/gh" "$root/bin/git" "$root/bin/git-credential-atlas" "$root/bootstrap.sh" "$root/capture-recovery-config.sh" "$root/check-health.sh" "$root/check-activation-health.sh" "$root/check-opencode.sh" "$root/check-space.sh" "$root/atlas-snapshot.sh" "$root/lib/recovery-status.sh" "$root/restore-rehearsal.sh" "$root/verify-opencode-commands.sh" "$root/verify-sqlite-wal.sh" "$root/stage-opencode.sh" "$root/stage-release.sh" "$root/../scripts/build-release.sh" "$root/../scripts/verify-release-artifact.sh"; do
+for script in "$root/bin/gh" "$root/bin/git" "$root/bin/git-credential-atlas" "$root/bootstrap.sh" "$root/capture-recovery-config.sh" "$root/check-health.sh" "$root/check-activation-health.sh" "$root/check-opencode.sh" "$root/check-space.sh" "$root/atlas-snapshot.sh" "$root/lib/recovery-status.sh" "$root/restore-rehearsal.sh" "$root/verify-opencode-commands.sh" "$root/verify-sqlite-wal.sh" "$root/stage-opencode.sh" "$root/install-opencode-config.sh" "$root/stage-release.sh" "$root/../scripts/build-release.sh" "$root/../scripts/verify-release-artifact.sh"; do
   bash -n "$script"
 done
 
@@ -99,7 +101,12 @@ grep -Fq 'atlas-v1-' "$root/atlas-snapshot.sh"
 grep -Fq 'daily_count -lt 7' "$root/atlas-snapshot.sh"
 grep -Fq 'weekly_count -lt 4' "$root/atlas-snapshot.sh"
 
-grep -Fq -- '--log-level WARN serve --service --hostname 127.0.0.1' "$root/systemd/opencode.service"
+grep -Fq -- '--log-level warn serve --service --hostname 127.0.0.1 --port 49475' "$root/systemd/opencode.service"
+if grep -Eq 'bin/opencode2|--log-level [A-Z]' "$root/systemd/opencode.service"; then
+  echo "OpenCode unit still uses the beta executable or an invalid log level" >&2
+  exit 1
+fi
+grep -Fq 'ExecStartPre=/usr/bin/test -f /var/lib/atlas/opencode-config/opencode/opencode.json' "$root/systemd/opencode.service"
 grep -Fq 'atlas-credentials.service' "$root/systemd/atlas.service"
 grep -Fq 'atlas-updater.service' "$root/systemd/atlas.service"
 grep -Fq 'atlas-credentials.service' "$root/systemd/opencode.service"
@@ -114,7 +121,7 @@ if grep -Eq '/opt/atlas/current|EnvironmentFile=' "$root/systemd/atlas-credentia
 fi
 grep -Fq 'ExecStart=/opt/atlas/tools/bun/1.3.14/bin/bun /opt/atlas/services/current/atlas-credentials/credential-server.ts' "$root/systemd/atlas-credentials.service"
 grep -Fq 'ExecStartPre=/opt/atlas/current/deploy/check-opencode.sh' "$root/systemd/opencode.service"
-grep -Fq 'ExecStart=/opt/atlas/tools/opencode/current/bin/opencode2 ' "$root/systemd/opencode.service"
+grep -Fq 'ExecStart=/opt/atlas/tools/opencode/current/bin/opencode ' "$root/systemd/opencode.service"
 grep -Fq 'PATH=/opt/atlas/current/deploy/bin:' "$root/systemd/atlas.service"
 grep -Fq 'PATH=/opt/atlas/current/deploy/bin:' "$root/systemd/opencode.service"
 grep -Fq 'ATLAS_GIT_BINARY=/opt/atlas/current/deploy/bin/git' "$root/systemd/atlas.service"
@@ -137,16 +144,35 @@ grep -Fq 'ATLAS_BTRFS_METADATA_REQUIRED=1' "$root/atlas.env.example"
 grep -Fq 'ATLAS_RECOVERY_STATUS_PATH=/var/lib/atlas/recovery-status' "$root/atlas.env.example"
 grep -Fq 'ATLAS_RECOVERY_CONFIG_ROOT=/var/lib/atlas/recovery-config' "$root/atlas.env.example"
 grep -Fq 'ATLAS_GIT_BINARY=/opt/atlas/tools/git/2.55.0/bin/git' "$root/pins.env"
-grep -Fq 'ATLAS_OPENCODE_BINARY=/opt/atlas/tools/opencode/current/bin/opencode2' "$root/pins.env"
-grep -Fq '"@opencode-ai/client": "'"$ATLAS_OPENCODE_CLIENT_VERSION"'"' "$root/../package.json"
+grep -Fxq 'ATLAS_OPENCODE_BINARY=/opt/atlas/tools/opencode/current/bin/opencode' "$root/pins.env"
+grep -Fq '"@opencode/client": "'"$ATLAS_OPENCODE_CLIENT_VERSION"'"' "$root/../package.json"
 grep -Fq 'server_version=%s' "$root/stage-opencode.sh"
 grep -Fq 'registry_integrity=%s' "$root/stage-opencode.sh"
 if grep -Eq 'ATLAS_OPENCODE_(VERSION|CLI_LINUX_X64_INTEGRITY|CLIENT_INTEGRITY|SCHEMA_INTEGRITY|PROTOCOL_INTEGRITY)=' "$root/pins.env"; then
   echo "deployment manifest still pairs the OpenCode server with Atlas client packages" >&2
   exit 1
 fi
-if grep -Eq '@opencode-ai/(client|schema|protocol)|systemctl' "$root/stage-opencode.sh" "$root/stage-release.sh"; then
+if grep -Eq '@opencode(-ai)?/(client|schema|protocol)|systemctl' "$root/stage-opencode.sh" "$root/stage-release.sh"; then
   echo "staging must not bundle Atlas client packages or manage OpenCode lifecycle" >&2
+  exit 1
+fi
+# Headless OpenCode configuration: no update checks or installs, no .env
+# approval prompts, and no blocking question form (hidden by permissions,
+# hard-denied by a global policy that project configuration cannot loosen).
+headless_config="$root/opencode/opencode.json"
+jq -e '
+  ."$schema" == "https://opencode.ai/config.json" and
+  .update == "disable" and
+  (has("permission") or has("autoupdate") or has("provider") or has("providers") | not) and
+  (.permissions | index({action: "read", resource: "*.env", effect: "allow"}) != null) and
+  (.permissions | index({action: "read", resource: "*.env.*", effect: "allow"}) != null) and
+  (.permissions | last == {action: "question", resource: "*", effect: "deny"}) and
+  (.policies | index({action: "tool.use", resource: "question:*", effect: "deny"}) != null)
+' "$headless_config" >/dev/null || { echo "headless OpenCode configuration lost a required safety setting" >&2; exit 1; }
+grep -Fq '"$root/install-opencode-config.sh" "$data_root/opencode-config"' "$root/bootstrap.sh"
+grep -Fq '"$root/install-opencode-config.sh" "$target/opencode-config"' "$root/restore-rehearsal.sh"
+if grep -Eq 'systemctl' "$root/install-opencode-config.sh"; then
+  echo "headless OpenCode configuration install must not manage OpenCode lifecycle" >&2
   exit 1
 fi
 grep -Fq 'maxsize 100M' "$root/logrotate/atlas-opencode"
@@ -167,7 +193,7 @@ if command -v systemd-analyze >/dev/null 2>&1; then
     # The pinned host paths are intentionally absent during safe setup. Keep
     # systemd's syntax/dependency check, but do not pretend staged binaries
     # exist before the human cutover window.
-    unexpected=$(grep -Ev '^((atlas|atlas-credentials|atlas-updater|opencode|atlas-snapshot|atlas-space-check)\.service: Command /opt/atlas/(current/deploy/(bin/git|check-opencode\.sh|atlas-snapshot\.sh|check-space\.sh)|tools/(bun/1\.3\.14/bin/bun|git/2\.55\.0/bin/git|opencode/current/bin/opencode2)) is not executable: No such file or directory)$' "$unit_output" || true)
+    unexpected=$(grep -Ev '^((atlas|atlas-credentials|atlas-updater|opencode|atlas-snapshot|atlas-space-check)\.service: Command /opt/atlas/(current/deploy/(bin/git|check-opencode\.sh|atlas-snapshot\.sh|check-space\.sh)|tools/(bun/1\.3\.14/bin/bun|git/2\.55\.0/bin/git|opencode/current/bin/opencode)) is not executable: No such file or directory)$' "$unit_output" || true)
     if [[ -n "$unexpected" ]]; then
       cat "$unit_output" >&2
       exit 1

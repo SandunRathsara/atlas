@@ -9,8 +9,8 @@ import type {
   SessionMessageInfo,
   SessionStatus,
   ShellInfo,
-} from "@opencode-ai/client";
-import type { MessageListInput, SessionListInput } from "@opencode-ai/client";
+} from "@opencode/client";
+import type { MessageListInput, SessionListInput } from "@opencode/client";
 import type { Session } from "./persistence.ts";
 
 export const DEFAULT_VIEWER_MESSAGE_LIMIT = 40;
@@ -115,15 +115,13 @@ const eventSessionId = (event: OpenCodeEvent) => {
 
 const eventRecordId = (event: OpenCodeEvent) => stringValue((event as unknown as { id?: unknown }).id);
 
-const locationInput = (info: Pick<SessionInfo, "location">) => ({
-  directory: info.location.directory,
-  ...(info.location.workspaceID ? { workspace: info.location.workspaceID } : {}),
-});
+// Stable OpenCode Session locations are directory-only; a workspace-bound response is not the Session's location.
+const locationInput = (info: Pick<SessionInfo, "location">) => ({ directory: info.location.directory });
 
 const sameLocation = (
   actual: { directory: string; workspaceID?: string },
   expected: Pick<SessionInfo, "location">,
-) => actual.directory === expected.location.directory && actual.workspaceID === expected.location.workspaceID;
+) => actual.directory === expected.location.directory && actual.workspaceID === undefined;
 
 const errorLabel = (label: string) => `${label} is unavailable; the visible Session data may be partial.`;
 
@@ -196,7 +194,7 @@ type LiveToolPart = {
   called?: {
     input: Record<string, unknown>;
     executed: boolean;
-    providerState?: Record<string, unknown>;
+    native?: Record<string, unknown>;
     revision: number;
   };
   progress?: { metadata: Record<string, unknown>; revision: number };
@@ -204,7 +202,8 @@ type LiveToolPart = {
     status: "completed" | "error";
     content?: unknown[];
     error?: Record<string, unknown>;
-    providerResultState?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+    native?: Record<string, unknown>;
     executed: boolean;
     revision: number;
   };
@@ -256,9 +255,9 @@ const copyToolPart = (part: LiveToolPart): LiveToolPart => ({
   inputEnded: part.inputEnded ? { ...part.inputEnded } : undefined,
   inputDeltas: part.inputDeltas.map((delta) => ({ ...delta })),
   inputDeltaKeys: new Set(part.inputDeltaKeys),
-  called: part.called ? { ...part.called, input: { ...part.called.input }, providerState: part.called.providerState ? { ...part.called.providerState } : undefined } : undefined,
+  called: part.called ? { ...part.called, input: { ...part.called.input }, native: part.called.native ? { ...part.called.native } : undefined } : undefined,
   progress: part.progress ? { ...part.progress, metadata: { ...part.progress.metadata } } : undefined,
-  result: part.result ? { ...part.result, content: part.result.content?.map((content) => ({ ...(recordValue(content) ?? {}) })), error: part.result.error ? { ...part.result.error } : undefined, providerResultState: part.result.providerResultState ? { ...part.result.providerResultState } : undefined } : undefined,
+  result: part.result ? { ...part.result, content: part.result.content?.map((content) => ({ ...(recordValue(content) ?? {}) })), error: part.result.error ? { ...part.result.error } : undefined, metadata: part.result.metadata ? { ...part.result.metadata } : undefined, native: part.result.native ? { ...part.result.native } : undefined } : undefined,
 });
 
 const copyMessageOverlay = (overlay: MutableViewerMessageOverlay): ViewerMessageOverlay => ({
@@ -470,7 +469,7 @@ export const createViewerEventReducer = (rootSessionId: string, rootDirectory?: 
                 tool.called = {
                   input: { ...input },
                   executed: data.executed,
-                  providerState: recordValue(data.state),
+                  native: recordValue(data.native),
                   revision: eventRevision,
                 };
               }
@@ -483,7 +482,8 @@ export const createViewerEventReducer = (rootSessionId: string, rootDirectory?: 
                   status: type.endsWith("success") ? "completed" : "error",
                   content: Array.isArray(data.content) ? data.content.map((content) => ({ ...(recordValue(content) ?? {}) })) : undefined,
                   error: recordValue(data.error),
-                  providerResultState: recordValue(data.resultState),
+                  metadata: recordValue(data.metadata),
+                  native: recordValue(data.native),
                   executed: data.executed,
                   revision: eventRevision,
                 };
@@ -595,15 +595,16 @@ const applyToolOverlay = (
   const input = effectiveCalled?.input ?? (currentInput && typeof currentInput === "object" ? currentInput : {});
   if (effectiveResult) {
     current.executed = effectiveResult.executed;
-    current.providerResultState = effectiveResult.providerResultState as never;
+    if (effectiveResult.native) current.native = effectiveResult.native as never;
+    const resultMetadata = effectiveResult.metadata ?? effectiveProgress?.metadata;
     current.state = effectiveResult.status === "completed"
-      ? { status: "completed", input, content: toolContent(effectiveResult.content) ?? (current.state.status === "completed" ? current.state.content : [{ type: "text", text: "" }]), metadata: effectiveProgress?.metadata } as never
-      : { status: "error", input, error: effectiveResult.error ?? { type: "ToolError", message: "Tool failed." }, content: toolContent(effectiveResult.content), metadata: effectiveProgress?.metadata } as never;
+      ? { status: "completed", input, content: toolContent(effectiveResult.content) ?? (current.state.status === "completed" ? current.state.content : [{ type: "text", text: "" }]), metadata: resultMetadata } as never
+      : { status: "error", input, error: effectiveResult.error ?? { type: "ToolError", message: "Tool failed." }, content: toolContent(effectiveResult.content), metadata: resultMetadata } as never;
     return;
   }
   if (effectiveCalled || effectiveProgress) {
     current.executed = effectiveCalled?.executed ?? current.executed;
-    current.providerState = effectiveCalled?.providerState as never;
+    if (effectiveCalled?.native) current.native = effectiveCalled.native as never;
     current.state = { status: "running", input, metadata: effectiveProgress?.metadata ?? (current.state.status === "running" ? current.state.metadata : {}) } as never;
     return;
   }
@@ -698,7 +699,7 @@ const readPending = async (client: OpenCodeClient, info: SessionInfo, partialRea
   };
   const [permissions, forms, inbox] = await Promise.all([
     read("Pending permission requests", () => client.permission.list({ sessionID: info.id }), []),
-    read("Pending forms", () => client.form.list({ sessionID: info.id }), []),
+    read("Pending forms", () => client.session.form.list({ sessionID: info.id }), []),
     read("Session inbox", () => client.session.inbox.list({ sessionID: info.id }), []),
   ]);
   return { permissions, forms, inbox };

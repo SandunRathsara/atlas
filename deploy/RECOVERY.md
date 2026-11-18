@@ -48,6 +48,11 @@ release automatically.
    currently selected OpenCode executable, plus that executable's observed
    version, only if they include SQLite's accepted WAL-reset fix. Host
    `sqlite3`, WAL mode, and FULL/NORMAL synchronous settings are not substitutes.
+   The OpenCode figure comes from the executable's own embedded Bun runtime
+   (`BUN_BE_BUN=1`, scrubbed throwaway environment). The script also requires
+   exactly one embedded SQLite build. If the selected executable cannot be
+   checked this way, the script fails. Do not record the fix by hand; treat
+   that OpenCode version as unverified.
 4. Enable and start only the timers after reviewing them:
 
    ```bash
@@ -108,7 +113,9 @@ matching, both database integrities, Atlas foreign keys and
 Repository/Session/PR/reservation associations, Session directories, complete
 OpenCode history identities, credential-scope associations, and saved-file
 checksums. It then removes restored provider configuration/auth files, service
-discovery, webhook/routing secrets, and supplier credentials/registration.
+discovery, webhook/routing secrets, and supplier credentials/registration, and
+re-installs only the selected release's credential-free headless OpenCode
+configuration (`deploy/opencode/opencode.json`).
 It never starts Atlas, OpenCode, Agents, sockets, or listeners. Never point a
 service at the rehearsal tree. Preserve a failed tree for investigation; delete
 only a positively identified rehearsal tree after the owner accepts the result.
@@ -163,6 +170,9 @@ maintenance required or for recovery outside the normal web contract.
    and restore the matching pre-upgrade data snapshot **with its matching
    release and tools** to a staged writable target before selection. Preserve
    damaged/current data when feasible. Recreate OpenCode discovery; do not
-   trust restored service registration. Reconcile GitHub and OpenCode with
+   trust restored service registration. Before starting OpenCode, run
+   `sudo /opt/atlas/current/deploy/install-opencode-config.sh /var/lib/atlas/opencode-config`
+   so the headless configuration matches the selected release. The OpenCode
+   unit refuses to start without it. Reconcile GitHub and OpenCode with
    admission closed because snapshots cannot undo external GitHub effects.
    Never replay old prompts. Resume only after the same checks as step 5.
