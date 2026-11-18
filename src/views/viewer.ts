@@ -31,6 +31,7 @@ import {
   terminalWell,
 } from "./shared.ts";
 import { renderShell, type InboxContext } from "./shell.ts";
+import { renderMarkdown } from "./markdown.ts";
 
 // Session page (DESIGN.md Phase 5 "Session page structure", "Agent activity", "Pull request
 // result", "Session states"). Styles: src/styles/session.css (prefix `sv-`).
@@ -715,7 +716,7 @@ const detailsPanel = (session: Session, repository: Repository, pullRequestsRefr
 
 const specPanel = (session: Session, specUrl: string) => `<div class="sv-spec">
     <h3 class="sv-h3">Spec at submission</h3>
-    ${prose(session.specBody.trim() ? `<div class="sv-pre">${escapeHtml(session.specBody)}</div>` : '<p class="sv-dim-text">No description provided.</p>')}
+    ${prose(session.specBody.trim() ? renderMarkdown(session.specBody) : '<p class="sv-dim-text">No description provided.</p>')}
     <p class="ax-group-foot">Atlas keeps the Spec as it was when the Session started. Later edits on GitHub don’t change this Session.${specUrl ? ` <a class="ax-link" href="${escapeHtml(specUrl)}" target="_blank" rel="noopener noreferrer">Current Spec on GitHub</a>` : ""}</p>
     <h3 class="sv-h3">Your prompt</h3>
     <div class="sv-quote"><div class="sv-pre">${escapeHtml(session.prompt)}</div></div>

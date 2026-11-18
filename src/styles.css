@@ -1870,6 +1870,31 @@
   .ax-prose pre code { padding: 0; background: none; }
   .ax-prose blockquote { margin: 0 0 12px; padding: 10px 14px; border-radius: 10px; background: var(--a-fill2); }
 
+  .ax-prose-table {
+    margin: 12px 0;
+    overflow-x: auto;
+  }
+
+  .ax-prose-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+
+  .ax-prose-table th,
+  .ax-prose-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--a-sep);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .ax-prose-table th {
+    color: var(--a-sec);
+    font-weight: 600;
+  }
+
+
   /* Terminal well: always dark */
   .ax-term {
     margin: 0;

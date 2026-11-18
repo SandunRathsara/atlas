@@ -9,7 +9,8 @@ import { renderShell, type InboxContext, type PendingStartSession } from "./shel
 import { renderStartTargetOptions } from "./targets.ts";
 import { logo } from "./icons.ts";
 import { banner, button, group, prose, sectionHeader, sessionPill, settingsRow } from "./kit.ts";
-import { renderSpecMarkdown, specHref } from "./specs.ts";
+import { renderMarkdown } from "./markdown.ts";
+import { specHref } from "./specs.ts";
 
 const errorBox = ({ id, title, bodyHtml, attrs = "" }: { id: string; title: string; bodyHtml: string; attrs?: string }) =>
   `<div id="${id}" class="sp-errbox" role="alert" tabindex="-1" data-focus-on-swap${attrs}>${icon("warn", 18)}<div><b>${escapeHtml(title)}</b>${bodyHtml}</div></div>`;
@@ -111,7 +112,7 @@ export const renderStartSessionPage = ({
   const ghost = `<div class="sp-ghost" aria-hidden="true" inert>
       <p class="ax-eyebrow">${escapeHtml(repository.name)} · Spec #${escapeHtml(spec.issueNumber)}</p>
       <p class="ax-title">${escapeHtml(spec.title)}</p>
-      ${spec.body.trim() ? prose(renderSpecMarkdown(spec.body)) : ""}
+      ${spec.body.trim() ? prose(renderMarkdown(spec.body)) : ""}
     </div>`;
 
   return renderShell({

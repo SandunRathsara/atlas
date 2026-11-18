@@ -128,30 +128,6 @@
     -webkit-line-clamp: 2;
   }
 
-  .sp-table {
-    margin: 12px 0;
-    overflow-x: auto;
-  }
-
-  .sp-table table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 14px;
-  }
-
-  .sp-table th,
-  .sp-table td {
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--a-sep);
-    text-align: left;
-    vertical-align: top;
-  }
-
-  .sp-table th {
-    color: var(--a-sec);
-    font-weight: 600;
-  }
-
   /* ── Start from picker ───────────────────────────────────────────── */
   .sp-pick {
     margin: 18px 0 0;
