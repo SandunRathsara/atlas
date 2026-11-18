@@ -17,7 +17,9 @@
 #   2. update: install.sh --version <build.2> (re-run of setup) moves current to
 #      build.2, keeps the token, and /health reports build.2;
 #   3. adopt: a fresh container with the older layout (Bun units from commit
-#      432fe69, a stand-in Bun that only sleeps, old env and data) is adopted;
+#      432fe69, a stand-in Bun that only sleeps, old env and data). First a
+#      failed adopt (a drop-in blocks the new Release) must restore everything,
+#      /etc/atlas owners and modes included; then the real adopt;
 #      data and secrets stay byte-identical (github.env by value), secrets
 #      move to root:<group> 0640, the backup holds the old units.
 # Not covered: the updater's own GitHub download (needs github.com), Tailscale.
@@ -180,6 +182,25 @@ for distro in "${distros[@]}"; do
     test "$(stat -c %U /var/lib/atlas/recovery-status)" = atlas
     grep -qx space_state=healthy /var/lib/atlas/recovery-status' || fail "root status write followed a planted link"
   pass "root status write runs as the folder owner, ignores planted link"
+  in_root 'set -e; lib=/root/recovery-status.sh
+    install -d -m 0755 /srv/status && ln -s /srv/status /srv/status-link
+    if ATLAS_RECOVERY_STATUS_PATH=/srv/status-link/recovery-status ATLAS_RECOVERY_STATUS_LOCK_PATH=/run/lock/atlas-e2e.lock \
+      bash -c "source $lib; atlas_status_write space 2026-11-18T10:00:00Z healthy 1 5 none"; then exit 1; fi
+    test ! -e /srv/status/recovery-status
+    install -d -m 0777 /srv/open && install -d -m 0755 /srv/open/status
+    if ATLAS_RECOVERY_STATUS_PATH=/srv/open/status/recovery-status ATLAS_RECOVERY_STATUS_LOCK_PATH=/run/lock/atlas-e2e.lock \
+      bash -c "source $lib; atlas_status_write space 2026-11-18T10:00:00Z healthy 1 5 none"; then exit 1; fi
+    rm -f /var/lib/atlas/recovery-status && sudo -u atlas mkfifo /var/lib/atlas/recovery-status
+    sudo -u atlas mkfifo /var/lib/atlas/fifo && sudo -u atlas ln -s /etc/shadow /var/lib/atlas/shadow-link
+    start=$SECONDS
+    ATLAS_RECOVERY_STATUS_PATH=/var/lib/atlas/recovery-status ATLAS_RECOVERY_STATUS_LOCK_PATH=/run/lock/atlas-e2e.lock \
+      timeout 60 bash -c "source $lib; atlas_status_write space 2026-11-18T10:00:00Z healthy 1 5 none"
+    test -f /var/lib/atlas/recovery-status && test ! -p /var/lib/atlas/recovery-status
+    if timeout 60 bash -c "source $lib; atlas_read_regular /var/lib/atlas/fifo"; then exit 1; fi
+    if timeout 60 bash -c "source $lib; atlas_read_regular /var/lib/atlas/shadow-link"; then exit 1; fi
+    (( SECONDS - start < 30 ))
+    rm -f /var/lib/atlas/fifo /var/lib/atlas/shadow-link' || fail "root status/read hardening"
+  pass "root refuses symlinked or open status folders; FIFOs and links cannot hang or redirect reads"
   token=$(in_root 'grep ^ATLAS_SHARED_TOKEN= /etc/atlas/atlas.env')
 
   # 2. update to build.2 by pinned install (setup re-run)
@@ -236,6 +257,29 @@ for distro in "${distros[@]}"; do
   pass "older layout running (stand-in Bun)"
   fingerprint='cd / && sha256sum etc/atlas/github-app.pem etc/atlas/supplier.key etc/atlas/updater.key var/lib/atlas/sessions/s1/notes.txt var/lib/atlas/session-scopes.json && grep -E "^ATLAS_(SHARED_TOKEN|GITHUB_WEBHOOK_SECRET|ORIGIN)=" etc/atlas/atlas.env && grep -E "^ATLAS_GITHUB_(ORGANIZATION|APP_ID|INSTALLATION_ID)=" etc/atlas/github.env'
   before=$(in_root "$fingerprint")
+  # 3a. a failed adopt restores everything, including /etc/atlas owners and
+  # modes. A drop-in lets atlas.service start only from the old Release, so the
+  # new one never runs (the database is untouched) and the restore can start it.
+  owners="stat -c '%n %u:%g %a' /etc/atlas /etc/atlas/*"
+  owners_before=$(in_root "$owners")
+  printf '[Service]\nExecStartPre=/bin/sh -c "readlink /opt/atlas/current | grep -q v0.9.0"\n' >"$work/only-old.conf"
+  in_root 'mkdir -p /etc/systemd/system/atlas.service.d'
+  docker cp "$work/only-old.conf" "$container:/etc/systemd/system/atlas.service.d/only-old.conf"
+  in_root 'chown -R root:root /etc/systemd/system/atlas.service.d && systemctl daemon-reload'
+  if as_alice "$install_cmd --adopt --tailscale no --health-timeout 5" >"$work/adopt-fail.log" 2>&1; then
+    cat "$work/adopt-fail.log"; fail "adopt with a broken new Release succeeded"
+  fi
+  grep -q 'Restored\.' "$work/adopt-fail.log" || { cat "$work/adopt-fail.log"; fail "failed adopt did not restore"; }
+  [[ $(in_root "$owners") == "$owners_before" ]] || fail "failed adopt left other owners/modes: $(in_root "$owners")"
+  [[ $(in_root "$fingerprint") == "$before" ]] || fail "failed adopt changed data or secrets"
+  [[ $(in_root 'readlink /opt/atlas/current') == /opt/atlas/releases/atlas-v0.9.0+build.3 ]] || fail "failed adopt left current moved"
+  in_root 'systemctl is-active --quiet atlas.service atlas-credentials.service atlas-updater.service' || fail "old services not running after restore"
+  failed_backup=$(in_root 'ls -d /var/backups/atlas/2*' | head -1)
+  key_owner=$(in_root "stat -c '%u:%g' /etc/atlas/supplier.key")
+  in_root "grep -qx 'sudo chown $key_owner /etc/atlas/supplier.key' $failed_backup/ROLLBACK.txt && grep -qx 'sudo chmod 600 /etc/atlas/supplier.key' $failed_backup/ROLLBACK.txt" ||
+    fail "ROLLBACK.txt lacks chown/chmod lines"
+  in_root 'rm -r /etc/systemd/system/atlas.service.d && systemctl daemon-reload'
+  pass "failed adopt: restored, /etc/atlas owners+modes as before, old services up"
   as_alice "$install_cmd --adopt --tailscale no" >"$work/adopt.log" 2>&1 || { cat "$work/adopt.log"; fail "adopt failed"; }
   grep -q 'adopting the older install' "$work/adopt.log" || fail "setup did not detect the older install"
   assert_running "$tag1"
@@ -244,7 +288,7 @@ for distro in "${distros[@]}"; do
   in_root 'grep -qx "User=omega" /etc/systemd/system/atlas.service' || fail "service user not taken from the old units"
   [[ $(in_root "stat -c '%U:%G %a' /etc/atlas/github.env /etc/atlas/github-app.pem /etc/atlas/supplier.key" | tr '\n' ' ') == "root:omega 640 root:omega 640 root:omega 640 " ]] ||
     fail "adopted secrets not root:omega 0640: $(in_root "stat -c '%n %U:%G %a' /etc/atlas/*")"
-  backup=$(in_root 'ls -d /var/backups/atlas/2*' | head -1)
+  backup=$(in_root 'ls -d /var/backups/atlas/2*' | tail -1)
   in_root "grep -q bun $backup/etc/systemd/system/atlas.service && test -f $backup/ROLLBACK.txt && test -f $backup/etc/atlas/atlas.env" || fail "backup incomplete"
   in_root 'test ! -e /etc/systemd/system/atlas-snapshot.timer' || fail "old snapshot timer kept off Btrfs"
   in_root 'test -f /opt/atlas/releases/atlas-v0.9.0+build.3/src/server.ts' || fail "old Release tree removed"

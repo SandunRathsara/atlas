@@ -603,10 +603,53 @@ const healthHints = async (host: SetupHost, units: readonly string[]) => {
   host.out("         journalctl --namespace=atlas -u atlas.service -n 50 --no-pager");
 };
 
-const rollbackText = (backupDir: string, links: Record<string, string | null>) => [
+/** Owner and mode of one `/etc/atlas` entry before adopt touched it. */
+type OwnerEntry = { path: string; uid: number; gid: number; mode: number };
+const OWNERS_RECORD = "etc-atlas-owners.json";
+const CONFIG_ENTRY = /^\/etc\/atlas(\/[^/]+)?$/u;
+
+const shellWord = (word: string) => (/^[\w./:@=+-]+$/u.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`);
+
+/**
+ * Backs up every regular file in /etc/atlas and records the original owner and
+ * mode of the folder and those files in the root-only backup folder.
+ */
+const recordConfigOwners = (host: SetupHost, backupDir: string): OwnerEntry[] => {
+  const entries: OwnerEntry[] = [];
+  const folder = lstat(host, CONFIG);
+  if (!folder?.isDirectory()) return entries;
+  for (const name of readdirSync(at(host, CONFIG)).sort()) {
+    const path = `${CONFIG}/${name}`;
+    const stat = lstat(host, path);
+    if (!stat?.isFile() || !backupFile(host, path, backupDir)) continue;
+    entries.push({ path, ...host.owner(stat), mode: stat.mode & 0o7777 });
+  }
+  entries.push({ path: CONFIG, ...host.owner(folder), mode: folder.mode & 0o7777 });
+  return entries;
+};
+
+/** Reads the owner record back, trusting it only from a root-only file with sane values. */
+const readOwnerRecord = (host: SetupHost, backupDir: string): OwnerEntry[] => {
+  const saved = readFileSafe(at(host, `${backupDir}/${OWNERS_RECORD}`));
+  if (!saved || !rootOnly(host, saved.stat)) throw new UnsafePathError(`${backupDir}/${OWNERS_RECORD} is missing or not root-only`);
+  const entries = JSON.parse(saved.bytes.toString("utf8")) as unknown;
+  const id = (value: unknown) => Number.isInteger(value) && (value as number) >= 0 && (value as number) < 2 ** 32;
+  if (!Array.isArray(entries) || !entries.every((entry: OwnerEntry) =>
+    typeof entry?.path === "string" && CONFIG_ENTRY.test(entry.path) && !/\/\.\.?$/u.test(entry.path) &&
+    id(entry.uid) && id(entry.gid) && Number.isInteger(entry.mode) && entry.mode >= 0 && entry.mode <= 0o7777)) {
+    throw new UnsafePathError(`${backupDir}/${OWNERS_RECORD} is not a valid owner record`);
+  }
+  return entries as OwnerEntry[];
+};
+
+const rollbackText = (backupDir: string, links: Record<string, string | null>, owners: OwnerEntry[]) => [
   "sudo systemctl stop atlas.service atlas-updater.service atlas-credentials.service",
   `sudo cp -a ${backupDir}${UNIT_DIR}/. ${UNIT_DIR}/`,
   `sudo cp -a ${backupDir}${CONFIG}/. ${CONFIG}/`,
+  ...owners.flatMap(({ path, uid, gid, mode }) => [
+    `sudo chown ${uid}:${gid} ${shellWord(path)}`,
+    `sudo chmod ${mode.toString(8).padStart(3, "0")} ${shellWord(path)}`,
+  ]),
   ...Object.entries(links).map(([path, target]) => (target ? `sudo ln -sfnT ${target} ${path}` : `sudo rm -f ${path}`)),
   "sudo systemctl daemon-reload",
   "sudo systemctl start atlas-credentials.service atlas-updater.service atlas.service",
@@ -622,6 +665,18 @@ const restoreAdopt = async (context: Context, links: Record<string, string | nul
     if (!saved) continue;
     writeFileAtomic(host, path, saved.bytes, saved.stat.mode & 0o7777, host.owner(saved.stat));
   }
+  // Every /etc/atlas entry gets back its original owner and mode (old installs
+  // expect e.g. a service-user-owned 0600 supplier.key). Files first: once the
+  // folder is no longer root-owned, nothing more is written inside it.
+  const owners = readOwnerRecord(host, context.backupDir);
+  for (const entry of owners) {
+    if (entry.path === CONFIG) continue;
+    const saved = readFileSafe(at(host, `${context.backupDir}${entry.path}`), 64 * 1024 * 1024);
+    if (!saved) throw new UnsafePathError(`backup of ${entry.path} is missing`);
+    writeFileAtomic(host, entry.path, saved.bytes, entry.mode, { uid: entry.uid, gid: entry.gid });
+  }
+  const folder = owners.find((entry) => entry.path === CONFIG);
+  if (folder) ensureDirectory(host, CONFIG, folder.mode, { uid: folder.uid, gid: folder.gid });
   for (const [path, target] of Object.entries(links)) {
     if (target) replaceSymlink(host, path, target);
     else if (lstat(host, path)?.isSymbolicLink()) unlinkSync(at(host, path));
@@ -774,14 +829,16 @@ const install = async (host: SetupHost, options: SetupOptions, source: Source): 
   const reader = config.createUser ? undefined : runAs;
   const sessionsBefore = await readSessions(host, source.binary, reader, config.dataDir);
   const wasActive: string[] = [];
+  let owners: OwnerEntry[] = [];
   if (mode === "adopt") {
     await confirmSessions(host, options, sessionsBefore, "Adopting restarts Atlas.");
-    await step(context, `back up units and env files to ${context.backupDir}`, () => {
+    await step(context, `back up units and /etc/atlas (with owners and modes) to ${context.backupDir}`, () => {
       ensureDirectory(host, BACKUP_ROOT, 0o700, ROOT_OWNER);
       for (const name of [...UNIT_NAMES, ...MAINTENANCE_UNIT_NAMES]) backupFile(host, `${UNIT_DIR}/${name}`, context.backupDir);
-      for (const name of ["atlas.env", "github.env"]) backupFile(host, `${CONFIG}/${name}`, context.backupDir);
-      const text = rollbackText(context.backupDir, links).join("\n");
+      owners = recordConfigOwners(host, context.backupDir);
+      const text = rollbackText(context.backupDir, links, owners).join("\n");
       ensureDirectory(host, context.backupDir, 0o700, ROOT_OWNER);
+      writeFileAtomic(host, `${context.backupDir}/${OWNERS_RECORD}`, `${JSON.stringify(owners, null, 2)}\n`, 0o600, ROOT_OWNER);
       writeFileAtomic(host, `${context.backupDir}/ROLLBACK.txt`, `${text}\n`, 0o600, ROOT_OWNER);
     });
     for (const unit of [...STOP_ORDER, "atlas-snapshot.timer", "atlas-space-check.timer"]) {
@@ -800,7 +857,7 @@ const install = async (host: SetupHost, options: SetupOptions, source: Source): 
       host.out("Restoring the old install (the database was not changed)…");
       try {
         await restoreAdopt(context, links, wasActive);
-        host.out(`Restored. Old units and env files are back; backup kept at ${context.backupDir}.`);
+        host.out(`Restored. Old units and /etc/atlas files (owners and modes too) are back; backup kept at ${context.backupDir}.`);
         return;
       } catch (error) {
         host.out(`✗ Automatic restore failed: ${(error as Error).message}`);
@@ -809,7 +866,7 @@ const install = async (host: SetupHost, options: SetupOptions, source: Source): 
       host.out("! The new Atlas already upgraded the database; not restoring automatically.");
     }
     host.out("Roll back by hand:");
-    for (const line of rollbackText(context.backupDir, links)) host.out(`   ${line}`);
+    for (const line of rollbackText(context.backupDir, links, owners)) host.out(`   ${line}`);
   };
 
   try {

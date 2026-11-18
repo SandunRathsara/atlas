@@ -519,6 +519,12 @@ const oldLayout = (root: string, sessionState: string | null) => {
   ownTree(data, 1000, 1000);
   return { oldRelease, oldBundle };
 };
+/** `uid:gid mode` of /etc/atlas and every entry in it. */
+const etcOwners = (root: string) => Object.fromEntries(["", ...readdirSync(p(root, "etc/atlas")).sort()].map((name) => {
+  const stat = lstatSync(p(root, `etc/atlas/${name}`));
+  const owner = ownerOf(stat);
+  return [name || ".", `${owner.uid}:${owner.gid} ${(stat.mode & 0o7777).toString(8)}`];
+}));
 const adoptArgs = (extra: string[] = []) => ["--source-dir", release1.dir, "--tailscale", "no", "--health-timeout", "5", ...extra];
 const dataAndSecrets = (root: string) => ({
   data: tree(p(root, "var/lib/atlas"), (path) => path === "opencode-config/opencode/opencode.json"),
@@ -588,6 +594,7 @@ const dataAndSecrets = (root: string) => ({
   const before = tree(root, (path) => path.startsWith("var/backups") || path.startsWith("opt/atlas/releases/atlas-v1") ||
     path.startsWith("opt/atlas/services/releases/atlas-v1") || path === "var/lib/atlas/opencode-config/opencode/opencode.json" ||
     path === "etc/systemd/journald@atlas.conf" || path === "usr");
+  const ownersBefore = etcOwners(root);
   const fake = makeHost(root, { healthy: false });
   ["atlas.service", "atlas-updater.service", "atlas-credentials.service"].forEach((unit) => fake.active.add(unit));
   const code = await runSetup(adoptArgs(["--adopt"]), fake.host);
@@ -597,6 +604,14 @@ const dataAndSecrets = (root: string) => ({
   check("adopt-fail: exit 1", code === 1);
   check("adopt-fail: restored automatically", fake.text().includes("Restored."), fake.text());
   check("adopt-fail: units, env, links back", same(before, after), JSON.stringify(Object.keys(after).filter((key) => after[key] !== before[key])));
+  const ownersAfter = etcOwners(root);
+  check("adopt-fail: /etc/atlas owners and modes back", same(ownersBefore, ownersAfter) && ownersBefore["supplier.key"] === "1000:1000 600",
+    JSON.stringify({ ownersBefore, ownersAfter }));
+  const backups = readdirSync(p(root, "var/backups/atlas"));
+  const rollback = readFileSync(p(root, `var/backups/atlas/${backups[0]}/ROLLBACK.txt`), "utf8");
+  check("adopt-fail: ROLLBACK.txt restores owners and modes",
+    rollback.includes("sudo chown 1000:1000 /etc/atlas/supplier.key\nsudo chmod 600 /etc/atlas/supplier.key\n") &&
+    rollback.includes("sudo chown 0:0 /etc/atlas\nsudo chmod 750 /etc/atlas\n"), rollback);
   check("adopt-fail: links", readlinkSync(p(root, "opt/atlas/current")) === oldRelease && readlinkSync(p(root, "opt/atlas/services/current")) === oldBundle);
   check("adopt-fail: old services started again", ["atlas-credentials.service", "atlas-updater.service", "atlas.service"].every((unit) => fake.active.has(unit)));
 }
