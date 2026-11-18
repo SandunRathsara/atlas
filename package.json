@@ -10,6 +10,7 @@
     "build:css": "tailwindcss -i ./src/styles.css -o ./public/app.css --minify",
     "check": "tsc --noEmit",
     "build:binary": "bun scripts/build-binary.ts",
+    "build:release": "bun scripts/build-release.ts",
     "verify:binary": "bun scripts/verify-binary.ts",
     "verify:issue31": "bun scripts/verify-issue31.ts",
     "verify:issue25": "bun scripts/verify-issue25.ts",
