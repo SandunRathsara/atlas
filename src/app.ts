@@ -23,6 +23,7 @@ import {
   type SessionTarget,
 } from "./persistence.ts";
 import { createPreparationService } from "./preparation.ts";
+import { staticAssets } from "./assets.ts";
 import type { CredentialBoundary } from "./credentials.ts";
 import { createOpenCodeHandoffService, openCodeClientVersion, openCodeVersionWarning } from "./opencode.ts";
 import type { OpenCodeHandoffService } from "./opencode.ts";
@@ -549,32 +550,16 @@ export const createApp = (options: AppOptions) => {
     }, status);
   });
 
-  app.get("/assets/app.css", () =>
-    new Response(Bun.file(new URL("../public/app.css", import.meta.url)), {
-      headers: {
-        "Cache-Control": "public, max-age=3600",
-        "Content-Type": "text/css; charset=UTF-8",
-      },
-    }),
-  );
-
-  app.get("/assets/app.js", () =>
-    new Response(Bun.file(new URL("../public/app.js", import.meta.url)), {
-      headers: {
-        "Cache-Control": "public, max-age=3600",
-        "Content-Type": "text/javascript; charset=UTF-8",
-      },
-    }),
-  );
-
-  app.get("/assets/theme.js", () =>
-    new Response(Bun.file(new URL("../public/theme.js", import.meta.url)), {
-      headers: {
-        "Cache-Control": "public, max-age=3600",
-        "Content-Type": "text/javascript; charset=UTF-8",
-      },
-    }),
-  );
+  for (const asset of staticAssets) {
+    app.get(asset.route, () =>
+      new Response(Bun.file(asset.path), {
+        headers: {
+          "Cache-Control": asset.cacheControl,
+          "Content-Type": asset.contentType,
+        },
+      }),
+    );
+  }
 
   // Tab icon: the Atlas mark (no favicon.ico request, so no console 404).
   const tabIcon = logo(32, 7).replace("<svg ", '<svg xmlns="http://www.w3.org/2000/svg" ');
@@ -583,26 +568,6 @@ export const createApp = (options: AppOptions) => {
       headers: {
         "Cache-Control": "public, max-age=604800",
         "Content-Type": "image/svg+xml",
-      },
-    }),
-  );
-
-  for (const font of ["inter", "geist-mono"]) {
-    app.get(`/assets/fonts/${font}.woff2`, () =>
-      new Response(Bun.file(new URL(`../public/fonts/${font}.woff2`, import.meta.url)), {
-        headers: {
-          "Cache-Control": "public, max-age=604800",
-          "Content-Type": "font/woff2",
-        },
-      }),
-    );
-  }
-
-  app.get("/assets/htmx.min.js", () =>
-    new Response(Bun.file(new URL("../node_modules/htmx.org/dist/htmx.min.js", import.meta.url)), {
-      headers: {
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "Content-Type": "text/javascript; charset=UTF-8",
       },
     }),
   );

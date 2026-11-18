@@ -1,5 +1,4 @@
 import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, statfsSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { isAbsolute, join, resolve } from "node:path";
 import type { GitHubClient, GitHubRepository } from "./github.ts";
 import {
@@ -19,6 +18,7 @@ import type {
 } from "./persistence.ts";
 import { readRecoveryStatus } from "./recovery-status.ts";
 import { createActivityGate } from "./activity-gate.ts";
+import { selfCommand, selfHelperPaths } from "./runtime.ts";
 
 const DEFAULT_SESSION_ROOT = "/var/lib/atlas/sessions";
 const DEFAULT_CAPACITY = 1;
@@ -108,15 +108,15 @@ const parseMinFreeBytes = (value: string | undefined, fallback: number) => {
 
 const shellQuote = (value: string) => `'${value.replace(/'/gu, `'"'"'`)}'`;
 
-const credentialHelperCommand = (
-  bunBinary: string,
-  helperPath: string,
-  helperEnvironment: Record<string, string>,
-) => {
+// `atlas git-credential` (or Bun + src/cli.ts from source), shell-quoted for Git's `!` helper syntax.
+const GIT_CREDENTIAL_SUBCOMMAND = "git-credential";
+const helperInvocation = () => selfCommand(GIT_CREDENTIAL_SUBCOMMAND).map(shellQuote).join(" ");
+
+const credentialHelperCommand = (helperEnvironment: Record<string, string>) => {
   const socket = helperEnvironment.ATLAS_SUPPLIER_SOCKET;
   const keyPath = helperEnvironment.ATLAS_SUPPLIER_KEY_PATH;
   if (!socket || !keyPath) throw new PreparationError("Credential supplier paths are incomplete");
-  return `!ATLAS_SUPPLIER_SOCKET=${shellQuote(socket)} ATLAS_SUPPLIER_KEY_PATH=${shellQuote(keyPath)} ${shellQuote(bunBinary)} ${shellQuote(helperPath)}`;
+  return `!ATLAS_SUPPLIER_SOCKET=${shellQuote(socket)} ATLAS_SUPPLIER_KEY_PATH=${shellQuote(keyPath)} ${helperInvocation()}`;
 };
 
 const readCommandOutput = async (stream: unknown) =>
@@ -249,8 +249,6 @@ export const createPreparationService = (options: PreparationOptions) => {
     apiUrl: process.env.ATLAS_GITHUB_API_URL,
     authorizedRepositories: options.authorizedRepositories,
   });
-  const helperPath = fileURLToPath(new URL("../scripts/atlas-git-credential.ts", import.meta.url));
-  const bunBinary = process.execPath;
   let running = false;
   let started = false;
   let stopped = false;
@@ -683,7 +681,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       const expectedRemote = `github.com/${repository.fullName}.git`.toLocaleLowerCase("en-US");
       if (canonicalRemote(remote) !== expectedRemote) throw new PreparationError("Prepared Git remote is outside the registered Repository");
       const helperConfig = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "config", "--local", "--get-all", "credential.helper"], { env }, "Clone-local credential routing could not be verified.");
-      if (!helperConfig.includes("atlas-git-credential")) throw new PreparationError("Clone-local credential routing is not Atlas-managed");
+      if (!helperConfig.includes(shellQuote(GIT_CREDENTIAL_SUBCOMMAND))) throw new PreparationError("Clone-local credential routing is not Atlas-managed");
       const shallow = await assertCommand(options.gitBinary ?? gitBinary, ["-C", session.directory, "rev-parse", "--is-shallow-repository"], { env }, "Prepared clone completeness could not be verified.");
       if (shallow !== "false") throw new PreparationError("The Session clone is shallow; Atlas requires a full clone.");
       const { actual, trunkBranch, trunkSha } = await verifyExactRemoteRefs(session, session.directory, env);
@@ -723,7 +721,7 @@ export const createPreparationService = (options: PreparationOptions) => {
       failSetup(session.atlasId, "Preparation intent was incomplete before local work.");
       return;
     }
-    const scope = preparationScope(session, repository, [bunBinary, helperPath]);
+    const scope = preparationScope(session, repository, selfHelperPaths());
     try {
       await credentials.start();
       credentials.registerScope(scope);
@@ -751,8 +749,8 @@ export const createPreparationService = (options: PreparationOptions) => {
     try {
       const ownerName = safeRepositoryName(candidate);
       const remote = `https://github.com/${ownerName}.git`;
-      const helper = `!${shellQuote(bunBinary)} ${shellQuote(helperPath)}`;
-      const durableHelper = credentialHelperCommand(bunBinary, helperPath, credentials.helperEnvironment());
+      const helper = `!${helperInvocation()}`;
+      const durableHelper = credentialHelperCommand(credentials.helperEnvironment());
       // Git runs a clone-time credential helper from the caller's cwd, not
       // the future target directory. Keep the durable scope exact before
       // that directory exists.

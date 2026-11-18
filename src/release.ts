@@ -138,11 +138,41 @@ export const assertReleaseMetadata = (value: unknown): ReleaseMetadata => {
   return metadata as ReleaseMetadata;
 };
 
-export const loadReleaseIdentity = (releaseRoot: string): ReleaseIdentity => {
+// Replaced at compile time by `scripts/build-binary.ts` (`--define`). Empty
+// strings mean an unpublished development build; undefined means source.
+declare const __ATLAS_RELEASE_TAG__: string | undefined;
+declare const __ATLAS_RELEASE_SHA__: string | undefined;
+
+/** Identity compiled into the `atlas` binary, or `null` when running from source. */
+export const embeddedReleaseIdentity = (): ReleaseIdentity | null => {
+  if (typeof __ATLAS_RELEASE_TAG__ !== "string") return null;
+  if (!__ATLAS_RELEASE_TAG__) return DEVELOPMENT_RELEASE_IDENTITY;
+  const gitSha = typeof __ATLAS_RELEASE_SHA__ === "string" ? __ATLAS_RELEASE_SHA__ : "";
+  if (!/^[0-9a-f]{40}$/.test(gitSha)) throw new Error("Embedded release Git SHA is invalid");
+  const parsed = parseReleaseTag(__ATLAS_RELEASE_TAG__);
+  return { published: true, tag: parsed.tag, semver: parsed.semver, build: parsed.build, gitSha };
+};
+
+const readMetadataIdentity = (releaseRoot: string) => {
   try {
     return assertReleaseMetadata(JSON.parse(readFileSync(join(releaseRoot, "RELEASE_METADATA.json"), "utf8"))).identity;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return DEVELOPMENT_RELEASE_IDENTITY;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
+};
+
+/**
+ * The compiled binary's embedded identity wins. A `RELEASE_METADATA.json` next
+ * to it must agree (an unpublished build beside published metadata fails too).
+ * From source, the metadata file decides and its absence means development.
+ */
+export const loadReleaseIdentity = (releaseRoot: string): ReleaseIdentity => {
+  const embedded = embeddedReleaseIdentity();
+  const metadata = readMetadataIdentity(releaseRoot);
+  if (!embedded) return metadata ?? DEVELOPMENT_RELEASE_IDENTITY;
+  if (metadata && (metadata.tag !== embedded.tag || metadata.gitSha !== embedded.gitSha)) {
+    throw new Error("RELEASE_METADATA.json does not match the release identity built into this binary");
+  }
+  return embedded;
 };
