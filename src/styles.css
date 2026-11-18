@@ -1419,6 +1419,7 @@
   .ax-setrow-main {
     flex: 1;
     min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .ax-setrow-main > span {
@@ -1427,7 +1428,11 @@
     color: var(--a-sec);
   }
 
+  /* Long values (paths, branch names, versions) wrap inside their own column instead of overlapping the title. */
   .ax-setrow-val {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 62%;
     color: var(--a-sec);
     text-align: right;
     font-size: 14px;
