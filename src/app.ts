@@ -1078,6 +1078,8 @@ export const createApp = (options: AppOptions) => {
       repository,
       accessRefresh: persistence.getRefreshState(repository.githubId, "access"),
       specsRefresh: persistence.getRefreshState(repository.githubId, "specs"),
+      specCount: persistence.listSpecs(repository.githubId).length,
+      workingCount: persistence.listSessions(repository.githubId, "active").length,
     }));
     const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
     setPrivateHtmlHeaders(c);

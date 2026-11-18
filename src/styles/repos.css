@@ -1,3 +1,366 @@
 /* Screen styles for the repos slice. Use a unique class prefix; kit classes live in ../styles.css. */
 @layer components {
+  /* ── Colour initial tile ─────────────────────────────────────────── */
+  .rp-tile {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: #6e6e73;
+    color: #ffffff;
+    font-weight: 750;
+    font-size: 17px;
+    line-height: 1;
+  }
+
+  .rp-tile-sm {
+    width: 36px;
+    height: 36px;
+    font-size: 15px;
+  }
+
+  /* Decorative identity colours (white initial ≥ 4.5:1 on each). */
+  .rp-c0 { background: #5856d6; }
+  .rp-c1 { background: #0a64c2; }
+  .rp-c2 { background: #0f7489; }
+  .rp-c3 { background: #8a3fbf; }
+  .rp-c4 { background: #b5400c; }
+  .rp-cgrey { background: #636366; }
+
+  /* ── Repositories list: cards ────────────────────────────────────── */
+  .rp-cards {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+  }
+
+  @media (min-width: 760px) {
+    .rp-cards {
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 14px;
+    }
+  }
+
+  .rp-cards > [role="listitem"] {
+    display: flex;
+    min-width: 0;
+  }
+
+  .rp-card {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    padding: 14px;
+    border-radius: 16px;
+    background: var(--a-card);
+    color: var(--a-text);
+    text-decoration: none;
+  }
+
+  .rp-card:hover {
+    background: color-mix(in srgb, var(--a-fill2) 40%, var(--a-card));
+  }
+
+  .rp-card:focus-visible {
+    outline: 2px solid var(--a-focus);
+    outline-offset: 2px;
+  }
+
+  .rp-card-off {
+    opacity: 0.75;
+  }
+
+  .rp-card-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .rp-card-top .ax-chev {
+    margin-left: auto;
+    color: var(--a-ter);
+  }
+
+  .rp-card-id {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .rp-name {
+    overflow: hidden;
+    font-size: 16px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .rp-full {
+    overflow: hidden;
+    color: var(--a-ter);
+    font-size: 12.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .rp-desc {
+    color: var(--a-sec);
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  .rp-note {
+    display: block;
+    color: var(--t-waiting);
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+
+  .rp-note-red {
+    color: var(--t-failed);
+  }
+
+  .rp-stat {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 14px;
+    margin-top: auto;
+    padding-top: 8px;
+    border-top: 1px solid var(--a-sep);
+    color: var(--a-sec);
+    font-size: 13px;
+  }
+
+  .rp-stat b {
+    color: var(--a-text);
+    font-weight: 650;
+  }
+
+  .rp-foot {
+    margin: 10px 4px 0;
+    color: var(--a-sec);
+    font-size: 13px;
+  }
+
+  .rp-link {
+    color: var(--a-link);
+    font-weight: 500;
+  }
+
+  /* ── Add Repository ──────────────────────────────────────────────── */
+  .rp-filter {
+    display: flex;
+    gap: 8px;
+    margin: 0 0 14px;
+    max-width: 40rem;
+  }
+
+  .rp-filter .ax-input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .rp-count {
+    margin: -6px 4px 14px;
+    color: var(--a-sec);
+    font-size: 13px;
+  }
+
+  .rp-add .ax-banner {
+    margin-bottom: 14px;
+  }
+
+  .rp-avail .ax-row-sub {
+    white-space: normal;
+  }
+
+  .rp-addform {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    margin: 0;
+  }
+
+  .rp-addb {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    min-width: 64px;
+    min-height: 32px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    box-shadow: inset 0 0 0 1.5px var(--a-sep);
+    color: var(--a-link);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 650;
+    cursor: pointer;
+    position: relative;
+  }
+
+  /* 44px touch target without a taller pill. */
+  .rp-addb::after {
+    content: "";
+    position: absolute;
+    inset: -6px -2px;
+  }
+
+  .rp-addb:hover {
+    background: var(--a-fill2);
+  }
+
+  .rp-addb:disabled {
+    opacity: 0.6;
+    cursor: progress;
+  }
+
+  .rp-addb.rp-done {
+    box-shadow: none;
+    color: var(--a-ter);
+    font-weight: 500;
+  }
+
+  .rp-progress {
+    color: var(--a-sec);
+    font-size: 12px;
+  }
+
+  .rp-progress:not(.htmx-request) {
+    display: none;
+  }
+
+  /* ── Repository header (Specs / Pull requests / Sessions pages) ─── */
+  .rp-head {
+    margin-bottom: 18px;
+  }
+
+  .rp-head .ax-head {
+    margin-bottom: 14px;
+  }
+
+  .rp-head .ax-head-desc {
+    margin-top: -4px;
+  }
+
+  .rp-removed {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    margin: -4px 0 14px;
+  }
+
+  .rp-head .ax-seg {
+    max-width: 30rem;
+  }
+
+  .rp-head > .ax-banner {
+    margin-top: 14px;
+  }
+
+  .rp-action {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+  }
+
+  /* Remove from Atlas inside the ⋯ menu: the confirm opens in place of the item list. */
+  .rp-head .ax-menu .ax-confirm > summary {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 10px;
+    border-radius: 9px;
+    background: none;
+    color: var(--t-failed);
+    font-weight: 400;
+    justify-content: flex-start;
+  }
+
+  .rp-head .ax-menu .ax-confirm > summary:hover {
+    background: var(--a-fill2);
+  }
+
+  .rp-head .ax-menu .ax-confirm[open] > summary {
+    display: none;
+  }
+
+  .rp-head .ax-menu-items:has(.ax-confirm[open]) > :not(.ax-confirm) {
+    display: none;
+  }
+
+  .rp-head .ax-menu-panel:has(.ax-confirm[open]) > .ax-menu-title {
+    display: none;
+  }
+
+  .rp-head .ax-menu .ax-confirm-panel {
+    margin: 0;
+    background: none;
+    box-shadow: none;
+    padding: 10px;
+  }
+
+  .rp-head .ax-menu .ax-confirm-panel > b {
+    font-size: 15px;
+  }
+
+  .rp-head .ax-menu .ax-confirm-actions .rp-action {
+    flex: 1 1 auto;
+  }
+
+  .rp-head .ax-menu .ax-confirm-actions .ax-btn {
+    flex: 1 1 auto;
+  }
+
+  @media (max-width: 759.98px) {
+    .rp-head .ax-menu .ax-confirm > summary {
+      justify-content: center;
+      min-height: 52px;
+      border-radius: 0;
+      font-size: 16px;
+    }
+
+    .rp-head .ax-menu .ax-confirm-panel {
+      padding: 14px 14px 12px;
+      text-align: center;
+    }
+
+    .rp-head .ax-menu .ax-confirm-panel > p {
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .rp-head .ax-menu .ax-confirm-actions {
+      flex-direction: column;
+    }
+
+    .rp-head .ax-menu .ax-confirm-actions .rp-action {
+      flex-direction: column;
+    }
+
+    .rp-head .ax-menu .ax-confirm-actions .ax-btn {
+      width: 100%;
+      min-height: 48px;
+    }
+
+    /* The sheet already has its own Cancel. */
+    .rp-head .ax-menu .ax-confirm-actions [data-confirm-cancel] {
+      display: none;
+    }
+  }
 }

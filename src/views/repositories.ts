@@ -1,22 +1,18 @@
 import type { GitHubRepository } from "../github.ts";
 import type { RefreshState, Repository } from "../persistence.ts";
-import { escapeHtml, safeExternalUrl } from "./html.ts";
-import { icon } from "./icons.ts";
+import { escapeHtml } from "./html.ts";
 import {
-  accessBadgeClass,
-  accessLabel,
-  emptyState,
-  pageHeader,
-  pullRequestsLink,
-  recordActions,
-  recordIdentity,
-  recordTable,
-  refreshCell,
-  refreshLine,
-  refreshWarning,
-  repositoryAction,
+  banner,
+  button,
+  emptyCard,
+  group,
+  groupFoot,
+  icon,
+  pageTitle,
   repositoryLink,
-  statusBadge,
+  repositoryNote,
+  repositoryTile,
+  sectionHeader,
 } from "./shared.ts";
 import { renderShell, type InboxContext } from "./shell.ts";
 
@@ -24,6 +20,10 @@ type RepositoryListEntry = {
   repository: Repository;
   accessRefresh?: RefreshState;
   specsRefresh?: RefreshState;
+  /** Current Specs from the last complete read. Leave undefined when Specs were never read. */
+  specCount?: number;
+  /** Unfinished Sessions (Queued, Preparing, Running, Waiting, Idle). */
+  workingCount?: number;
 };
 
 export const repositoryMatchesQuery = (
@@ -37,28 +37,27 @@ export const repositoryMatchesQuery = (
   );
 };
 
-const repositoryIdentity = (
-  name: string,
-  fullName: string,
-  href?: string,
-  extra?: { compact?: boolean; description?: string | null; defaultBranch?: string | null },
-) => {
-  const title = href
-    ? `<a class="text-brand-readable underline decoration-brand-readable/50 underline-offset-4" href="${href}">${escapeHtml(name)}</a>`
-    : `<span class="font-medium">${escapeHtml(name)}</span>`;
-  const compact = extra?.compact === true;
-  const branch = extra && "defaultBranch" in extra
-    ? `<p class="${compact ? "mt-1 truncate" : "mt-2"} text-sm text-muted">Default branch: <code class="font-mono text-base-content">${escapeHtml(extra.defaultBranch ?? "none")}</code></p>`
-    : "";
-  const description = extra?.description
-    ? `<p class="${compact ? "mt-1 truncate" : "mt-2 max-w-prose"} text-sm text-muted">${escapeHtml(extra.description)}</p>`
-    : "";
-  return `${title}<p class="mt-1 break-words font-mono text-xs text-faint">${escapeHtml(fullName)}</p>${branch}${description}`;
+const plural = (count: number, word: string) => `<span><b>${count}</b> ${word}${count === 1 ? "" : "s"}</span>`;
+
+/** Footer line. Only says what Atlas knows: no Spec count before the first complete Specs read. */
+const cardStats = ({ specsRefresh, specCount, workingCount }: RepositoryListEntry) => {
+  const read = Boolean(specsRefresh?.lastSuccessAt) && specCount !== undefined;
+  const specs = read ? plural(specCount!, "Spec") : `<span>Specs not read yet</span>`;
+  const working = workingCount === undefined ? "" : `<span><b>${workingCount}</b> working</span>`;
+  const failed = specsRefresh && read && (specsRefresh.availability === "unavailable" || specsRefresh.availability === "partial");
+  return `<span class="rp-stat">${specs}${working}</span>${failed ? `<span class="rp-note">Couldn’t refresh Specs · counts from the last read</span>` : ""}`;
 };
 
-const repositoryNotes = (repository: { defaultBranch: string | null; removedAt?: string | null }, browsingOnly = false) =>
-  `${repository.defaultBranch ? "" : `<p class="mt-1 text-sm text-warning">${browsingOnly ? "No default-branch commit; browsing only." : "No default-branch commit; cannot start Sessions."}</p>`}
-    ${repository.removedAt ? `<p class="mt-1 text-sm text-warning">Removed from Atlas; Sessions and local resources are preserved.</p>` : ""}`;
+const repositoryCard = (entry: RepositoryListEntry) => {
+  const { repository } = entry;
+  const note = repositoryNote(repository);
+  return `<a class="rp-card${repository.removedAt ? " rp-card-off" : ""}" href="${escapeHtml(repositoryLink(repository))}">
+    <span class="rp-card-top">${repositoryTile(repository, 40)}<span class="rp-card-id"><span class="rp-name">${escapeHtml(repository.name)}</span><span class="rp-full">${escapeHtml(repository.fullName)}</span></span>${icon("chevron", 16, "ax-chev")}</span>
+    ${repository.description ? `<span class="rp-desc">${escapeHtml(repository.description)}</span>` : ""}
+    ${note ? `<span class="rp-note${note.tone === "error" ? " rp-note-red" : ""}">${escapeHtml(note.text)}</span>` : ""}
+    ${cardStats(entry)}
+  </a>`;
+};
 
 export const renderRepositoriesPage = (
   csrfToken: string,
@@ -66,77 +65,43 @@ export const renderRepositoriesPage = (
   includeRemoved = false,
   inbox?: InboxContext,
 ) => {
-  const list = repositories.length === 0
-    ? emptyState(
-      "No Repositories enrolled",
-      "Atlas does not enroll every Repository available to the GitHub App. Add one explicitly to begin browsing.",
-      `<a class="btn btn-primary mt-4" href="/repositories/new">${icon("plus", 16)} Add a Repository</a>`,
-    )
-    : recordTable({
-      label: includeRemoved ? "Enrolled and removed Repositories" : "Enrolled Repositories",
-      headers: ["Repository", "State", "Access", "Specs", "Actions"],
-      rows: repositories.map(({ repository, accessRefresh, specsRefresh }) => {
-        const href = repositoryLink(repository);
-        const github = safeExternalUrl(repository.htmlUrl);
-        return `<tr>
-          <td class="min-w-0">${recordIdentity(
-            icon("rectangle-stack", 20),
-            `${repositoryIdentity(repository.name, repository.fullName, href, {
-              compact: true,
-              description: repository.description,
-              defaultBranch: repository.defaultBranch,
-            })}${repositoryNotes(repository)}`,
-          )}</td>
-          <td class="whitespace-nowrap">${statusBadge(accessBadgeClass(repository), accessLabel(repository))}</td>
-          <td class="text-muted">${refreshCell(accessRefresh)}</td>
-          <td class="text-muted">${refreshCell(specsRefresh)}</td>
-          <td>${recordActions(`
-              <a class="btn btn-ghost btn-xs" href="${href}">Browse Specs</a>
-              <a class="btn btn-ghost btn-xs" href="${pullRequestsLink(repository)}">Browse Pull requests</a>
-              ${github ? `<a class="btn btn-ghost btn-xs" href="${escapeHtml(github)}" target="_blank" rel="noopener noreferrer">${icon("arrow-top-right-on-square", 16)} Open on GitHub</a>` : ""}
-              ${repositoryAction(repository, csrfToken, true)}
-            `)}</td>
-        </tr>`;
-      }),
-      stacked: repositories.map(({ repository, accessRefresh, specsRefresh }) => {
-        const href = repositoryLink(repository);
-        const github = safeExternalUrl(repository.htmlUrl);
-        return `<li class="p-3">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div class="min-w-0 flex-1">${repositoryIdentity(repository.name, repository.fullName, href, {
-              description: repository.description,
-              defaultBranch: repository.defaultBranch,
-            })}</div>
-            ${statusBadge(accessBadgeClass(repository), accessLabel(repository))}
-          </div>
-          ${repositoryNotes(repository)}
-          <p class="mt-2 text-sm text-muted">${refreshLine("Access", accessRefresh)} · ${refreshLine("Specs", specsRefresh)}</p>
-          ${refreshWarning("Access", accessRefresh)}
-          ${refreshWarning("Specs", specsRefresh)}
-          <div class="mt-3 flex flex-wrap gap-2">
-            <a class="btn btn-ghost btn-xs" href="${href}">Browse Specs</a>
-            <a class="btn btn-ghost btn-xs" href="${pullRequestsLink(repository)}">Browse Pull requests</a>
-            ${github ? `<a class="btn btn-ghost btn-xs" href="${escapeHtml(github)}" target="_blank" rel="noopener noreferrer">${icon("arrow-top-right-on-square", 16)} Open on GitHub</a>` : ""}
-            ${repositoryAction(repository, csrfToken)}
-          </div>
-        </li>`;
-      }),
-    });
+  const enrolled = repositories.filter(({ repository }) => !repository.removedAt);
+  const removed = repositories.filter(({ repository }) => repository.removedAt);
+  const addButton = button({ label: "Add Repository", variant: "icon", icon: "plus", href: "/repositories/new" });
+  const list = enrolled.length === 0
+    ? emptyCard({
+      title: "No Repositories yet",
+      body: "Atlas only shows the GitHub Repositories you add. Adding one doesn’t change anything on GitHub.",
+      glyph: "folder",
+      actionHtml: button({ label: "Add Repository", icon: "plus", href: "/repositories/new" }),
+    })
+    : `<div class="rp-cards" role="list" aria-label="Repositories">${enrolled.map((entry) => `<div role="listitem">${repositoryCard(entry)}</div>`).join("")}</div>`;
+  const removedList = includeRemoved
+    ? `${sectionHeader({ title: "Removed from Atlas", count: removed.length })}
+      ${removed.length === 0
+        ? `<p class="rp-foot">No removed Repositories.</p>`
+        : `<div class="rp-cards" role="list" aria-label="Removed Repositories">${removed.map((entry) => `<div role="listitem">${repositoryCard(entry)}</div>`).join("")}</div>
+          <p class="rp-foot">Removed Repositories keep their history. Open one to re-add it.</p>`}`
+    : "";
 
   return renderShell({
     title: "Repositories",
     csrfToken,
     inbox,
-    content: `${pageHeader({
-      eyebrow: "Operations",
+    tab: "repos",
+    header: {
       title: "Repositories",
-      description: "Choose which GitHub Repositories Atlas should browse. App access is eligibility, not enrollment.",
-      actions: `<a class="btn btn-primary" href="/repositories/new">${icon("plus", 16)} Add a Repository</a>
-        ${includeRemoved
-          ? `<a class="btn btn-ghost" href="/repositories">Hide removed Repositories</a>`
-          : `<a class="btn btn-ghost" href="/repositories?removed=1">Show removed Repositories</a>`}`,
-    })}
-    ${list}`,
+      actionsHtml: addButton,
+      menu: {
+        items: [
+          includeRemoved
+            ? { label: "Hide removed Repositories", href: "/repositories", icon: "eye" }
+            : { label: "Show removed Repositories", href: "/repositories?removed=1", icon: "eye" },
+          { label: "Add Repository", href: "/repositories/new", icon: "plus" },
+        ],
+      },
+    },
+    content: `<div class="rp-page">${list}${removedList}</div>`,
   });
 };
 
@@ -145,6 +110,17 @@ type AvailableRepository = {
   enrolled: boolean;
   removedAt?: string | null;
   csrfToken: string;
+};
+
+/** Amber note for an inventory row, or the description. */
+const availableSub = (repository: GitHubRepository, enrolled: boolean, removedAt: string | null | undefined) => {
+  const warn = (text: string) => `<span class="rp-note">${escapeHtml(text)}</span>`;
+  if (removedAt) return warn("Removed earlier · history kept");
+  if (repository.archived) return warn("Archived · browsing only");
+  if (repository.disabled) return warn("Disabled on GitHub · browsing only");
+  if (!repository.defaultBranch) return warn("No default-branch commit · browsing only");
+  if (enrolled) return "Already added";
+  return repository.description ? escapeHtml(repository.description) : `<span class="ax-mono">${escapeHtml(repository.fullName)}</span>`;
 };
 
 export const renderAddRepositoryPage = ({
@@ -165,88 +141,63 @@ export const renderAddRepositoryPage = ({
     ? available.filter(({ repository }) => repositoryMatchesQuery(repository, filterQuery))
     : available;
   const errorMarkup = error
-    ? `<div class="alert alert-warning alert-soft mt-6 leading-normal" role="alert">${escapeHtml(error)}</div>`
+    ? banner({
+      tone: "warning",
+      role: "alert",
+      title: "Couldn’t reach GitHub",
+      bodyHtml: `${escapeHtml(error)} <a class="rp-link" href="/repositories/new${filterQuery ? `?q=${encodeURIComponent(filterQuery)}` : ""}">Try again</a>`,
+    })
     : "";
   const filterForm = available.length > 0 || filterQuery
-    ? `<form class="mt-6 max-w-2xl" method="get" action="/repositories/new" role="search">
-        <label class="label mb-2 block p-0" for="repository-filter">Filter Repositories</label>
-        <div class="flex w-full flex-wrap items-center gap-2">
-          <label class="input min-w-0 grow">
-            ${icon("magnifying-glass", 16)}
-            <input id="repository-filter" name="q" type="search" value="${escapeHtml(filterQuery)}" maxlength="200" autocomplete="off">
-          </label>
-          <button class="btn" type="submit">Filter</button>
-        </div>
+    ? `<form class="rp-filter" method="get" action="/repositories/new" role="search">
+        <label class="sr-only" for="repository-filter">Filter Repositories</label>
+        <input id="repository-filter" class="ax-input" name="q" type="search" value="${escapeHtml(filterQuery)}" maxlength="200" autocomplete="off" placeholder="Filter Repositories">
+        ${button({ label: "Filter", variant: "outline", type: "submit" })}
       </form>
-      ${filterQuery ? `<p class="mt-3 text-sm text-muted">Showing <span class="tabular-nums">${visible.length}</span> of <span class="tabular-nums">${available.length}</span> Repositories. <a class="text-brand-readable underline decoration-brand-readable/50 underline-offset-4" href="/repositories/new">Clear filter</a></p>` : ""}`
+      ${filterQuery ? `<p class="rp-count">Showing <span class="tabular-nums">${visible.length}</span> of <span class="tabular-nums">${available.length}</span> Repositories. <a class="rp-link" href="/repositories/new">Clear filter</a></p>` : ""}`
     : "";
-  const addForm = (repository: GitHubRepository, enrolled: boolean, removedAt: string | null | undefined, repositoryCsrf: string) =>
-    removedAt
-      ? `<form id="add-repository-${escapeHtml(repository.id)}" action="/repositories" method="post" hx-post="/repositories" hx-target="this" hx-swap="none" hx-indicator="#add-progress-${escapeHtml(repository.id)}" hx-disabled-elt="button[type='submit']"><input type="hidden" name="csrf" value="${escapeHtml(repositoryCsrf || csrfToken)}"><input type="hidden" name="repository_id" value="${escapeHtml(repository.id)}"><span data-form-status class="sr-only" role="status" aria-live="polite"></span><button class="btn btn-primary btn-xs" type="submit">Re-add Repository</button><span id="add-progress-${escapeHtml(repository.id)}" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Re-adding Repository...</span></form><span class="max-w-48 text-xs leading-normal text-warning">Removed from Atlas; history is preserved.</span>`
-      : enrolled
-        ? `<a class="btn btn-primary btn-xs" href="${repositoryLink({ githubId: repository.id })}">Open Specs</a><span class="max-w-48 text-xs leading-normal text-muted">Already enrolled; adding again keeps the same Repository.</span>`
-        : `<form id="add-repository-${escapeHtml(repository.id)}" action="/repositories" method="post" hx-post="/repositories" hx-target="this" hx-swap="none" hx-indicator="#add-progress-${escapeHtml(repository.id)}" hx-disabled-elt="button[type='submit']"><input type="hidden" name="csrf" value="${escapeHtml(repositoryCsrf || csrfToken)}"><input type="hidden" name="repository_id" value="${escapeHtml(repository.id)}"><span data-form-status class="sr-only" role="status" aria-live="polite"></span><button class="btn btn-primary btn-xs" type="submit">Add Repository</button><span id="add-progress-${escapeHtml(repository.id)}" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Adding Repository...</span></form>`;
+  const addForm = (repository: GitHubRepository, enrolled: boolean, removedAt: string | null | undefined, repositoryCsrf: string) => {
+    if (enrolled && !removedAt) {
+      return `<a class="rp-addb rp-done" href="${escapeHtml(repositoryLink({ githubId: repository.id }))}" aria-label="Added. Open ${escapeHtml(repository.name)}">Added</a>`;
+    }
+    const id = escapeHtml(repository.id);
+    const verb = removedAt ? "Re-add" : "Add";
+    return `<form id="add-repository-${id}" class="rp-addform" action="/repositories" method="post" hx-post="/repositories" hx-target="this" hx-swap="none" hx-indicator="#add-progress-${id}" hx-disabled-elt="button[type='submit']"><input type="hidden" name="csrf" value="${escapeHtml(repositoryCsrf || csrfToken)}"><input type="hidden" name="repository_id" value="${id}"><span data-form-status class="sr-only" role="status" aria-live="polite"></span><button class="rp-addb" type="submit" aria-label="${verb} ${escapeHtml(repository.name)}">${verb}</button><span id="add-progress-${id}" class="htmx-indicator rp-progress" role="status" aria-live="polite">${removedAt ? "Re-adding…" : "Adding…"}</span></form>`;
+  };
 
   const list = visible.length === 0 && !error && !filterQuery
-    ? emptyState("No Repositories available", "The configured GitHub App installation has no Repositories in the allowed organization, or none could be verified.")
+    ? emptyCard({
+      title: "No Repositories available",
+      body: "The Atlas GitHub App can’t see any Repositories in the allowed organization yet.",
+      glyph: "folder",
+    })
     : visible.length === 0 && filterQuery
-      ? emptyState(
-        "No matching Repositories",
-        "No Repositories match this filter. Clear it to see all available Repositories.",
-        `<a class="btn btn-ghost mt-4" href="/repositories/new">Clear filter</a>`,
-      )
+      ? emptyCard({
+        title: "No matching Repositories",
+        body: "Nothing matches this filter.",
+        glyph: "folder",
+        actionHtml: button({ label: "Clear filter", variant: "outline", href: "/repositories/new" }),
+      })
       : visible.length > 0
-        ? recordTable({
-          label: "Repositories available to Atlas",
-          headers: ["Repository", "State", "Actions"],
-          rows: visible.map(({ repository, enrolled, removedAt, csrfToken: repositoryCsrf }) => {
-            const github = safeExternalUrl(repository.htmlUrl);
-            const badge = repository.archived || repository.disabled ? "badge-warning" : "badge-info";
-            const label = repository.archived ? "Archived" : repository.disabled ? "Disabled" : "Available";
-            return `<tr>
-              <td class="min-w-0">${recordIdentity(
-                icon("rectangle-stack", 20),
-                `${repositoryIdentity(repository.name, repository.fullName, undefined, {
-                  compact: true,
-                  description: repository.description,
-                  defaultBranch: repository.defaultBranch,
-                })}${repositoryNotes(repository, true)}`,
-              )}</td>
-              <td class="whitespace-nowrap">${statusBadge(badge, `${label} for browsing`)}</td>
-              <td>${recordActions(`${addForm(repository, enrolled, removedAt, repositoryCsrf)}${github ? `<a class="btn btn-ghost btn-xs" href="${escapeHtml(github)}" target="_blank" rel="noopener noreferrer">${icon("arrow-top-right-on-square", 16)} Open on GitHub</a>` : ""}`)}</td>
-            </tr>`;
-          }),
-          stacked: visible.map(({ repository, enrolled, removedAt, csrfToken: repositoryCsrf }) => {
-            const github = safeExternalUrl(repository.htmlUrl);
-            const badge = repository.archived || repository.disabled ? "badge-warning" : "badge-info";
-            const label = repository.archived ? "Archived" : repository.disabled ? "Disabled" : "Available";
-            return `<li class="p-3">
-              <div class="flex flex-wrap items-start justify-between gap-3">
-                <div class="min-w-0">${repositoryIdentity(repository.name, repository.fullName, undefined, {
-                  description: repository.description,
-                  defaultBranch: repository.defaultBranch,
-                })}</div>
-                ${statusBadge(badge, `${label} for browsing`)}
-              </div>
-              ${repositoryNotes(repository, true)}
-              <div class="mt-3 flex flex-wrap items-center gap-2">${addForm(repository, enrolled, removedAt, repositoryCsrf)}${github ? `<a class="btn btn-ghost btn-xs" href="${escapeHtml(github)}" target="_blank" rel="noopener noreferrer">${icon("arrow-top-right-on-square", 16)} Open on GitHub</a>` : ""}</div>
-            </li>`;
-          }),
-        })
+        ? group(
+          visible.map(({ repository, enrolled, removedAt, csrfToken: repositoryCsrf }) =>
+            `<div class="ax-row rp-avail">${repositoryTile(repository, 36)}<span class="ax-row-main"><span class="ax-row-title">${escapeHtml(repository.name)}</span><span class="ax-row-sub">${availableSub(repository, enrolled, removedAt)}</span></span>${addForm(repository, enrolled, removedAt, repositoryCsrf)}</div>`),
+          { label: "Repositories the Atlas GitHub App can see" },
+        )
         : "";
 
   return renderShell({
     title: "Add Repository",
     csrfToken,
     inbox,
-    content: `${pageHeader({
-      eyebrow: "GitHub App access",
-      title: "Add a Repository",
-      description: "Select a Repository that is available to the configured App installation. Atlas will save it before attempting its first Specs synchronization.",
-    })}
+    tab: "repos",
+    // Back link in the page title only (the shell would also put it in the phone bar).
+    content: `${pageTitle({ title: "Add Repository", back: { href: "/repositories", label: "Repositories" } })}
+    <div class="rp-page rp-add">
       ${errorMarkup}
       ${filterForm}
       ${list}
-      <a class="btn btn-ghost mt-8" href="/repositories">Back to Repositories</a>`,
+      ${groupFoot("Only Repositories the Atlas GitHub App can see are listed. Adding one doesn’t change anything on GitHub.")}
+    </div>`,
   });
 };
