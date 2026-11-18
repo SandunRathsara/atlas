@@ -102,6 +102,10 @@ Atlas Sessions run unattended, so OpenCode must not stop to ask a person.
 `bootstrap.sh` runs it for `/var/lib/atlas/opencode-config`.
 The installer:
 
+- writes only as the config home's owner: run as root, it reads the shipped
+  file and then drops to that owner with `setpriv` (util-linux), so no root
+  write follows a path the owner could swap; any other caller is refused;
+
 - never restarts OpenCode; the server reads the file at the latest on its next
   start;
 - keeps a differing earlier file as `opencode.json.replaced-<UTC time>`;
@@ -113,6 +117,7 @@ The installer:
 | `permissions` allow `read` on `*.env` and `*.env.*` | Replaces OpenCode's default `ask` for `.env` files. |
 | `permissions` deny `question` | Removes the `question` tool from the agents' tool list. |
 | `policies` deny `tool.use` on `question:*` | Hard backstop. If a repository's own config re-allows `question`, the call still fails with "Blocked by configuration policy" and no form opens. |
+| `policies` deny `tool.use` on `external_directory:/etc/atlas/*`, `read:/etc/atlas`, and `read:/etc/atlas/*` | Keeps Atlas's own secrets (`github.env`, keys) out of the file tools even though `*.env` reads are allowed. `external_directory` also covers `grep` and `glob`, whose resource is the search pattern, not the path. A repository's config cannot re-allow it. |
 
 The split is deliberate. Policies can only deny and never grant, so the `.env`
 allow rules must stay `permissions`. Global policies outrank project config;
@@ -125,6 +130,10 @@ Limits (Waiting is still possible):
   for `.env` reads, shell commands, or other actions still makes the Session
   wait for approval.
 - Only the `question` form is blocked unconditionally.
+- The `/etc/atlas` deny closes only OpenCode's file tools. The shell tool is
+  allowed by default and runs as `omega`, so an agent can still read any file
+  `omega` can read, including `/etc/atlas` files readable by `omega`. That is a
+  pre-existing property of running the agent as that user.
 - Idle servers still fetch the public model catalog from `models.opencode.ai`.
 
 ## Target layout
@@ -145,7 +154,7 @@ Limits (Waiting is still possible):
 | `/var/lib/atlas/opencode-data/opencode` | OpenCode data, database, logs, shells, snapshots, tool output |
 | `/var/lib/atlas/opencode-data/opencode/log` | OpenCode file logs; human-installed size/retention bound |
 | `/var/lib/atlas/opencode-state/opencode` | OpenCode state and service registration |
-| `/var/lib/atlas/opencode-config/opencode` | Copied OpenCode configuration/plugins; `opencode.json` is the Atlas headless configuration and the generated server password |
+| `/var/lib/atlas/opencode-config/opencode` | Copied OpenCode configuration/plugins: `opencode.json` is the Atlas headless configuration (no secrets); OpenCode's own `service.json` holds the generated server password |
 | `/var/lib/atlas/opencode-cache` | OpenCode cache kept inside the coherent snapshot scope |
 | `/var/lib/atlas/opencode-runtime` | Stable service working directory, never a Session clone |
 | `/var/lib/atlas/recovery-config/current` | Protected required configuration and rollback records |
@@ -334,8 +343,15 @@ assumes OpenCode opens its database through Bun's built-in `bun:sqlite`, as
 2.3.2 does. A build without the embedded Bun CLI, or with a second SQLite
 build, fails closed and cannot be verified this way.
 `restore-rehearsal.sh` validates a writable restore before scrubbing known
-runtime endpoints without starting a service, then re-installs only the
-credential-free headless OpenCode configuration. The exact conditional recovery,
+runtime endpoints and saved credentials without starting a service, then
+re-installs only the credential-free headless OpenCode configuration.
+OpenCode 2.x keeps saved provider keys and OAuth tokens (including MCP OAuth)
+in `opencode.db`, so `scrub-opencode-credentials.ts` deletes those database
+rows (`credential`, `account`, `control_account`, well-known `kv` entries),
+then `VACUUM`s and checkpoints the database so no copy survives in free pages
+or the WAL. That needs time and up to twice the database size in free space.
+The legacy `auth.json`, which OpenCode imports but never deletes, is removed
+too. The exact conditional recovery,
 release, rollback, and rehearsal procedure is in [RECOVERY.md](RECOVERY.md).
 
 ## Human-only cutover order

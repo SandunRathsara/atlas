@@ -331,6 +331,8 @@ const openCodeFixture = async () => {
   const requests: RecordedRequest[] = [];
   const sessions = new Map<string, { directory: string }>();
   const messages = new Map<string, { id: string; sessionID: string; text: string }>();
+  // Real 2.3.2 dedupes a repeated prompt id but still re-wakes a finished Session; Atlas must never resend one.
+  const promptCounts = new Map<string, number>();
   let holdPrompt = true;
   let loseNextPromptResponse = true;
   let promptStarted = false;
@@ -376,6 +378,7 @@ const openCodeFixture = async () => {
         }
         return json({ data: {} });
       }
+      if (url.pathname === "/api/experimental/job") return json({ data: [] });
       const messageMatch = /^\/api\/session\/([^/]+)\/message\/([^/]+)$/.exec(url.pathname);
       if (messageMatch) {
         const sessionID = decodeURIComponent(messageMatch[1]!);
@@ -394,6 +397,7 @@ const openCodeFixture = async () => {
         if (!match[2]) return json({ data: sessionInfo(id, saved.directory) });
         if (match[2] === "prompt" && request.method === "POST") {
           const idValue = String(body?.id);
+          promptCounts.set(idValue, (promptCounts.get(idValue) ?? 0) + 1);
           // A repeated caller message id is deduped: the original item is kept, even for different text.
           if (!messages.has(idValue)) messages.set(idValue, { id: idValue, sessionID: id, text: String(body?.text) });
           const text = messages.get(idValue)!.text;
@@ -427,6 +431,7 @@ const openCodeFixture = async () => {
   return {
     requests,
     sessions,
+    duplicatePrompts: () => [...promptCounts.values()].reduce((sum, count) => sum + Math.max(0, count - 1), 0),
     serviceFile,
     promptStarted: () => promptStarted,
     releasePrompt,
@@ -493,6 +498,7 @@ const verifyHandoffDrain = async () => {
   const prompts = () => fixture.requests.filter((request) => request.method === "POST" && request.path.endsWith("/prompt"));
   assert.equal(creates().length, 1);
   assert.equal(prompts().length, 1);
+  assert.equal(fixture.duplicatePrompts(), 0);
 
   const secondId = preparedSession(persistence, "5");
   service.enqueue();
@@ -501,6 +507,7 @@ const verifyHandoffDrain = async () => {
   assert.equal(persistence.getSession(secondId)?.handoffCheckpoint, "not_started");
   assert.equal(creates().length, 1, "held pause must block new create work");
   assert.equal(prompts().length, 1, "uncertain prompt must not be sent again");
+  assert.equal(fixture.duplicatePrompts(), 0, "crash/lost-response recovery must not resend a prompt id");
   assert.equal(outcome.status === "paused" && outcome.resume(), true);
   assert.equal(outcome.status === "paused" && outcome.resume(), false);
   await waitFor(() => persistence.getSession(secondId)?.handoffCheckpoint === "prompt_accepted", "eligible handoff did not resume");
@@ -509,6 +516,7 @@ const verifyHandoffDrain = async () => {
   await service.process();
   assert.equal(creates().length, 2, "resumption must not recreate an OpenCode Session");
   assert.equal(prompts().length, 2, "resumption must keep the one-prompt contract");
+  assert.equal(fixture.duplicatePrompts(), 0, "resumption must not resend a prompt id");
 
   const thirdId = preparedSession(persistence, "6");
   completePersistedHandoff(persistence, thirdId);
@@ -524,6 +532,7 @@ const verifyHandoffDrain = async () => {
   fixture.releaseActive();
   await reconciling;
   service.stop();
+  assert.equal(fixture.duplicatePrompts(), 0, "no scenario may resend a prompt id");
   assert.equal(executionPause.status === "paused" && executionPause.resume(), true);
 
   fixture.stop();

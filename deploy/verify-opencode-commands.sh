@@ -226,6 +226,93 @@ expect_failure "$root/install-opencode-config.sh" "$config_home"
 rm -f -- "$config_home/opencode/opencode.jsonc"
 ln -s "$config_home" "$fixture/opencode-config-link"
 expect_failure "$root/install-opencode-config.sh" "$fixture/opencode-config-link"
+# A caller that is neither root nor the config home's owner is refused before
+# any write (root-owned /usr stands in for someone else's config home).
+if (( EUID != 0 )); then
+  expect_failure "$root/install-opencode-config.sh" /usr
+  grep -Fq 'run as root or as the owner' "$fixture/failure.err" || fail "a caller that does not own the config home was not refused"
+fi
+# Root installing into another user's config home must write only as that
+# user. A user namespace gives an unprivileged root plus a distinct owner uid.
+if (( EUID != 0 )) && unshare --map-auto --map-root-user true 2>/dev/null; then
+  ns_work=$(mktemp -d)
+  chmod 0711 "$ns_work"
+  cat > "$fixture/ns-root.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+root=$1 work=$2
+trap 'rm -rf -- "$work/ns"' EXIT
+mkdir -m 0711 "$work/ns"
+mkdir "$work/ns/home"
+printf 'root-only\n' > "$work/ns/root-only"
+chmod 0600 "$work/ns/root-only"
+chown 1000:1000 "$work/ns/home"
+"$root/install-opencode-config.sh" "$work/ns/home" >/dev/null
+f="$work/ns/home/opencode/opencode.json"
+[[ "$(stat -c '%u:%g %a' "$f")" == "1000:1000 400" && "$(stat -c '%u:%g %a' "$work/ns/home/opencode")" == "1000:1000 700" ]] || { echo "root install did not write as the config home owner"; exit 1; }
+cmp -s "$root/opencode/opencode.json" "$f" || { echo "root install changed the shipped configuration"; exit 1; }
+"$root/install-opencode-config.sh" "$work/ns/home" | grep -Fq 'already installed' || { echo "root re-install was not idempotent"; exit 1; }
+# The owner swaps the installed file for a symlink to a root-only file.
+setpriv --reuid=1000 --regid=1000 --clear-groups -- bash -c "rm -f '$f'; ln -s '$work/ns/root-only' '$f'"
+if "$root/install-opencode-config.sh" "$work/ns/home" >/dev/null 2>&1; then echo "root install followed an owner symlink"; exit 1; fi
+[[ "$(cat "$work/ns/root-only")" == root-only && "$(stat -c '%u %a' "$work/ns/root-only")" == "0 600" ]] || { echo "root install changed a root-only file"; exit 1; }
+echo ns-root-ok
+EOF
+  ns_result=$(unshare --map-auto --map-root-user bash "$fixture/ns-root.sh" "$root" "$ns_work" 2>&1) || true
+  rmdir -- "$ns_work" 2>/dev/null || true
+  [[ "$ns_result" == ns-root-ok ]] || fail "root install as the config home owner: $ns_result"
+else
+  echo "skipped the root-to-owner install fixture: unprivileged user namespaces are unavailable" >&2
+fi
+
+# The restore scrub removes every saved OpenCode credential from the database,
+# including secrets that exist only in the WAL of a live-copied snapshot.
+real_bun=$(command -v bun) || fail "bun is required for the credential scrub fixture"
+mkdir -p "$fixture/scrub/live" "$fixture/scrub/copy"
+cat > "$fixture/scrub/build.ts" <<'EOF'
+import { Database } from "bun:sqlite";
+import { copyFileSync } from "node:fs";
+const [live, copy] = Bun.argv.slice(2);
+const db = new Database(`${live}/opencode.db`, { create: true });
+db.run("PRAGMA journal_mode = WAL");
+db.run("PRAGMA wal_autocheckpoint = 0");
+db.run("CREATE TABLE credential (id text PRIMARY KEY, value text NOT NULL)");
+db.run("CREATE TABLE account (id text PRIMARY KEY, access_token text NOT NULL, refresh_token text NOT NULL)");
+db.run("CREATE TABLE account_state (id integer PRIMARY KEY, active_account_id text, active_org_id text)");
+db.run("CREATE TABLE control_account (id text PRIMARY KEY, access_token text NOT NULL)");
+db.run("CREATE TABLE kv (key text PRIMARY KEY, value text NOT NULL)");
+db.run("CREATE TABLE project (id text PRIMARY KEY)");
+db.run("INSERT INTO credential VALUES ('c1', '{\"type\":\"key\",\"key\":\"FAKEKEY-SCRUB\"}'), ('c2', '{\"type\":\"oauth\",\"access\":\"FAKEOAUTH-SCRUB\"}')");
+db.run("INSERT INTO account VALUES ('a1', 'FAKEACCESS-SCRUB', 'FAKEREFRESH-SCRUB')");
+db.run("INSERT INTO account_state VALUES (1, 'a1', 'FAKEORG-SCRUB')");
+db.run("INSERT INTO control_account VALUES ('k1', 'FAKECONTROL-SCRUB')");
+db.run("INSERT INTO kv VALUES ('wellknown:config:x', 'FAKEWELLKNOWN-SCRUB'), ('other', 'kept')");
+db.run("INSERT INTO project VALUES ('p1')");
+// A credential deleted before the snapshot leaves its bytes on free pages.
+db.run("INSERT INTO credential VALUES ('c0', ?)", ["FAKEDELETED-SCRUB".repeat(1000)]);
+db.run("DELETE FROM credential WHERE id = 'c0'");
+for (const suffix of ["", "-wal", "-shm"]) copyFileSync(`${live}/opencode.db${suffix}`, `${copy}/opencode.db${suffix}`);
+db.close();
+EOF
+"$real_bun" "$fixture/scrub/build.ts" "$fixture/scrub/live" "$fixture/scrub/copy"
+[[ -s "$fixture/scrub/copy/opencode.db-wal" ]] && LC_ALL=C grep -aqF FAKE "$fixture/scrub/copy/opencode.db-wal" || fail "the scrub fixture did not leave secrets in the WAL"
+"$real_bun" "$root/scrub-opencode-credentials.ts" "$fixture/scrub/copy/opencode.db" || fail "the credential scrub failed on a restored database"
+! LC_ALL=C grep -alF FAKE "$fixture/scrub/copy"/opencode.db* >/dev/null || fail "the credential scrub left secrets in the database files"
+scrubbed=$("$real_bun" --eval '
+import { Database } from "bun:sqlite";
+const db = new Database(process.argv[1], { readonly: true });
+const n = (sql) => db.query(sql).get().n;
+console.log([n("SELECT count(*) AS n FROM credential"), n("SELECT count(*) AS n FROM account"), n("SELECT count(*) AS n FROM control_account"),
+  n("SELECT count(*) AS n FROM account_state WHERE active_account_id IS NOT NULL OR active_org_id IS NOT NULL"),
+  n("SELECT count(*) AS n FROM kv WHERE key LIKE '\''wellknown:%'\''"), n("SELECT count(*) AS n FROM kv WHERE key = '\''other'\''"),
+  n("SELECT count(*) AS n FROM project")].join(" "));
+' "$fixture/scrub/copy/opencode.db")
+[[ "$scrubbed" == "0 0 0 0 0 1 1" ]] || fail "the credential scrub removed the wrong rows: $scrubbed"
+"$real_bun" --eval 'import { Database } from "bun:sqlite"; const db = new Database(process.argv[1], { create: true }); db.run("CREATE TABLE project (id text)"); db.close();' "$fixture/scrub/unknown.db"
+expect_failure "$real_bun" "$root/scrub-opencode-credentials.ts" "$fixture/scrub/unknown.db"
+grep -Fxq 'OpenCode credential scrub failed: the database has no credential table, so its credential store is unknown' "$fixture/failure.err" || fail "the credential scrub accepted a database with an unknown credential store"
+expect_failure "$real_bun" "$root/scrub-opencode-credentials.ts" "$fixture/scrub/missing.db"
+[[ ! -e "$fixture/scrub/missing.db" ]] || fail "the credential scrub created a missing database"
 [[ $(readlink "$fixture/active/current") == "$active_before" && ! -s "$fixture/systemctl.log" ]] || fail "configuration install changed active OpenCode"
 
 mkdir -p "$fixture/release-source"

@@ -73,19 +73,27 @@ for directory in "$target/opencode-config" "$target/recovery-config"; do
   [[ -d "$directory" && ! -L "$directory" ]] || { echo "endpoint configuration directory is missing or unsafe; restore target retained" >&2; exit 1; }
   find "$directory" -mindepth 1 -delete
 done
+# OpenCode 2.x stores saved provider keys and OAuth/MCP/Console tokens in its
+# database; auth.json is only a legacy import source that stays on disk.
 rm -f -- \
   "$target/opencode-state/opencode/service.json" \
   "$target/opencode-data/opencode/auth.json" \
-  "$target/opencode-data/opencode/oauth.json" \
   "$target/session-scopes.json"
+[[ -f "$opencode_db" && ! -L "$opencode_db" ]] || { echo "restored OpenCode database is missing or unsafe; restore target retained" >&2; exit 1; }
+"$ATLAS_BUN_BINARY" "$root/scrub-opencode-credentials.ts" "$opencode_db" || { echo "restored OpenCode credentials could not be scrubbed; restore target retained" >&2; exit 1; }
 find "$target" -type s -print -quit | grep -q . && { echo "restored socket remained after endpoint scrubbing; restore target retained" >&2; exit 1; }
 # The scrub above removed every OpenCode config document. Re-install only the
 # selected release's credential-free headless configuration so the restored
 # tree carries the same update/permission/policy settings as production.
+# The restored directory is still owned by omega, but omega cannot traverse
+# the root-only rehearsal root, so the installer's drop to the owner would
+# fail. Nothing unprivileged can reach this emptied tree; hand it to root so
+# the installer writes as root directly.
+chown -h 0:0 -- "$target/opencode-config"
 "$root/install-opencode-config.sh" "$target/opencode-config" >/dev/null
 printf '%s\n' \
   'Atlas isolated restore rehearsal only.' \
-  'Credentials, provider configuration, discovery, webhook routing, and supplier registration were scrubbed.' \
+  'Credentials (OpenCode credential database rows and legacy auth.json), provider configuration, discovery, webhook routing, and supplier registration were scrubbed.' \
   'Never point Atlas/OpenCode services at this target or expose a listener from it.' > "$target/REHEARSAL_ISOLATED"
 chmod 0400 "$target/REHEARSAL_ISOLATED"
 

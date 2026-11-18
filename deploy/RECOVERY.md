@@ -112,7 +112,8 @@ The script creates a writable Btrfs restore, checks recovery-file/tool/release
 matching, both database integrities, Atlas foreign keys and
 Repository/Session/PR/reservation associations, Session directories, complete
 OpenCode history identities, credential-scope associations, and saved-file
-checksums. It then removes restored provider configuration/auth files, service
+checksums. It then removes restored provider configuration, saved OpenCode
+credentials (database rows in `opencode.db` and the legacy `auth.json`), service
 discovery, webhook/routing secrets, and supplier credentials/registration, and
 re-installs only the selected release's credential-free headless OpenCode
 configuration (`deploy/opencode/opencode.json`).

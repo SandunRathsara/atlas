@@ -33,6 +33,7 @@ required=(
   "$root/verify-sqlite-wal.sh"
   "$root/stage-opencode.sh"
   "$root/install-opencode-config.sh"
+  "$root/scrub-opencode-credentials.ts"
   "$root/opencode/opencode.json"
   "$root/stage-release.sh"
   "$root/../scripts/build-release.sh"
@@ -159,6 +160,8 @@ fi
 # Headless OpenCode configuration: no update checks or installs, no .env
 # approval prompts, and no blocking question form (hidden by permissions,
 # hard-denied by a global policy that project configuration cannot loosen).
+# Atlas's own secret directory stays out of the read/grep/glob tools through
+# global policies, because the .env allow would otherwise cover github.env.
 headless_config="$root/opencode/opencode.json"
 jq -e '
   ."$schema" == "https://opencode.ai/config.json" and
@@ -167,10 +170,16 @@ jq -e '
   (.permissions | index({action: "read", resource: "*.env", effect: "allow"}) != null) and
   (.permissions | index({action: "read", resource: "*.env.*", effect: "allow"}) != null) and
   (.permissions | last == {action: "question", resource: "*", effect: "deny"}) and
-  (.policies | index({action: "tool.use", resource: "question:*", effect: "deny"}) != null)
+  (.policies | index({action: "tool.use", resource: "question:*", effect: "deny"}) != null) and
+  (.policies | index({action: "tool.use", resource: "external_directory:/etc/atlas/*", effect: "deny"}) != null) and
+  (.policies | index({action: "tool.use", resource: "read:/etc/atlas", effect: "deny"}) != null) and
+  (.policies | index({action: "tool.use", resource: "read:/etc/atlas/*", effect: "deny"}) != null) and
+  (.policies | all(.effect == "deny"))
 ' "$headless_config" >/dev/null || { echo "headless OpenCode configuration lost a required safety setting" >&2; exit 1; }
 grep -Fq '"$root/install-opencode-config.sh" "$data_root/opencode-config"' "$root/bootstrap.sh"
 grep -Fq '"$root/install-opencode-config.sh" "$target/opencode-config"' "$root/restore-rehearsal.sh"
+grep -Fq '"$ATLAS_BUN_BINARY" "$root/scrub-opencode-credentials.ts" "$opencode_db"' "$root/restore-rehearsal.sh"
+grep -Fq '"$target/opencode-data/opencode/auth.json"' "$root/restore-rehearsal.sh"
 if grep -Eq 'systemctl' "$root/install-opencode-config.sh"; then
   echo "headless OpenCode configuration install must not manage OpenCode lifecycle" >&2
   exit 1

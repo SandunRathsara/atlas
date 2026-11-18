@@ -46,9 +46,31 @@ const sessionInfo = (id: string, directory: string, title: string) => ({
   location: { directory },
 });
 
+type Outcome = "succeeded" | "failed" | "interrupted";
+
+/** Controllable 2.3.2 Session-tree state for execution reconciliation scenarios. */
+type RemoteTree = {
+  outcomes: Map<string, Outcome>;
+  active: Set<string>;
+  /** Running jobs returned by `GET /api/experimental/job` (the fixture ignores the `descendants` filter). */
+  jobs: Array<Record<string, unknown>>;
+  inbox: Map<string, unknown[]>;
+  children: Array<{ id: string; parentID: string; directory: string }>;
+  /** The latest assistant message's `retry` field, as 2.3.2 exposes it while a provider retry is scheduled. */
+  retry?: { attempt: number; at: number; error: { type: string; message: string } };
+  failJobs?: boolean;
+  holdActive?: Promise<void>;
+  activeRequested?: () => void;
+};
+
 const fixture = async (name: string, options: FixtureOptions) => {
   const requests: RecordedRequest[] = [];
   const sessions = new Map<string, { directory: string; title: string; prompts: Map<string, unknown> }>();
+  const tree: RemoteTree = { outcomes: new Map(), active: new Set(), jobs: [], inbox: new Map(), children: [] };
+  // Real 2.3.2 dedupes a repeated prompt id (same item, no second user message, no second model call), but a
+  // repeat after the round ended still wakes the Session for an empty execution round. Atlas must never resend.
+  const promptCounts = new Map<string, number>();
+  const streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const password = "fixture-secret";
   const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
   const server = Bun.serve({
@@ -66,9 +88,15 @@ const fixture = async (name: string, options: FixtureOptions) => {
       }
       if (url.pathname === "/api/event") {
         if (options.eventContentType) return new Response("{}", { headers: { "Content-Type": options.eventContentType } });
-        return new Response(new ReadableStream({
+        let own: ReadableStreamDefaultController<Uint8Array> | undefined;
+        return new Response(new ReadableStream<Uint8Array>({
           start(controller) {
+            own = controller;
+            streams.add(controller);
             controller.enqueue(new TextEncoder().encode('data: {"id":"evt_connected","created":1,"type":"server.connected","data":{}}\n\n'));
+          },
+          cancel() {
+            if (own) streams.delete(own);
           },
         }), { headers: { "Content-Type": "text/event-stream" } });
       }
@@ -83,21 +111,56 @@ const fixture = async (name: string, options: FixtureOptions) => {
         sessions.set(id, { directory, title, prompts: new Map() });
         return json({ data: sessionInfo(id, directory, title) });
       }
-      if (url.pathname === "/api/session/active") return json({ data: {} });
+      if (url.pathname === "/api/session" && request.method === "GET") {
+        const parentID = url.searchParams.get("parentID");
+        const data = tree.children.filter((child) => child.parentID === parentID).map((child) => ({
+          ...sessionInfo(child.id, child.directory, "child"),
+          parentID: child.parentID,
+        }));
+        return json({ data, cursor: {} });
+      }
+      if (url.pathname === "/api/session/active") {
+        tree.activeRequested?.();
+        if (tree.holdActive) await tree.holdActive;
+        return json({ data: Object.fromEntries([...tree.active].map((id) => [id, { type: "running" }])) });
+      }
+      if (url.pathname === "/api/experimental/job") {
+        if (tree.failJobs) return json({ _tag: "InternalServerError", message: "fixture job failure" }, 500);
+        return json({ data: tree.jobs });
+      }
 
-      const match = /^\/api\/session\/([^/]+)(?:\/(prompt|permission|form|inbox|message\/[^/]+))?$/.exec(url.pathname);
+      const match = /^\/api\/session\/([^/]+)(?:\/(prompt|permission|form|inbox|message|message\/[^/]+))?$/.exec(url.pathname);
       if (match) {
         const id = decodeURIComponent(match[1]!);
         const saved = sessions.get(id);
         if (!saved) return sessionNotFound(id);
-        if (!match[2]) return json({ data: sessionInfo(id, saved.directory, saved.title) });
+        if (!match[2]) {
+          const outcome = tree.outcomes.get(id);
+          return json({ data: { ...sessionInfo(id, saved.directory, saved.title), ...(outcome ? { outcome } : {}) } });
+        }
         if (match[2] === "prompt" && request.method === "POST") {
           // 2.3.2 dedupes a repeated caller message id by returning the original inbox item.
           const promptId = String(body?.id);
+          promptCounts.set(promptId, (promptCounts.get(promptId) ?? 0) + 1);
           if (!saved.prompts.has(promptId)) {
             saved.prompts.set(promptId, { id: promptId, sessionID: id, time: { created: 1 }, type: "user", payload: { text: body?.text }, delivery: "steer" });
           }
           return json({ data: saved.prompts.get(promptId) });
+        }
+        if (match[2] === "inbox") return json({ data: tree.inbox.get(id) ?? [] });
+        if (match[2] === "message") {
+          const data = tree.retry && url.searchParams.get("type") === "assistant"
+            ? [{
+              id: "msg_fixture_assistant",
+              type: "assistant",
+              time: { created: tree.retry.at - 2_000 },
+              agent: "build",
+              model: { id: "scripted", providerID: "mock" },
+              content: [],
+              retry: tree.retry,
+            }]
+            : [];
+          return json({ data, cursor: {} });
         }
         if (match[2].startsWith("message/")) {
           const messageID = decodeURIComponent(match[2].slice("message/".length));
@@ -110,6 +173,11 @@ const fixture = async (name: string, options: FixtureOptions) => {
       return json({ _tag: "NotFound", message: "unexpected fixture route" }, 404);
     },
   });
+  const emit = (type: string, data: Record<string, unknown>) => {
+    const line = `data: ${JSON.stringify({ id: `evt_${crypto.randomUUID()}`, created: Date.now(), type, data })}\n\n`;
+    for (const controller of streams) controller.enqueue(new TextEncoder().encode(line));
+  };
+  const duplicatePrompts = () => [...promptCounts.values()].reduce((sum, count) => sum + Math.max(0, count - 1), 0);
   const url = `http://127.0.0.1:${server.port}`;
   const serviceFile = join(root, `${name}.json`);
   // Primary mirrors the flat 0600 registration written by `opencode serve --service`.
@@ -123,14 +191,15 @@ const fixture = async (name: string, options: FixtureOptions) => {
       ...(options.registrationVersion !== undefined ? { version: options.registrationVersion } : {}),
     };
   await writeFile(serviceFile, JSON.stringify(registration), { mode: 0o600 });
-  return { requests, serviceFile, stop: () => server.stop(true) };
+  return { requests, serviceFile, tree, emit, duplicatePrompts, stop: () => server.stop(true) };
 };
 
-const handoff = (persistence: Persistence, serviceFile: string) => createOpenCodeHandoffService({
+const handoff = (persistence: Persistence, serviceFile: string, hooks: { onSlotReleased?: () => void; onTerminal?: () => void } = {}) => createOpenCodeHandoffService({
   persistence,
   serviceFile,
   pollMs: 60_000,
   requestTimeoutMs: 1_000,
+  ...hooks,
 });
 
 const preparedSession = (persistence: Persistence, id: string) => {
@@ -190,13 +259,19 @@ const withFixture = async (
     requests: RecordedRequest[];
     persistence: Persistence;
     service: ReturnType<typeof handoff>;
+    remote: Awaited<ReturnType<typeof fixture>>;
+    released: () => number;
+    terminals: () => number;
   }) => Promise<void>,
 ) => {
   const remote = await fixture(name, options);
   const persistence = createPersistence({ path: ":memory:" });
-  const service = handoff(persistence, remote.serviceFile);
+  let released = 0;
+  let terminals = 0;
+  const service = handoff(persistence, remote.serviceFile, { onSlotReleased: () => { released += 1; }, onTerminal: () => { terminals += 1; } });
   try {
-    await run({ requests: remote.requests, persistence, service });
+    await run({ requests: remote.requests, persistence, service, remote, released: () => released, terminals: () => terminals });
+    assert.equal(remote.duplicatePrompts(), 0, `${name} must never send a prompt id twice (2.3.2 re-wakes the Session on a repeat)`);
   } finally {
     service.stop();
     remote.stop();
@@ -330,6 +405,192 @@ try {
     assert.equal(paused.opencodeFreshness, "stale");
     assert.equal(paused.executionSlotHeld, true);
     assert.equal(requests.some((request) => request.method === "POST"), false);
+  });
+
+  const handedOff = async (persistence: Persistence, service: ReturnType<typeof handoff>) => {
+    const atlasId = `ses_${crypto.randomUUID()}`;
+    preparedSession(persistence, atlasId);
+    await service.process();
+    const session = persistence.getSession(atlasId)!;
+    assert.equal(session.handoffCheckpoint, "prompt_accepted");
+    return { atlasId, rootId: session.openCodeSessionId!, directory: session.directory! };
+  };
+  const observe = (persistence: Persistence, atlasId: string) => {
+    const session = persistence.getSession(atlasId)!;
+    return { state: session.state, reason: session.stateReason ?? "", slot: session.executionSlotHeld, freshness: session.opencodeFreshness };
+  };
+  const subagentJob = (sessionID: string, childSessionID: string) => ({
+    kind: "subagent", id: `job_${childSessionID}`, sessionID, status: "running", time: { started: 1 }, childSessionID, agent: "general", description: "fixture child",
+  });
+  const settle = () => Bun.sleep(50);
+
+  // Stable 2.x runs subagents in the background: the root's own round ends with an `outcome` while children work,
+  // and each child's report re-wakes its parent. Terminal (and the slot release) must wait for the whole tree.
+  await withFixture("background-subagent-tree", {
+    info: serverInfo(installedClient.version),
+  }, async ({ persistence, service, remote, released, terminals }) => {
+    const { atlasId, rootId, directory } = await handedOff(persistence, service);
+    const childId = `ses_${crypto.randomUUID()}`;
+    const grandchildId = `ses_${crypto.randomUUID()}`;
+    remote.tree.children.push({ id: childId, parentID: rootId, directory }, { id: grandchildId, parentID: childId, directory });
+
+    // Root round ended (`outcome` readable, root not active) while its background child is a running job.
+    remote.tree.outcomes.set(rootId, "succeeded");
+    remote.tree.active = new Set([childId]);
+    remote.tree.jobs = [subagentJob(rootId, childId)];
+    await service.process();
+    let seen = observe(persistence, atlasId);
+    assert.equal(seen.state, "running", "an outcome on the root must not be terminal while a descendant job runs");
+    assert.equal(seen.slot, true, "the execution slot must stay held while the tree works");
+    assert.match(seen.reason, /child Sessions are still working/u);
+
+    // A child re-woken by its own child's report is active with no running job: only verified `active()` proves it.
+    remote.tree.jobs = [];
+    remote.tree.active = new Set([grandchildId]);
+    await service.process();
+    seen = observe(persistence, atlasId);
+    assert.equal(seen.state, "running", "an active verified grandchild must keep the tree running");
+    assert.equal(seen.slot, true);
+
+    // The child report is enqueued on the root before the root becomes active again.
+    remote.tree.active = new Set();
+    remote.tree.inbox.set(rootId, [{ id: "msg_report", sessionID: rootId, time: { created: 1 }, type: "synthetic", payload: { text: "report" }, delivery: "queue" }]);
+    await service.process();
+    seen = observe(persistence, atlasId);
+    assert.equal(seen.state, "running", "undelivered root input must keep the Session running");
+    assert.match(seen.reason, /undelivered input/u);
+
+    // Root's second round: still the stale first-round outcome, but the root is active.
+    remote.tree.inbox.clear();
+    remote.tree.active = new Set([rootId]);
+    await service.process();
+    assert.equal(observe(persistence, atlasId).state, "running");
+    assert.equal(released(), 0, "no slot release before the tree is quiet");
+    assert.equal(terminals(), 0);
+
+    // An active Session that is not a verified descendant (other directory) must not hold this one open.
+    const strangerId = `ses_${crypto.randomUUID()}`;
+    remote.tree.children.push({ id: strangerId, parentID: childId, directory: `${directory}-elsewhere` });
+    remote.tree.active = new Set([strangerId, `ses_${crypto.randomUUID()}`]);
+    remote.tree.outcomes.set(rootId, "failed");
+    await service.process();
+    seen = observe(persistence, atlasId);
+    assert.equal(seen.state, "failed", "the final outcome is recorded once the verified tree is quiet");
+    assert.equal(seen.slot, false);
+    assert.match(seen.reason, /confirmed a failed outcome/u);
+    assert.equal(released(), 1);
+    assert.equal(terminals(), 1);
+    await service.process();
+    assert.equal(released(), 1, "the final outcome is recorded exactly once");
+    assert.equal(terminals(), 1);
+  });
+
+  await withFixture("tree-read-failure", {
+    info: serverInfo(installedClient.version),
+  }, async ({ persistence, service, remote, released }) => {
+    const { atlasId, rootId } = await handedOff(persistence, service);
+    remote.tree.outcomes.set(rootId, "succeeded");
+    remote.tree.failJobs = true;
+    await service.process();
+    const seen = observe(persistence, atlasId);
+    assert.notEqual(seen.state, "succeeded", "an unreadable job list must not let the root outcome through");
+    assert.equal(seen.freshness, "stale");
+    assert.equal(seen.slot, true);
+    assert.equal(released(), 0);
+    remote.tree.failJobs = false;
+    await service.process();
+    assert.equal(observe(persistence, atlasId).state, "succeeded");
+  });
+
+  // 2.3.2 reports provider retries only through `session.retry.scheduled` and the assistant message `retry` field.
+  await withFixture("provider-retry", {
+    info: serverInfo(installedClient.version),
+  }, async ({ persistence, service, remote }) => {
+    const { atlasId, rootId } = await handedOff(persistence, service);
+    remote.tree.active = new Set([rootId]);
+    remote.emit("session.execution.started", { sessionID: rootId });
+    await settle();
+    await service.process();
+    assert.equal(observe(persistence, atlasId).state, "running");
+    const error = { type: "provider.internal", message: "upstream exploded", status: 500 };
+    remote.emit("session.step.started", { sessionID: rootId, assistantMessageID: "msg_fixture_assistant" });
+    remote.emit("session.retry.scheduled", { sessionID: rootId, assistantMessageID: "msg_fixture_assistant", attempt: 2, at: Date.now() + 2_000, error });
+    await settle();
+    await service.process();
+    let seen = observe(persistence, atlasId);
+    assert.equal(seen.state, "waiting", "a scheduled provider retry must surface as waiting");
+    assert.match(seen.reason, /retry after a provider error \(attempt 2\): upstream exploded/u);
+    remote.emit("session.step.started", { sessionID: rootId, assistantMessageID: "msg_fixture_assistant" });
+    await settle();
+    await service.process();
+    assert.equal(observe(persistence, atlasId).state, "waiting", "a retry attempt's step start is not progress");
+    remote.emit("session.step.first-token", { sessionID: rootId, assistantMessageID: "msg_fixture_assistant" });
+    await settle();
+    await service.process();
+    assert.equal(observe(persistence, atlasId).state, "running", "real progress clears the retry");
+  });
+
+  // After an Atlas restart or stream reconnect the retry event is gone; the readable assistant `retry` field restores it.
+
+  await withFixture("provider-retry-after-restart", {
+    info: serverInfo(installedClient.version),
+  }, async ({ persistence, service, remote }) => {
+    const { atlasId, rootId } = await handedOff(persistence, service);
+    remote.tree.active = new Set([rootId]);
+    remote.tree.retry = { attempt: 4, at: Date.now() + 8_000, error: { type: "provider.internal", message: "upstream exploded" } };
+    await service.process();
+    let seen = observe(persistence, atlasId);
+    assert.equal(seen.state, "waiting", "a retry readable on the assistant message must survive lost events");
+    assert.match(seen.reason, /attempt 4/u);
+    remote.tree.retry = undefined;
+    await service.process();
+    assert.equal(observe(persistence, atlasId).state, "running");
+    // An interrupt during the retry wait clears the retry and records the outcome.
+    remote.tree.active = new Set();
+    remote.tree.outcomes.set(rootId, "interrupted");
+    await service.process();
+    seen = observe(persistence, atlasId);
+    assert.equal(seen.state, "interrupted");
+    assert.match(seen.reason, /confirmed an interrupted outcome/u);
+  });
+
+  // A terminal execution event racing the reads, or landing before `outcome` is readable, must not show idle.
+  await withFixture("terminal-event-race", {
+    info: serverInfo(installedClient.version),
+  }, async ({ persistence, service, remote }) => {
+    const { atlasId, rootId } = await handedOff(persistence, service);
+    remote.tree.active = new Set([rootId]);
+    remote.emit("session.execution.started", { sessionID: rootId });
+    await settle();
+    await service.process();
+    assert.equal(observe(persistence, atlasId).state, "running");
+
+    let release!: () => void;
+    let requested!: () => void;
+    const activeRequested = new Promise<void>((resolve) => { requested = resolve; });
+    remote.tree.holdActive = new Promise<void>((resolve) => { release = resolve; });
+    remote.tree.activeRequested = () => requested();
+    const reconciling = service.process();
+    await activeRequested;
+    await settle(); // `session.get` has answered without an outcome
+    remote.emit("session.execution.succeeded", { sessionID: rootId });
+    await settle();
+    remote.tree.active = new Set();
+    remote.tree.holdActive = undefined;
+    remote.tree.activeRequested = undefined;
+    release();
+    await reconciling;
+    let seen = observe(persistence, atlasId);
+    assert.equal(seen.state, "running", "a terminal event during the reads must not be reported as idle");
+
+    // The event is now older than the reads, but `outcome` is still not readable: keep confirming, not idle.
+    await service.process();
+    seen = observe(persistence, atlasId);
+    assert.equal(seen.state, "running");
+    assert.match(seen.reason, /confirming the outcome/u);
+    remote.tree.outcomes.set(rootId, "succeeded");
+    await service.process();
+    assert.equal(observe(persistence, atlasId).state, "succeeded");
   });
 
   const rejected: Array<[string, FixtureOptions]> = [

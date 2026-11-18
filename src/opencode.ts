@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { OpenCode } from "@opencode/client";
-import type { OpenCodeClient, OpenCodeEvent } from "@opencode/client";
+import type { OpenCodeClient, OpenCodeEvent, SessionInfo } from "@opencode/client";
 import { Service } from "@opencode/client/service";
 import type { Endpoint } from "@opencode/client/service";
 import type { Persistence, Session } from "./persistence.ts";
@@ -26,11 +26,28 @@ type OpenCodeOptions = {
   requestTimeoutMs?: number;
 };
 
+type RetryEvidence = { attempt?: number; message?: string };
+
 type EventEvidence = {
   executionStarted: boolean;
   status?: "idle" | "busy" | "retry";
+  /** Set by `session.retry.scheduled` (2.3.2 never emits `session.status`); cleared by real progress. */
+  retry?: RetryEvidence;
+  /** When a terminal execution event was seen; cleared by the next `session.execution.started`. */
+  terminalAt?: number;
+  /** Bumped by every execution lifecycle or retry/progress event, so a reconcile can detect events that raced its reads. */
+  seq: number;
   updatedAt: number;
 };
+
+// Mirrors the viewer's descendant bounds (`src/session-viewer.ts`).
+const MAX_TREE_NODES = 256;
+const MAX_TREE_DEPTH = 32;
+const MAX_TRACKED_DESCENDANTS = 4_096;
+/** How long a terminal execution event without a readable `outcome` keeps the Session `running` instead of `idle`. */
+const OUTCOME_CONFIRM_MS = 10_000;
+
+const PROGRESS_EVENT = /^session\.(step\.first-token|text\.|tool\.|reasoning\.)/u;
 
 // The installed client package is the source of truth; `scripts/release.ts` pins it to deploy/pins.env.
 const readInstalledClientVersion = () => {
@@ -221,6 +238,9 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
   const eventListeners = new Set<(event: OpenCodeEvent) => void>();
   const transportListeners = new Set<(state: "connected" | "stale", reason?: string) => void>();
   const evidence = new Map<string, EventEvidence>();
+  /** Child Session id -> root OpenCode Session id, learned from same-directory `session.created` events and tree walks. */
+  const descendantRoots = new Map<string, string>();
+  let evidenceSeq = 0;
 
   const beginHandoff = activity.enter;
 
@@ -272,6 +292,8 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     streamReady = false;
     client = undefined;
     evidence.clear();
+    descendantRoots.clear();
+    observedVersion = undefined;
     readinessReason = reason;
     retryAt = Date.now() + retryDelay;
     retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
@@ -299,14 +321,37 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
           const session = options.persistence.listOpenCodeSessions().find((candidate) =>
             candidate.openCodeSessionId === remoteId || candidate.opencodeIntendedSessionId === remoteId,
           );
+          const type = (event as unknown as { type?: string }).type ?? "";
           if (session && (!eventLocation(event) || eventLocation(event) === session.directory)) {
-            const type = (event as unknown as { type?: string }).type ?? "";
-            const current = evidence.get(remoteId) ?? { executionStarted: false, updatedAt: Date.now() };
+            const current = evidence.get(remoteId) ?? { executionStarted: false, seq: 0, updatedAt: Date.now() };
             const terminal = terminalStateForEvent(type);
-            if (type === "session.execution.started") current.executionStarted = true;
+            let relevant = false;
+            if (type === "session.execution.started") {
+              current.executionStarted = true;
+              current.terminalAt = undefined;
+              current.retry = undefined;
+              relevant = true;
+            }
+            if (terminal) current.terminalAt = Date.now();
             if (terminal || type === "session.idle") {
               current.executionStarted = false;
               current.status = "idle";
+              current.retry = undefined;
+              relevant = true;
+            }
+            if (type === "session.retry.scheduled") {
+              const data = eventData(event);
+              const error = data.error && typeof data.error === "object" ? data.error as Record<string, unknown> : {};
+              current.retry = {
+                ...(typeof data.attempt === "number" ? { attempt: data.attempt } : {}),
+                ...(typeof error.message === "string" ? { message: error.message } : {}),
+              };
+              relevant = true;
+            }
+            // `session.step.started` also fires before every retry attempt, so it is not progress.
+            if (PROGRESS_EVENT.test(type) && current.retry) {
+              current.retry = undefined;
+              relevant = true;
             }
             if (type === "session.status") {
               const status = eventData(event).status;
@@ -314,10 +359,30 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
                 ? (status as Record<string, unknown>).type
                 : undefined;
               if (statusType === "idle" || statusType === "busy" || statusType === "retry") current.status = statusType;
+              relevant = true;
             }
+            if (relevant) current.seq = ++evidenceSeq;
             current.updatedAt = Date.now();
             evidence.set(remoteId, current);
             enqueue();
+          } else if (descendantRoots.has(remoteId)) {
+            // A verified child's activity can change the tree's liveness; reconcile its root promptly.
+            enqueue();
+          }
+          if (type === "session.created") {
+            const parentId = eventData(event).parentID;
+            const createdLocation = eventLocation(event) ?? (() => {
+              const location = eventData(event).location;
+              return location && typeof location === "object" ? (location as { directory?: unknown }).directory : undefined;
+            })();
+            const rootId = typeof parentId === "string" ? descendantRoots.get(parentId) ?? parentId : undefined;
+            const owner = rootId
+              ? options.persistence.listOpenCodeSessions().find((candidate) => candidate.openCodeSessionId === rootId)
+              : undefined;
+            if (rootId && owner && owner.directory === createdLocation && descendantRoots.size < MAX_TRACKED_DESCENDANTS) {
+              descendantRoots.set(remoteId, rootId);
+              enqueue();
+            }
           }
         }
         next = await iterator.next();
@@ -523,41 +588,133 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
     }
   };
 
+  const listChildren = async (activeClient: OpenCodeClient, parentId: string) => {
+    const children: SessionInfo[] = [];
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await activeClient.session.list(
+        cursor ? { parentID: parentId, cursor, limit: 100 } : { parentID: parentId, order: "asc", limit: 100 },
+        requestOptions(requestTimeoutMs),
+      );
+      children.push(...page.data);
+      const next = page.cursor?.next ?? undefined;
+      if (!next) return { children, complete: true };
+      if (children.length >= MAX_TREE_NODES) return { children, complete: false };
+      cursor = next;
+    }
+  };
+
+  /**
+   * Whether any active Session other than the root is a verified descendant of it. Verification mirrors the viewer:
+   * each child must name its parent and share the Atlas Session directory, within bounded depth and count.
+   */
+  const descendantActivity = async (activeClient: OpenCodeClient, session: Session, rootId: string, activeIds: string[]) => {
+    const others = new Set(activeIds.filter((id) => id !== rootId));
+    if (others.size === 0) return { active: false, complete: true };
+    if ([...others].some((id) => descendantRoots.get(id) === rootId)) return { active: true, complete: true };
+    const queue: Array<{ id: string; depth: number }> = [{ id: rootId, depth: 0 }];
+    let nodes = 0;
+    let complete = true;
+    while (queue.length > 0) {
+      const { id, depth } = queue.shift()!;
+      if (depth >= MAX_TREE_DEPTH) {
+        complete = false;
+        continue;
+      }
+      const listed = await listChildren(activeClient, id);
+      if (!listed.complete) complete = false;
+      for (const child of listed.children) {
+        if (child.parentID !== id || child.location.directory !== session.directory) continue;
+        nodes += 1;
+        if (nodes > MAX_TREE_NODES) return { active: false, complete: false };
+        if (descendantRoots.size < MAX_TRACKED_DESCENDANTS) descendantRoots.set(child.id, rootId);
+        if (others.has(child.id)) return { active: true, complete: true };
+        queue.push({ id: child.id, depth: depth + 1 });
+      }
+    }
+    return { active: false, complete };
+  };
+
+  const readableRetry = async (activeClient: OpenCodeClient, rootId: string): Promise<RetryEvidence | undefined> => {
+    const latest = await activeClient.message.list(
+      { sessionID: rootId, type: "assistant", order: "desc", limit: 1 },
+      requestOptions(requestTimeoutMs),
+    );
+    const message = latest.data[0];
+    if (!message || message.type !== "assistant" || !message.retry || message.time.completed) return undefined;
+    return {
+      attempt: message.retry.attempt,
+      ...(typeof message.retry.error?.message === "string" ? { message: message.retry.error.message } : {}),
+    };
+  };
+
+  const retryReason = (retry: RetryEvidence) => {
+    const detail = retry.message ? `: ${retry.message.replace(/\s+/gu, " ").slice(0, 160)}` : "";
+    return `OpenCode is waiting to retry after a provider error${retry.attempt ? ` (attempt ${retry.attempt})` : ""}${detail}.`;
+  };
+
   const reconcileExecution = async (activeClient: OpenCodeClient, session: Session) => {
     if (!session.openCodeSessionId) return;
+    const rootId = session.openCodeSessionId;
     try {
-      const [info, active, permissions, forms] = await Promise.all([
-        activeClient.session.get({ sessionID: session.openCodeSessionId }, requestOptions(requestTimeoutMs)),
+      // Evidence is snapshotted before the reads so an event that lands mid-read cannot be mistaken for settled state.
+      const before = evidence.get(rootId);
+      const beforeSeq = before?.seq ?? 0;
+      const beforeStarted = before?.executionStarted === true;
+      const [info, active, permissions, forms, inbox, runningJobs] = await Promise.all([
+        activeClient.session.get({ sessionID: rootId }, requestOptions(requestTimeoutMs)),
         activeClient.session.active(requestOptions(requestTimeoutMs)),
-        activeClient.permission.list({ sessionID: session.openCodeSessionId }, requestOptions(requestTimeoutMs)),
-        activeClient.session.form.list({ sessionID: session.openCodeSessionId }, requestOptions(requestTimeoutMs)),
+        activeClient.permission.list({ sessionID: rootId }, requestOptions(requestTimeoutMs)),
+        activeClient.session.form.list({ sessionID: rootId }, requestOptions(requestTimeoutMs)),
+        // Undelivered input (e.g. a background child's report) wakes the root again.
+        activeClient.session.inbox.list({ sessionID: rootId }, requestOptions(requestTimeoutMs)),
+        // Background subagents are jobs on the tree until their report is enqueued on the parent.
+        activeClient.experimental.job.list({ sessionID: rootId, descendants: true, status: "running" }, requestOptions(requestTimeoutMs)),
       ]);
       if (info.location.directory !== session.directory) throw new Error("OpenCode Session location changed");
+      if (!Array.isArray(runningJobs) || !Array.isArray(inbox)) throw new Error("OpenCode tree evidence is unreadable");
 
-      const currentEvidence = evidence.get(session.openCodeSessionId);
-      const remoteActive = Object.prototype.hasOwnProperty.call(active, session.openCodeSessionId);
-      const retrying = currentEvidence?.status === "retry";
-      const busy = remoteActive || currentEvidence?.executionStarted === true || currentEvidence?.status === "busy";
-      const nextState = info.outcome === "succeeded"
-        ? "succeeded"
-        : info.outcome === "failed"
-          ? "failed"
-          : info.outcome === "interrupted"
-            ? "interrupted"
-            : permissions.length > 0 || forms.length > 0 || retrying
-              ? "waiting"
-              : busy ? "running" : "idle";
-      const reason = info.outcome
-        ? `OpenCode confirmed a ${info.outcome} outcome.`
-        : permissions.length > 0
-          ? "OpenCode is waiting for a permission request."
-          : forms.length > 0
-            ? "OpenCode is waiting for a form response."
+      const after = evidence.get(rootId);
+      const raced = (after?.seq ?? 0) !== beforeSeq;
+      const activeIds = Object.keys(active);
+      const rootActive = activeIds.includes(rootId);
+      const jobsRunning = runningJobs.some((job) => job.status === "running");
+      // Only walk the tree when nothing cheaper already proves the tree is live.
+      const tree = rootActive || jobsRunning || inbox.length > 0
+        ? { active: false, complete: true }
+        : await descendantActivity(activeClient, session, rootId, activeIds);
+      // A root `outcome` only describes its latest round; the tree can still wake it again.
+      const treeLive = rootActive || jobsRunning || inbox.length > 0 || tree.active || !tree.complete || raced;
+      const retry = rootActive
+        ? (raced ? after?.retry : after?.retry ?? await readableRetry(activeClient, rootId))
+        : undefined;
+      const retrying = Boolean(retry) || after?.status === "retry";
+      // A terminal execution event whose outcome is not readable yet is not "idle"; confirm it on a later read.
+      const confirmingOutcome = !info.outcome && after?.terminalAt !== undefined && Date.now() - after.terminalAt < OUTCOME_CONFIRM_MS;
+      const busy = treeLive || confirmingOutcome || beforeStarted || after?.executionStarted === true || after?.status === "busy";
+      const terminal = !treeLive && info.outcome ? info.outcome : undefined;
+      const nextState = permissions.length > 0 || forms.length > 0
+        ? "waiting"
+        : terminal ?? (retrying ? "waiting" : busy ? "running" : "idle");
+      const reason = permissions.length > 0
+        ? "OpenCode is waiting for a permission request."
+        : forms.length > 0
+          ? "OpenCode is waiting for a form response."
+          : terminal
+            ? `OpenCode confirmed ${terminal === "interrupted" ? "an" : "a"} ${terminal} outcome and its Session tree is quiet.`
             : retrying
-              ? "OpenCode is waiting to retry after a provider error."
-              : busy
-                ? "OpenCode reports active execution."
-                : "OpenCode is idle without a terminal outcome.";
+              ? retryReason(retry ?? {})
+              : !tree.complete
+                ? "OpenCode child Sessions exceed the bounded check; Atlas keeps the Session running until the tree is confirmed quiet."
+                : !rootActive && (jobsRunning || tree.active)
+                  ? "OpenCode child Sessions are still working."
+                  : !rootActive && inbox.length > 0
+                    ? "OpenCode has undelivered input for this Session."
+                    : confirmingOutcome && !rootActive
+                      ? "OpenCode reported the execution ended; Atlas is confirming the outcome."
+                      : busy
+                        ? "OpenCode reports active execution."
+                        : "OpenCode is idle without a terminal outcome.";
       let reconciled: Session | undefined;
       try {
         reconciled = options.persistence.reconcileOpenCode(session.atlasId, nextState, reason);

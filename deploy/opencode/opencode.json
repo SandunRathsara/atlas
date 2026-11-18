@@ -7,6 +7,9 @@
     { "action": "question", "resource": "*", "effect": "deny" }
   ],
   "policies": [
-    { "action": "tool.use", "resource": "question:*", "effect": "deny" }
+    { "action": "tool.use", "resource": "question:*", "effect": "deny" },
+    { "action": "tool.use", "resource": "external_directory:/etc/atlas/*", "effect": "deny" },
+    { "action": "tool.use", "resource": "read:/etc/atlas", "effect": "deny" },
+    { "action": "tool.use", "resource": "read:/etc/atlas/*", "effect": "deny" }
   ]
 }
