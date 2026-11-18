@@ -1,7 +1,6 @@
 import { strict as assert } from "node:assert";
 import {
   chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,14 +12,17 @@ import {
 } from "node:fs";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createCredentialBoundary, requestCredential } from "../src/credentials.ts";
+import { buildReleaseFolder } from "../src/release-layout.ts";
+import { verifyBinary, verifyMetadata } from "./verify-binaries.ts";
 
 const TOKEN = "credential-continuity-fixture-token";
-const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
-const root = mkdtempSync(join(tmpdir(), "atlas-issue55-"));
+// Real compiled Release folders (~100 MB each) stay off the small /tmp.
+const cacheRoot = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
+mkdirSync(cacheRoot, { recursive: true });
+const root = mkdtempSync(join(cacheRoot, "atlas-issue55-"));
 const registryPath = join(root, "session-scopes.json");
 const socketPath = join(root, "run", "supplier.sock");
 const keyPath = join(root, "config", "supplier.key");
@@ -28,20 +30,10 @@ const credentialsPath = join(root, "config", "github.env");
 let supplier: ReturnType<typeof Bun.spawn> | undefined;
 let api: ReturnType<typeof createHttpsServer> | undefined;
 
-const copy = (source: string, target: string, mode?: number) => {
-  mkdirSync(dirname(target), { recursive: true });
-  copyFileSync(source, target);
-  if (mode !== undefined) chmodSync(target, mode);
-};
-
-const fixtureRelease = (name: string) => {
-  const release = join(root, "releases", name);
-  copy(join(repositoryRoot, "src", "credentials.ts"), join(release, "src", "credentials.ts"));
-  copy(join(repositoryRoot, "scripts", "atlas-git-credential.ts"), join(release, "scripts", "atlas-git-credential.ts"), 0o755);
-  copy(join(repositoryRoot, "scripts", "atlas-gh.ts"), join(release, "scripts", "atlas-gh.ts"), 0o755);
-  copy(join(repositoryRoot, "deploy", "bin", "git-credential-atlas"), join(release, "deploy", "bin", "git-credential-atlas"), 0o755);
-  copy(join(repositoryRoot, "deploy", "bin", "gh"), join(release, "deploy", "bin", "gh"), 0o755);
-  return release;
+// Two real Release folders built by the production builder from two compiled identities.
+const fixtureRelease = async (tag: string, sha: string) => {
+  const binary = await verifyBinary(tag, sha);
+  return await buildReleaseFolder({ binaryPath: binary, metadata: verifyMetadata(binary, tag, sha), releasesRoot: join(root, "releases") });
 };
 
 const run = async (
@@ -86,8 +78,8 @@ const closeServer = (server: ReturnType<typeof createHttpsServer> | undefined) =
 });
 
 try {
-  const oldRelease = fixtureRelease("old");
-  const newRelease = fixtureRelease("new");
+  const oldRelease = await fixtureRelease("v0.1.0+build.1", "1".repeat(40));
+  const newRelease = await fixtureRelease("v0.1.0+build.2", "2".repeat(40));
   const currentRelease = join(root, "current");
   symlinkSync(oldRelease, currentRelease, "dir");
 
@@ -128,9 +120,11 @@ try {
     api!.listen(0, "127.0.0.1", () => resolve((api!.address() as AddressInfo).port));
   });
 
-  supplier = Bun.spawn([process.execPath, join(repositoryRoot, "src", "credential-server.ts")], {
+  // The surviving supplier is the compiled binary's `credentials` subcommand.
+  supplier = Bun.spawn([join(oldRelease, "atlas"), "credentials"], {
     env: {
-      ...(process.env as Record<string, string>),
+      PATH: "/usr/bin:/bin",
+      HOME: root,
       ATLAS_GITHUB_ENV_PATH: credentialsPath,
       ATLAS_CREDENTIAL_REGISTRY_PATH: registryPath,
       ATLAS_SUPPLIER_SOCKET: socketPath,
@@ -145,14 +139,15 @@ try {
 
   const firstSession = join(root, "sessions", "ses_old");
   mkdirSync(firstSession, { recursive: true, mode: 0o700 });
-  const oldHelper = join(oldRelease, "scripts", "atlas-git-credential.ts");
+  // A compiled Release's helper reference is its own binary (src/runtime.ts#selfHelperPaths).
+  const oldHelper = join(oldRelease, "atlas");
   const client = createCredentialBoundary({ registryPath, socketPath, keyPath, serve: false });
   client.registerScope({
     atlasId: "ses_old",
     directory: firstSession,
     repositoryId: "123",
     fullName: "Acme/repo",
-    helperPaths: [process.execPath, oldHelper],
+    helperPaths: [oldHelper],
   });
 
   let firstCredential: Awaited<ReturnType<typeof requestCredential>> | undefined;
@@ -172,7 +167,7 @@ try {
 
   const secondSession = join(root, "sessions", "ses_new");
   mkdirSync(secondSession, { recursive: true, mode: 0o700 });
-  const newHelper = join(newRelease, "scripts", "atlas-git-credential.ts");
+  const newHelper = join(newRelease, "atlas");
   const restartedClient = createCredentialBoundary({ registryPath, socketPath, keyPath, serve: false });
   const requestDuringRegistration = requestCredential({ operation: "preflight", sessionDirectory: firstSession }, { socketPath, keyPath });
   restartedClient.registerScope({
@@ -180,11 +175,11 @@ try {
     directory: secondSession,
     repositoryId: "123",
     fullName: "Acme/repo",
-    helperPaths: [process.execPath, newHelper],
+    helperPaths: [newHelper],
   });
   assert.ok((await requestDuringRegistration).password === TOKEN, "request failed during atomic scope registration");
   assert.ok((await restartedClient.requestToken({ operation: "preflight", sessionDirectory: secondSession })).password === TOKEN);
-  assert.deepEqual(new Set(restartedClient.listHelperReferences()), new Set([process.execPath, oldHelper, newHelper]));
+  assert.deepEqual(new Set(restartedClient.listHelperReferences()), new Set([oldHelper, newHelper]));
   await assert.rejects(() => restartedClient.requestToken({ operation: "preflight", sessionDirectory: join(root, "sessions", "unknown") }));
   await assert.rejects(() => restartedClient.requestToken({
     operation: "git",
@@ -194,20 +189,18 @@ try {
     path: "Acme/other.git",
   }));
 
+  // No Bun on PATH: the shims run the compiled binary only.
   const helperEnvironment = {
+    PATH: "/usr/bin:/bin",
     ATLAS_SUPPLIER_SOCKET: socketPath,
     ATLAS_SUPPLIER_KEY_PATH: keyPath,
     ATLAS_SESSION_DIRECTORY: firstSession,
-    ATLAS_BUN_BINARY: process.execPath,
     ATLAS_REAL_GH: fakeGh,
   };
-  await helperRequest(join(currentRelease, "deploy", "bin", "git-credential-atlas"), {
-    ...helperEnvironment,
-    ATLAS_RELEASE_ROOT: currentRelease,
-  });
-  let gh = await run([join(currentRelease, "deploy", "bin", "gh"), "--repo", "Acme/repo", "api", "repos/Acme/repo"], {
+  await helperRequest(join(currentRelease, "bin", "git-credential-atlas"), helperEnvironment);
+  let gh = await run([join(currentRelease, "bin", "gh"), "--repo", "Acme/repo", "api", "repos/Acme/repo"], {
     cwd: firstSession,
-    env: { ...helperEnvironment, ATLAS_RELEASE_ROOT: currentRelease },
+    env: helperEnvironment,
   });
   assert.equal(gh.exitCode, 0, "selected-release gh helper failed");
   assert.equal(gh.stdout.trim(), "gh-ok");
@@ -217,18 +210,16 @@ try {
   let nextSelection = join(root, "current-next");
   symlinkSync(failedRelease, nextSelection, "dir");
   renameSync(nextSelection, currentRelease);
-  await helperRequest(oldHelper, helperEnvironment);
+  // A Session that captured the old Release's helper keeps working while `current` points elsewhere.
+  await helperRequest(join(oldRelease, "bin", "git-credential-atlas"), helperEnvironment);
 
   nextSelection = join(root, "current-next");
   symlinkSync(newRelease, nextSelection, "dir");
   renameSync(nextSelection, currentRelease);
-  await helperRequest(join(currentRelease, "deploy", "bin", "git-credential-atlas"), {
-    ...helperEnvironment,
-    ATLAS_RELEASE_ROOT: currentRelease,
-  });
-  gh = await run([join(currentRelease, "deploy", "bin", "gh"), "--repo", "Acme/repo", "api", "repos/Acme/repo"], {
+  await helperRequest(join(currentRelease, "bin", "git-credential-atlas"), helperEnvironment);
+  gh = await run([join(currentRelease, "bin", "gh"), "--repo", "Acme/repo", "api", "repos/Acme/repo"], {
     cwd: firstSession,
-    env: { ...helperEnvironment, ATLAS_RELEASE_ROOT: currentRelease },
+    env: helperEnvironment,
   });
   assert.equal(gh.exitCode, 0, "gh helper failed after release selection changed");
   assert.equal(gh.stdout.trim(), "gh-ok");
@@ -240,5 +231,6 @@ try {
   if (supplier?.exitCode === null) supplier.kill("SIGTERM");
   if (supplier) await supplier.exited;
   await closeServer(api);
+  Bun.spawnSync(["chmod", "-R", "u+w", root]);
   rmSync(root, { recursive: true, force: true });
 }

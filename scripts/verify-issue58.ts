@@ -1,33 +1,36 @@
 import "./isolate-opencode.ts";
 import { strict as assert } from "node:assert";
-import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { createApp } from "../src/app.ts";
 import { createPersistence } from "../src/persistence.ts";
 import { createReleaseMetadata, type ReleaseMetadata } from "../src/release.ts";
 import { createUpdateService, UPDATE_CHECK_INTERVAL_MS } from "../src/update-discovery.ts";
 import { createUpdaterClient, createUpdaterService, type UpdaterStatus } from "../src/updater.ts";
+import { verifyBinary, verifyMetadata } from "./verify-binaries.ts";
 
-const root = mkdtempSync(join(tmpdir(), "atlas-issue58-"));
-const metadata = (tag: string, character: string, options: { maintenance?: boolean; bun?: string } = {}) => {
-  const value = createReleaseMetadata(tag, character.repeat(40), {
-    bun: options.bun ?? "1.3.14",
-    git: "2.55.0",
-    gh: "2.100.0",
-  });
+// Staging downloads a real ~100 MB binary; keep it off the small /tmp.
+const cacheRoot = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
+mkdirSync(cacheRoot, { recursive: true });
+const root = mkdtempSync(join(cacheRoot, "atlas-issue58-"));
+// Discovery-only metadata: the asset is never downloaded.
+const metadata = (tag: string, character: string, options: { maintenance?: boolean; minimumGit?: string } = {}) => {
+  const value = createReleaseMetadata(tag, character.repeat(40), { sha256: "0".repeat(64), size: 1 }, "2.3.2");
+  if (options.minimumGit) value.minimumHostTools = { ...value.minimumHostTools, git: options.minimumGit };
   if (options.maintenance) {
     value.rollback = {
       codeOnlyCompatible: false,
@@ -65,7 +68,7 @@ const github = {
 };
 
 const idleUpdater = (): UpdaterStatus => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   policy: "approval_required",
   state: "idle",
   metadata: null,
@@ -99,7 +102,8 @@ const idleUpdater = (): UpdaterStatus => ({
 });
 
 const waitFor = async (predicate: () => boolean | Promise<boolean>, message: string) => {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  // Staging hashes and runs a real binary, so allow up to 30 s.
+  for (let attempt = 0; attempt < 3000; attempt += 1) {
     if (await predicate()) return;
     await Bun.sleep(10);
   }
@@ -153,10 +157,10 @@ try {
           metadata: candidate,
           requestedAt: "2026-09-12T12:00:00.000Z",
           updatedAt: "2026-09-12T12:00:00.000Z",
-          message: "Downloading the published release archive.",
+          message: "Downloading the published Atlas binary.",
           requirements: {
-            required: candidate.runtime,
-            available: { bun: "1.3.14", git: "2.55.0", gh: "2.100.0" },
+            required: candidate.minimumHostTools,
+            available: { git: "2.55.0", gh: "2.100.0" },
             unmet: [],
           },
         };
@@ -306,16 +310,16 @@ try {
   response = await app.fetch(new Request("http://atlas.test/updates", { headers: { Authorization: "Bearer secret" } }));
   assert.match(await response.text(), /No newer release found/, "a successful no-update check must be distinct from failure");
 
-  const maintenance = metadata("v0.3.0+build.4", "4", { maintenance: true, bun: "1.4.0" });
+  const maintenance = metadata("v0.3.0+build.4", "4", { maintenance: true, minimumGit: "2.60.0" });
   releases = [maintenance, installedMetadata];
   updaterStatus = idleUpdater();
   await updates.check();
   updaterStatus = {
     ...updaterStatus,
     requirements: {
-      required: maintenance.runtime,
-      available: { bun: "1.3.14", git: "2.55.0", gh: "2.100.0" },
-      unmet: ["Bun 1.4.0 is required; this host reports 1.3.14."],
+      required: maintenance.minimumHostTools,
+      available: { git: "2.55.0", gh: "2.100.0" },
+      unmet: ["Git 2.60.0 or newer is required; this host reports 2.55.0."],
     },
   };
   response = await app.fetch(new Request("http://atlas.test/updates", { headers: { Authorization: "Bearer secret" } }));
@@ -345,53 +349,69 @@ try {
   const activeRelease = join(hostRoot, "current");
   const oldRelease = join(releasesRoot, "atlas-v0.1.0+build.1");
   mkdirSync(oldRelease, { recursive: true });
+  // The active Release's own metadata is what forward-only staging compares against.
+  writeFileSync(join(oldRelease, "RELEASE_METADATA.json"), `${JSON.stringify(metadata("v0.1.0+build.1", "1"))}\n`);
   symlinkSync(oldRelease, activeRelease, "dir");
   mkdirSync(join(hostRoot, "config"), { recursive: true });
   writeFileSync(keyPath, `${"a".repeat(64)}\n`, { mode: 0o600 });
   chmodSync(keyPath, 0o600);
 
+  // The download server publishes real compiled binaries with their `.sha256` sidecars.
   const assets = new Map<string, Uint8Array>();
-  const addArchive = (requested: ReleaseMetadata, embedded: ReleaseMetadata = requested) => {
-    const fixture = join(root, `archive-${requested.identity.build}`);
-    const tree = join(fixture, `atlas-${requested.identity.tag}`);
-    mkdirSync(tree, { recursive: true });
-    writeFileSync(join(tree, "RELEASE_METADATA.json"), `${JSON.stringify(embedded)}\n`);
-    writeFileSync(join(tree, "ready.txt"), "complete\n");
-    const archive = join(fixture, requested.artifact.name);
-    const result = Bun.spawnSync(["tar", "--create", "--gzip", "--file", archive, "--directory", fixture, `atlas-${requested.identity.tag}`]);
-    assert.equal(result.exitCode, 0);
-    const bytes = readFileSync(archive);
-    const digest = createHash("sha256").update(bytes).digest("hex");
-    assets.set(`/${requested.identity.tag}/${requested.artifact.name}`, bytes);
-    assets.set(`/${requested.identity.tag}/${requested.artifact.checksum}`, Buffer.from(`${digest}  ${requested.artifact.name}\n`));
+  const publishMetadata = (requested: ReleaseMetadata) =>
+    assets.set(`/${requested.identity.tag}/atlas-release.json`, Buffer.from(JSON.stringify(requested)));
+  const publish = (requested: ReleaseMetadata, bytes: Uint8Array) => {
+    publishMetadata(requested);
+    assets.set(`/${requested.identity.tag}/${requested.asset.name}`, bytes);
+    assets.set(`/${requested.identity.tag}/${requested.asset.checksum}`, Buffer.from(`${requested.asset.sha256}  ${requested.asset.name}\n`));
   };
-
-  const staged = metadata("v0.1.0+build.5", "5");
-  const mismatch = metadata("v0.1.0+build.6", "6");
-  const mismatchedEmbedded = metadata(mismatch.identity.tag, "f");
+  const stagedBinary = await verifyBinary("v0.1.0+build.5", "5".repeat(40));
+  const staged = verifyMetadata(stagedBinary, "v0.1.0+build.5", "5".repeat(40));
+  publish(staged, readFileSync(stagedBinary));
+  // Identity mismatch: a genuine binary of build 5 published, with its true SHA-256, as build 6.
+  const mismatch = createReleaseMetadata("v0.1.0+build.6", "5".repeat(40), staged.asset, staged.openCodeClient);
+  publish(mismatch, readFileSync(stagedBinary));
+  // Tampered: metadata and sidecar describe the real binary, the server sends a script.
+  const marker = join(root, "tampered-binary-executed");
+  const tampered = createReleaseMetadata("v0.1.0+build.8", "5".repeat(40), staged.asset, staged.openCodeClient);
+  // Same size as the real binary, so only the SHA-256 check can catch it.
+  const script = Buffer.from(`#!/bin/sh\ntouch '${marker}'\nexit 0\n`);
+  publish(tampered, Buffer.concat([script, Buffer.alloc(staged.asset.size - script.byteLength, 0x0a)]));
   const failedDownload = metadata("v0.1.0+build.7", "7");
-  addArchive(staged);
-  addArchive(mismatch, mismatchedEmbedded);
+  publishMetadata(failedDownload);
+  // A downgrade to the active build is published but must never be staged.
+  publishMetadata(metadata("v0.1.0+build.1", "1"));
+  // build 9 redirects the binary to plain HTTP; build 10 sends more bytes than its metadata declares.
+  const insecureRedirect = createReleaseMetadata("v0.1.0+build.9", "5".repeat(40), staged.asset, staged.openCodeClient);
+  publishMetadata(insecureRedirect);
+  const oversized = createReleaseMetadata("v0.1.0+build.10", "5".repeat(40), staged.asset, staged.openCodeClient);
+  publish(oversized, Buffer.concat([readFileSync(stagedBinary), Buffer.alloc(1)]));
   const networkRequests = new Map<string, number>();
-  downloadServer = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch(request) {
-      const path = decodeURIComponent(new URL(request.url).pathname);
-      networkRequests.set(path, (networkRequests.get(path) ?? 0) + 1);
-      const asset = assets.get(path);
-      return asset ? new Response(asset as BodyInit) : new Response("controlled missing asset", { status: 500 });
-    },
-  });
+  const downloadBaseUrl = "https://downloads.test/releases";
+  const downloads = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    const url = new URL(String(input));
+    assert.equal(url.protocol, "https:", "the updater only fetches over HTTPS");
+    assert.equal(init?.redirect, "manual", "the updater follows redirects itself");
+    const path = decodeURIComponent(url.pathname.replace(/^\/releases/u, ""));
+    networkRequests.set(path, (networkRequests.get(path) ?? 0) + 1);
+    if (path === `/${insecureRedirect.identity.tag}/${insecureRedirect.asset.name}`) {
+      return new Response(null, { status: 302, headers: { Location: "http://downloads.test/plain" } });
+    }
+    const asset = assets.get(path);
+    return asset ? new Response(asset as BodyInit) : new Response("controlled missing asset", { status: 500 });
+  }) as typeof fetch;
+  assert.throws(() => createUpdaterService({ statePath, socketPath, keyPath, releasesRoot, downloadBaseUrl: "http://downloads.test/releases" }), /HTTPS/, "a plain-HTTP download base is refused");
 
   updaterHost = createUpdaterService({
     statePath,
     socketPath,
     keyPath,
     releasesRoot,
-    downloadBaseUrl: `http://127.0.0.1:${downloadServer.port}`,
+    currentPath: activeRelease,
+    downloadBaseUrl,
+    fetcher: downloads,
     now: () => Date.parse("2026-09-12T13:00:00.000Z"),
-    hostRuntime: () => ({ bun: "1.3.14", git: "2.55.0", gh: "2.100.0" }),
+    hostRuntime: () => ({ git: "2.55.0", gh: "2.100.0" }),
   });
   await updaterHost.start();
   const client = createUpdaterClient({ socketPath, keyPath });
@@ -402,15 +422,18 @@ try {
   assert.equal(hostStatus.state, "staged", hostStatus.message);
   assert.equal(hostStatus.metadata?.identity.tag, staged.identity.tag);
   assert.equal(hostStatus.stagedPath, join(releasesRoot, `atlas-${staged.identity.tag}`));
-  assert.equal(existsSync(join(hostStatus.stagedPath!, "ready.txt")), true);
+  assert.equal(existsSync(join(hostStatus.stagedPath!, "atlas")), true);
+  assert.equal(existsSync(join(hostStatus.stagedPath!, "bin", "git")), true);
+  assert.deepEqual(JSON.parse(readFileSync(join(hostStatus.stagedPath!, "RELEASE_METADATA.json"), "utf8")), staged);
   assert.equal(lstatWriteBits(hostStatus.stagedPath!), 0, "staged release root must be read-only");
   assert.equal(readlinkSync(activeRelease), oldRelease, "staging must not change the active selection");
-  assert.equal(networkRequests.get(`/${staged.identity.tag}/${staged.artifact.name}`), 1, "repeated staging requests must coalesce");
+  assert.equal(networkRequests.get(`/${staged.identity.tag}/${staged.asset.name}`), 1, "repeated staging requests must coalesce");
   assert.match(readFileSync(statePath, "utf8"), /"state":"staged"/, "staging outcome must be durable");
 
   updaterHost.close();
   updaterHost = undefined;
-  reopenedUpdaterHost = createUpdaterService({ statePath, socketPath, keyPath, releasesRoot, downloadBaseUrl: `http://127.0.0.1:${downloadServer.port}` });
+  const reopenedOptions = { statePath, socketPath, keyPath, releasesRoot, currentPath: activeRelease, downloadBaseUrl, fetcher: downloads };
+  reopenedUpdaterHost = createUpdaterService(reopenedOptions);
   await reopenedUpdaterHost.start();
   const reopenedClient = createUpdaterClient({ socketPath, keyPath });
   hostStatus = await reopenedClient.status();
@@ -420,9 +443,17 @@ try {
   await reopenedClient.stage(mismatch);
   await waitFor(async () => (await reopenedClient.status()).state === "failed", "identity mismatch did not fail staging");
   hostStatus = await reopenedClient.status();
-  assert.match(hostStatus.message, /identity does not match/);
-  assert.equal(existsSync(join(releasesRoot, `atlas-${mismatch.identity.tag}`)), false);
+  assert.match(hostStatus.message, /reports a different release identity/);
+  assert.equal(existsSync(join(releasesRoot, `atlas-${mismatch.identity.tag}`)), false, "an identity mismatch is never staged, so it can never be activated");
   assert.equal(readlinkSync(activeRelease), oldRelease);
+
+  await reopenedClient.stage(tampered);
+  await waitFor(async () => (await reopenedClient.status()).state === "failed", "a tampered binary did not fail staging");
+  hostStatus = await reopenedClient.status();
+  assert.match(hostStatus.message, /does not match its published SHA-256/);
+  assert.equal(existsSync(marker), false, "a binary whose SHA-256 does not match is never executed");
+  assert.equal(existsSync(join(releasesRoot, `atlas-${tampered.identity.tag}`)), false);
+  assert.deepEqual(readdirSync(releasesRoot).filter((name) => name.startsWith(".")), [], "failed staging leaves no temporary files");
 
   await reopenedClient.stage(failedDownload);
   await waitFor(async () => (await reopenedClient.status()).state === "failed", "download failure did not reach durable failed state");
@@ -430,6 +461,45 @@ try {
   assert.match(hostStatus.message, /download failed \(HTTP 500\)/);
   assert.equal(hostStatus.lastResult?.state, "failed");
   assert.equal(readlinkSync(activeRelease), oldRelease);
+
+  // Forward-only: a Release that is not newer than the active one is refused outright.
+  await assert.rejects(reopenedClient.stage(metadata("v0.1.0+build.1", "1")), /rejected/, "staging the active build (a downgrade) must be refused");
+  assert.equal((await reopenedClient.status()).metadata?.identity.tag, failedDownload.identity.tag, "a refused downgrade changes nothing");
+
+  // Caller metadata is ignored: a raw request with forged metadata stages only what the updater fetched.
+  const forged = { ...staged, asset: { ...staged.asset, sha256: "0".repeat(64), size: 1 } };
+  const raw = await new Promise<string>((resolveRaw, rejectRaw) => {
+    const socket = connect(socketPath);
+    let reply = "";
+    socket.on("connect", () => socket.write(`${JSON.stringify({ key: "a".repeat(64), operation: "stage", tag: staged.identity.tag, metadata: forged })}\n`));
+    socket.on("data", (chunk) => { reply += chunk.toString(); });
+    socket.on("end", () => resolveRaw(reply));
+    socket.on("error", rejectRaw);
+  });
+  assert.equal(JSON.parse(raw).ok, true, raw);
+  await waitFor(async () => (await reopenedClient.status()).state === "staged", "re-staging the published release did not finish");
+  assert.deepEqual((await reopenedClient.status()).metadata, staged, "the updater must use only the metadata it fetched itself");
+
+  await reopenedClient.stage(insecureRedirect);
+  await waitFor(async () => (await reopenedClient.status()).state === "failed", "an HTTP redirect did not fail staging");
+  assert.match((await reopenedClient.status()).message, /HTTPS/, "a redirect to plain HTTP is refused");
+
+  await reopenedClient.stage(oversized);
+  await waitFor(async () => (await reopenedClient.status()).state === "failed", "an oversized binary did not fail staging");
+  assert.match((await reopenedClient.status()).message, /too large/, "a binary larger than its published size is aborted");
+  assert.deepEqual(readdirSync(releasesRoot).filter((name) => name.startsWith(".")), [], "aborted downloads leave no temporary files");
+
+  // A state file someone else could write (here: group-writable) is ignored, never acted on.
+  reopenedUpdaterHost.close();
+  reopenedUpdaterHost = undefined;
+  const hostile = { ...JSON.parse(readFileSync(statePath, "utf8")), policy: "automatic" };
+  writeFileSync(statePath, `${JSON.stringify(hostile)}\n`);
+  chmodSync(statePath, 0o666);
+  reopenedUpdaterHost = createUpdaterService(reopenedOptions);
+  await reopenedUpdaterHost.start();
+  hostStatus = await createUpdaterClient({ socketPath, keyPath }).status();
+  assert.equal(hostStatus.policy, "approval_required", "a writable-by-others state file must not set the policy");
+  assert.equal(hostStatus.metadata, null, "a writable-by-others state file must not be acted on");
 
   console.log("Issue #58 discovery, Updates HTTP, and durable staging checks passed");
 } finally {

@@ -113,33 +113,11 @@ expect_failure env \
 [[ ! -e "$fixture/missing-integrity" && ! -e "$fixture/mismatched-integrity" ]] || fail "failed staging published a destination"
 [[ $(readlink "$fixture/active/current") == "$active_before" && ! -s "$fixture/systemctl.log" ]] || fail "failed staging changed active OpenCode"
 
-release="$fixture/release"
-tools="$fixture/tools/opencode"
-mkdir -p "$release/deploy" "$release/node_modules/@opencode/client" "$tools/2.0.0/bin" "$tools/3.0.0/bin"
-printf '{"version":"0.0.1-client"}\n' > "$release/node_modules/@opencode/client/package.json"
-printf '#!/usr/bin/env bash\necho "opencode v2.0.0"\n' > "$tools/2.0.0/bin/opencode"
-printf '#!/usr/bin/env bash\necho "opencode v3.0.0"\n' > "$tools/3.0.0/bin/opencode"
-chmod 0555 "$tools/2.0.0/bin/opencode" "$tools/3.0.0/bin/opencode"
-ln -s 2.0.0 "$tools/current"
-printf 'ATLAS_OPENCODE_BINARY=%s\n' "$tools/current/bin/opencode" > "$release/deploy/pins.env"
-preflight=$(ATLAS_RELEASE_ROOT="$release" "$root/check-opencode.sh")
-[[ "$preflight" == *'opencode v2.0.0' ]] || fail "preflight did not report the selected executable version"
-ln -sfn 3.0.0 "$tools/current"
-preflight=$(ATLAS_RELEASE_ROOT="$release" "$root/check-opencode.sh")
-[[ "$preflight" == *'opencode v3.0.0' ]] || fail "preflight did not follow current"
-ln -sfn missing "$tools/current"
-expect_failure env ATLAS_RELEASE_ROOT="$release" "$root/check-opencode.sh"
-mkdir -p "$tools/unusable/bin"
-printf '#!/usr/bin/env bash\necho unusable\n' > "$tools/unusable/bin/opencode"
-chmod 0444 "$tools/unusable/bin/opencode"
-ln -sfn unusable "$tools/current"
-expect_failure env ATLAS_RELEASE_ROOT="$release" "$root/check-opencode.sh"
-
-mkdir -p "$fixture/wal-release/deploy" "$fixture/recovery/current/checksums" "$fixture/wal-tools/current/bin"
-cat > "$fixture/wal-tools/bun" <<'EOF'
+mkdir -p "$fixture/wal-release" "$fixture/recovery/current/checksums" "$fixture/wal-tools/current/bin"
+# Stands in for the Release's `atlas` binary (`atlas ops sqlite-version`).
+cat > "$fixture/wal-release/atlas" <<'EOF'
 #!/usr/bin/env bash
-[[ "${1:-}" == --version ]] && { echo '1.3.14'; exit 0; }
-[[ "${1:-}" == --eval ]] && { echo '3.51.3'; exit 0; }
+[[ "$*" == "ops sqlite-version" ]] && { printf 'bun=1.3.14\nsqlite=3.51.3\n'; exit 0; }
 exit 1
 EOF
 # The WAL probe scrubs the environment, so this fake reads its mode from and
@@ -163,23 +141,21 @@ if [[ "\${1:-}" == --eval ]]; then
 fi
 exit 1
 EOF
-chmod 0755 "$fixture/wal-tools/bun" "$fixture/wal-tools/current/bin/opencode"
-cat > "$fixture/wal-release/deploy/pins.env" <<EOF
-ATLAS_BUN_VERSION=1.3.14
-ATLAS_BUN_BINARY=$fixture/wal-tools/bun
-ATLAS_OPENCODE_BINARY=$fixture/wal-tools/current/bin/opencode
-EOF
-printf 'fixture-commit\n' > "$fixture/wal-release/RELEASE_COMMIT"
+chmod 0755 "$fixture/wal-release/atlas" "$fixture/wal-tools/current/bin/opencode"
+printf '{"schemaVersion":2}\n' > "$fixture/wal-release/RELEASE_METADATA.json"
 : > "$fixture/opencode.log"
 run_wal() {
   ATLAS_WRITERS_STOPPED=YES \
   ATLAS_RELEASE_ROOT="$fixture/wal-release" \
+  ATLAS_OPENCODE_BINARY="$fixture/wal-tools/current/bin/opencode" \
   ATLAS_RECOVERY_CONFIG_ROOT="$fixture/recovery" \
   XDG_DATA_HOME=/var/lib/atlas/opencode-data \
     "$root/verify-sqlite-wal.sh"
 }
 wal_record="$fixture/recovery/current/checksums/sqlite-wal-versions"
 run_wal >/dev/null
+grep -Fxq "release_metadata_sha256=$(sha256sum < "$fixture/wal-release/RELEASE_METADATA.json" | cut -d ' ' -f 1)" "$wal_record" || fail "WAL record did not identify the Release"
+grep -Fxq 'bun_sqlite_version=3.51.3' "$wal_record" || fail "WAL record omitted Atlas's embedded SQLite version"
 grep -Fxq 'opencode_version=opencode v88.0.0-test' "$wal_record" || fail "WAL record did not use the observed server version"
 grep -Fxq 'opencode_sqlite_version=3.51.3' "$wal_record" || fail "WAL record omitted the observed OpenCode SQLite version"
 grep -Fxq 'opencode_bun_version=1.4.4' "$wal_record" || fail "WAL record omitted the executable's embedded Bun runtime"
@@ -296,7 +272,7 @@ db.close();
 EOF
 "$real_bun" "$fixture/scrub/build.ts" "$fixture/scrub/live" "$fixture/scrub/copy"
 [[ -s "$fixture/scrub/copy/opencode.db-wal" ]] && LC_ALL=C grep -aqF FAKE "$fixture/scrub/copy/opencode.db-wal" || fail "the scrub fixture did not leave secrets in the WAL"
-"$real_bun" "$root/scrub-opencode-credentials.ts" "$fixture/scrub/copy/opencode.db" || fail "the credential scrub failed on a restored database"
+"$real_bun" "$root/../src/cli.ts" ops scrub-opencode-credentials "$fixture/scrub/copy/opencode.db" || fail "the credential scrub failed on a restored database"
 ! LC_ALL=C grep -alF FAKE "$fixture/scrub/copy"/opencode.db* >/dev/null || fail "the credential scrub left secrets in the database files"
 scrubbed=$("$real_bun" --eval '
 import { Database } from "bun:sqlite";
@@ -309,31 +285,10 @@ console.log([n("SELECT count(*) AS n FROM credential"), n("SELECT count(*) AS n 
 ' "$fixture/scrub/copy/opencode.db")
 [[ "$scrubbed" == "0 0 0 0 0 1 1" ]] || fail "the credential scrub removed the wrong rows: $scrubbed"
 "$real_bun" --eval 'import { Database } from "bun:sqlite"; const db = new Database(process.argv[1], { create: true }); db.run("CREATE TABLE project (id text)"); db.close();' "$fixture/scrub/unknown.db"
-expect_failure "$real_bun" "$root/scrub-opencode-credentials.ts" "$fixture/scrub/unknown.db"
+expect_failure "$real_bun" "$root/../src/cli.ts" ops scrub-opencode-credentials "$fixture/scrub/unknown.db"
 grep -Fxq 'OpenCode credential scrub failed: the database has no credential table, so its credential store is unknown' "$fixture/failure.err" || fail "the credential scrub accepted a database with an unknown credential store"
-expect_failure "$real_bun" "$root/scrub-opencode-credentials.ts" "$fixture/scrub/missing.db"
+expect_failure "$real_bun" "$root/../src/cli.ts" ops scrub-opencode-credentials "$fixture/scrub/missing.db"
 [[ ! -e "$fixture/scrub/missing.db" ]] || fail "the credential scrub created a missing database"
 [[ $(readlink "$fixture/active/current") == "$active_before" && ! -s "$fixture/systemctl.log" ]] || fail "configuration install changed active OpenCode"
-
-mkdir -p "$fixture/release-source"
-git -C "$fixture/release-source" init -q
-git -C "$fixture/release-source" config user.email fixture@example.invalid
-git -C "$fixture/release-source" config user.name Fixture
-printf 'fixture\n' > "$fixture/release-source/file"
-git -C "$fixture/release-source" add file
-git -C "$fixture/release-source" commit -qm fixture
-cat > "$fixture/bin/bun" <<'EOF'
-#!/usr/bin/env bash
-[[ "${1:-}" == --version ]] && { echo '1.3.14'; exit 0; }
-exit 0
-EOF
-chmod 0555 "$fixture/bin/bun"
-ATLAS_STAGE_GIT_BINARY=$(command -v git) \
-ATLAS_STAGE_BUN_BINARY="$fixture/bin/bun" \
-ATLAS_TEST_SYSTEMCTL_LOG="$fixture/systemctl.log" \
-PATH="$fixture/bin:$PATH" \
-  "$root/stage-release.sh" "$fixture/release-source" "$fixture/staged-release" >/dev/null
-[[ -f "$fixture/staged-release/RELEASE_COMMIT" ]] || fail "Atlas release was not staged"
-[[ $(readlink "$fixture/active/current") == "$active_before" && ! -s "$fixture/systemctl.log" ]] || fail "Atlas deployment changed active OpenCode"
 
 echo "OpenCode deployment commands verified with isolated fixtures"

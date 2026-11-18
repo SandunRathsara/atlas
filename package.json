@@ -9,6 +9,9 @@
   "scripts": {
     "build:css": "tailwindcss -i ./src/styles.css -o ./public/app.css --minify",
     "check": "tsc --noEmit",
+    "build:binary": "bun scripts/build-binary.ts",
+    "build:release": "bun scripts/build-release.ts",
+    "verify:binary": "bun scripts/verify-binary.ts",
     "verify:issue31": "bun scripts/verify-issue31.ts",
     "verify:issue25": "bun scripts/verify-issue25.ts",
     "verify:migrations": "bun scripts/verify-migrations.ts",
@@ -20,6 +23,8 @@
     "verify:issue55": "bun scripts/verify-issue55.ts",
     "verify:issue56": "bun scripts/verify-issue56.ts",
     "verify:issue57": "bun scripts/verify-release.ts && bash scripts/verify-release-artifact.sh",
+    "verify:setup": "bun scripts/verify-setup.ts",
+    "verify:install-script": "bun scripts/verify-install-script.ts",
     "verify:issue58": "bun scripts/verify-issue58.ts",
     "verify:issue59": "bun scripts/verify-issue59.ts",
     "verify:issue60": "bun scripts/verify-issue60.ts",
@@ -28,10 +33,10 @@
     "verify:landing": "bun scripts/verify-landing.ts",
     "verify:inbox-shell": "bun scripts/verify-inbox-shell.ts",
     "verify:inbox-page": "bun scripts/verify-inbox-page.ts",
-    "credentials": "bun src/credential-server.ts",
-    "updater": "bun src/updater-server.ts",
-    "dev": "bun run build:css && bun --watch src/server.ts",
-    "start": "bun src/server.ts",
+    "credentials": "bun src/cli.ts credentials",
+    "updater": "bun src/cli.ts updater",
+    "dev": "bun run build:css && bun --watch src/cli.ts serve",
+    "start": "bun src/cli.ts serve",
     "demo": "bun scripts/ui-demo.ts"
   },
   "dependencies": {

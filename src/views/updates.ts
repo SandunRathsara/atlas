@@ -9,7 +9,7 @@ import { activationInProgress, type UpdatePolicy, type UpdaterStatus } from "../
 import { escapeHtml, formatTime } from "./html.ts";
 import { banner, group, icon, relativeTime, settingsRow, statusTile, type IconName, type StatusKey } from "./shared.ts";
 
-const activeStage = new Set<UpdaterStatus["state"]>(["requested", "downloading", "verifying", "extracting"]);
+const activeStage = new Set<UpdaterStatus["state"]>(["requested", "downloading", "verifying", "preparing"]);
 const recovering = new Set(["selecting_previous", "restarting_previous", "validating_previous"]);
 export type UpdateFeedback = { message: string; policy?: UpdatePolicy };
 
@@ -139,8 +139,8 @@ const installingCard = (status: UpdateStatus, updater: UpdaterStatus): Card => {
 };
 
 const stagingCard = (candidate: ReleaseMetadata, updater: UpdaterStatus, policy: UpdatePolicy | undefined): Card => {
-  // requested/downloading → step 0, verifying → step 1, extracting → step 2.
-  const current = ({ requested: 0, downloading: 0, verifying: 1, extracting: 2 } as Record<string, number>)[updater.state] ?? 0;
+  // requested/downloading → step 0, verifying → step 1, preparing → step 2.
+  const current = ({ requested: 0, downloading: 0, verifying: 1, preparing: 2 } as Record<string, number>)[updater.state] ?? 0;
   const step = (at: number, label: string): Step => ({ label, state: current > at ? "done" : current === at ? "now" : "todo" });
   return {
     status: "running",
@@ -153,8 +153,8 @@ const stagingCard = (candidate: ReleaseMetadata, updater: UpdaterStatus, policy:
     extraHtml: steps([
       step(0, updater.state === "requested" ? "Waiting to download" : "Download"),
       step(1, "Check the download"),
-      step(2, "Unpack"),
-    ], ({ requested: 10, downloading: 30, verifying: 60, extracting: 85 } as Record<string, number>)[updater.state] ?? 10, `Getting ${semverOf(candidate.identity.tag)} ready`),
+      step(2, "Prepare"),
+    ], ({ requested: 10, downloading: 30, verifying: 60, preparing: 85 } as Record<string, number>)[updater.state] ?? 10, `Getting ${semverOf(candidate.identity.tag)} ready`),
   };
 };
 
@@ -433,9 +433,8 @@ const technicalBody = (status: UpdateStatus, csrfToken: string, card: Card) => {
 
   if (available) {
     parts.push(section("Host runtime requirements", [
-      row("Bun", `${available.runtime.bun}${requirements ? ` · host ${requirements.available.bun ?? "missing"}` : ""}`, true),
-      row("Git", `${available.runtime.git}${requirements ? ` · host ${requirements.available.git ?? "missing"}` : ""}`, true),
-      row("gh", `${available.runtime.gh}${requirements ? ` · host ${requirements.available.gh ?? "missing"}` : ""}`, true),
+      row("Git", `${available.minimumHostTools.git} or newer${requirements ? ` · host ${requirements.available.git ?? "missing"}` : ""}`, true),
+      row("gh", `${available.minimumHostTools.gh} or newer${requirements ? ` · host ${requirements.available.gh ?? "missing"}` : ""}`, true),
       textRow("The updater does not upgrade host tools."),
     ]));
   }

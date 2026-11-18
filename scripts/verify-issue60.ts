@@ -1,20 +1,21 @@
 import "./isolate-opencode.ts";
 import { strict as assert } from "node:assert";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app.ts";
 import { createPersistence, type Persistence } from "../src/persistence.ts";
-import { createReleaseMetadata, type ReleaseMetadata } from "../src/release.ts";
+import type { ReleaseMetadata } from "../src/release.ts";
 import { createUpdateService, UPDATE_CHECK_INTERVAL_MS } from "../src/update-discovery.ts";
 import { createUpdaterClient, createUpdaterService } from "../src/updater.ts";
+import { fixtureMetadata, fixtureReleaseFolder, fixtureReleaseServer } from "./verify-binaries.ts";
 
-const root = mkdtempSync(join(process.env.TMPDIR ?? "/tmp/opencode", "atlas-issue60-"));
+const cacheRoot = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
+mkdirSync(cacheRoot, { recursive: true });
+const root = mkdtempSync(join(cacheRoot, "atlas-issue60-"));
 const key = "a".repeat(64);
-const metadata = (tag: string, character: string) => createReleaseMetadata(tag, character.repeat(40), {
-  bun: "1.3.14",
-  git: "2.55.0",
-  gh: "2.100.0",
-});
+// Stand-in Releases: builder-made folders whose `atlas` only reports its identity.
+const metadata = (tag: string, character: string) => fixtureMetadata(tag, character.repeat(40));
 const installed = metadata("v0.1.0+build.1", "1");
 const sameBuild2 = metadata("v0.1.0+build.2", "2");
 const sameBuild10 = metadata("v0.1.0+build.10", "a");
@@ -29,12 +30,8 @@ const waitFor = async (predicate: () => boolean | Promise<boolean>, message: str
   assert.fail(message);
 };
 
-const releaseTree = (releasesRoot: string, release: ReleaseMetadata) => {
-  const path = join(releasesRoot, `atlas-${release.identity.tag}`);
-  mkdirSync(path, { recursive: true, mode: 0o755 });
-  writeFileSync(join(path, "RELEASE_METADATA.json"), `${JSON.stringify(release)}\n`);
-  return path;
-};
+const releaseTree = async (releasesRoot: string, release: ReleaseMetadata) =>
+  (await fixtureReleaseFolder(releasesRoot, release.identity.tag, release.identity.gitSha)).path;
 
 const createHost = async (name: string, candidates: ReleaseMetadata[], activationTimeoutMs = 10_000) => {
   const hostRoot = join(root, name);
@@ -46,8 +43,8 @@ const createHost = async (name: string, candidates: ReleaseMetadata[], activatio
   mkdirSync(join(hostRoot, "config"), { recursive: true, mode: 0o700 });
   writeFileSync(keyPath, `${key}\n`, { mode: 0o600 });
   chmodSync(keyPath, 0o600);
-  const paths = new Map([[installed.identity.tag, releaseTree(releasesRoot, installed)]]);
-  for (const candidate of candidates) paths.set(candidate.identity.tag, releaseTree(releasesRoot, candidate));
+  const paths = new Map([[installed.identity.tag, await releaseTree(releasesRoot, installed)]]);
+  for (const candidate of candidates) paths.set(candidate.identity.tag, await releaseTree(releasesRoot, candidate));
   symlinkSync(paths.get(installed.identity.tag)!, currentPath, "dir");
   const controls: string[] = [];
   const unhealthy = new Set<string>();
@@ -58,10 +55,11 @@ const createHost = async (name: string, candidates: ReleaseMetadata[], activatio
     keyPath,
     releasesRoot,
     currentPath,
+    ...fixtureReleaseServer(releasesRoot),
     now: () => clock++,
     activationTimeoutMs,
     activationPollMs: 2,
-    hostRuntime: () => ({ bun: "1.3.14", git: "2.55.0", gh: "2.100.0" }),
+    hostRuntime: () => ({ git: "2.55.0", gh: "2.100.0" }),
     controlAtlas: async (operation: "stop" | "start") => {
       controls.push(operation);
       return true;

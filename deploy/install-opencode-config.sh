@@ -21,7 +21,9 @@ source_config="$root/opencode/opencode.json"
 config_home=$(realpath -ms -- "$1")
 
 [[ -f "$source_config" && ! -L "$source_config" ]] || { echo "shipped OpenCode configuration is missing" >&2; exit 1; }
-jq -e 'type == "object"' "$source_config" >/dev/null || { echo "shipped OpenCode configuration is not a JSON object" >&2; exit 1; }
+# The owner side checks that what arrived on stdin is exactly this document.
+expected_sha256=$(sha256sum < "$source_config" | cut -d ' ' -f 1)
+[[ "$expected_sha256" =~ ^[0-9a-f]{64}$ ]] || { echo "shipped OpenCode configuration could not be hashed" >&2; exit 1; }
 [[ "$config_home" = /* && "$config_home" != "/" ]] || { echo "OpenCode config home must be a safe absolute path" >&2; exit 1; }
 [[ -d "$config_home" && ! -L "$config_home" ]] || { echo "OpenCode config home is missing or unsafe: $config_home" >&2; exit 1; }
 
@@ -35,7 +37,7 @@ install_as_owner() {
   set -euo pipefail
   umask 0077
   cd /
-  local config_home=$1
+  local config_home=$1 expected_sha256=$2
   local directory="$config_home/opencode"
   local target="$directory/opencode.json"
   local temporary backup
@@ -58,7 +60,7 @@ install_as_owner() {
   # shellcheck disable=SC2064
   trap "rm -f -- '$temporary'" EXIT
   cat > "$temporary"
-  jq -e 'type == "object"' "$temporary" >/dev/null || { echo "shipped OpenCode configuration did not arrive intact" >&2; return 1; }
+  [[ "$(sha256sum < "$temporary" | cut -d ' ' -f 1)" == "$expected_sha256" ]] || { echo "shipped OpenCode configuration did not arrive intact" >&2; return 1; }
 
   if [[ -e "$target" || -L "$target" ]]; then
     [[ -f "$target" && ! -L "$target" ]] || { echo "existing OpenCode configuration is unsafe: $target" >&2; return 1; }
@@ -80,13 +82,13 @@ install_as_owner() {
 }
 
 if (( EUID == owner )); then
-  install_as_owner "$config_home" < "$source_config"
+  install_as_owner "$config_home" "$expected_sha256" < "$source_config"
 elif (( EUID == 0 )); then
   setpriv=$(command -v setpriv) || { echo "setpriv (util-linux) is required to install as the config home's owner" >&2; exit 1; }
   "$setpriv" --reuid="$owner" --regid="$group" --clear-groups --no-new-privs -- \
     /usr/bin/env -i PATH=/usr/bin:/bin \
     /bin/bash -c "$(declare -f install_as_owner)"'
-install_as_owner "$1"' install-opencode-config "$config_home" < "$source_config"
+install_as_owner "$1" "$2"' install-opencode-config "$config_home" "$expected_sha256" < "$source_config"
 else
   echo "run as root or as the owner of $config_home (uid $owner)" >&2
   exit 1

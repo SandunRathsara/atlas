@@ -29,13 +29,31 @@ atlas_status_valid_value() {
   esac
 }
 
+# Prints up to <max> bytes of a regular file another account may control.
+# The type is checked on the opened descriptor, and the whole read is killed
+# after 10 s, so a FIFO or device swapped in after the -f test cannot hang a
+# root timer. Args: <path> [max bytes, default 1 MiB]
+atlas_read_regular() {
+  [[ -f "$1" && ! -L "$1" ]] || return 1
+  # shellcheck disable=SC2016 # expanded by the inner bash
+  timeout -k 2 10 bash -c 'exec 3<"$1" || exit 1; [[ -f /dev/fd/3 ]] || exit 1; head -c "$2" <&3' atlas-read "$1" "${2:-1048576}"
+}
+
+# True when only root can change this folder: root-owned and not group/other
+# writable (sticky folders allowed); same rule as src/setup/files.ts rootOnly.
+atlas_root_only_folder() {
+  local owner mode
+  [[ -d "$1" && ! -L "$1" ]] || return 1
+  read -r owner mode < <(stat -c '%u %a' -- "$1") || return 1
+  [[ "$owner" == 0 ]] && (( (8#$mode & 8#022) == 0 || (8#$mode & 8#1000) != 0 ))
+}
+
 atlas_status_load() {
   atlas_status_defaults
   [[ -e "$atlas_status_path" || -L "$atlas_status_path" ]] || return 0
-  [[ -f "$atlas_status_path" && ! -L "$atlas_status_path" ]] || return 0
-  local size
-  size=$(wc -c < "$atlas_status_path") || return 0
-  (( size > 0 && size <= 8192 )) || return 0
+  local text
+  text=$(atlas_read_regular "$atlas_status_path" 8193) || return 0
+  (( ${#text} > 0 && ${#text} <= 8192 )) || return 0
 
   local key value count=0
   declare -A seen=()
@@ -56,20 +74,53 @@ atlas_status_load() {
       backup_last_snapshot) status_backup_last_snapshot=$value ;;
       backup_reason) status_backup_reason=$value ;;
     esac
-  done < "$atlas_status_path"
+  done <<< "$text"
   (( count == 11 )) || atlas_status_defaults
 }
 
+# Root runs this from the Btrfs timers, but the status file lives in the
+# service user's data folder. As root, the configured folder path must have no
+# symlinks and every folder above it must be root-only; a symlink at the status
+# path is never followed. When the folder is not root's, the read and write run
+# as its owner, so root never acts on a path that account can swap.
 atlas_status_write() {
-  atlas_status_path=$(realpath -m "${ATLAS_RECOVERY_STATUS_PATH:-/var/lib/atlas/recovery-status}")
-  [[ "$atlas_status_path" == /* && "$atlas_status_path" != / ]] || return 1
-  local directory lock temporary pair
-  directory=$(dirname "$atlas_status_path")
-  [[ -d "$directory" && ! -L "$directory" && ! -L "$atlas_status_path" ]] || return 1
+  local requested name directory lock owner group parent
+  requested=${ATLAS_RECOVERY_STATUS_PATH:-/var/lib/atlas/recovery-status}
+  name=$(basename -- "$requested")
+  [[ "$requested" == /* && "$name" != . && "$name" != .. && "$name" != / ]] || return 1
+  directory=$(realpath -e -- "$(dirname -- "$requested")") || return 1
+  [[ -d "$directory" && "$directory" != / ]] || return 1
   lock=$(realpath -m "${ATLAS_RECOVERY_STATUS_LOCK_PATH:-/run/lock/atlas-recovery-status.lock}")
   [[ "$lock" == /* && "$lock" != / && -d "$(dirname "$lock")" && ! -L "$lock" ]] || return 1
   exec 9>"$lock"
   flock -x 9
+  if (( EUID == 0 )); then
+    [[ "$directory" == "$(dirname -- "$requested")" ]] || return 1
+    parent=$directory
+    while [[ "$parent" != / ]]; do
+      parent=$(dirname -- "$parent")
+      atlas_root_only_folder "$parent" || return 1
+    done
+    owner=$(stat -c %u -- "$directory")
+    group=$(stat -c %g -- "$directory")
+    if [[ "$owner" != 0 ]]; then
+      setpriv --reuid="$owner" --regid="$group" --clear-groups --inh-caps=-all -- \
+        /usr/bin/env -i PATH=/usr/bin:/bin LANG=C \
+        bash -c "set -euo pipefail; $(declare -f atlas_status_defaults atlas_status_valid_value atlas_read_regular atlas_status_load atlas_status_write_locked)"'
+atlas_status_write_locked "$@"' atlas-status "$directory/$name" "$@"
+      return
+    fi
+    atlas_root_only_folder "$directory" || return 1
+  fi
+  atlas_status_write_locked "$directory/$name" "$@"
+}
+
+# Caller holds the lock and has checked the folder. Args: <status path> <kind> <values...>
+atlas_status_write_locked() {
+  atlas_status_path=$1
+  shift
+  local directory temporary pair
+  directory=$(dirname -- "$atlas_status_path")
   atlas_status_load
 
   case "$1" in
@@ -122,5 +173,5 @@ atlas_status_write() {
   } > "$temporary"
   chmod 0640 "$temporary"
   if (( EUID == 0 )); then chown "root:${ATLAS_RECOVERY_STATUS_GROUP:-omega}" "$temporary"; fi
-  mv -f -- "$temporary" "$atlas_status_path"
+  mv -f -T -- "$temporary" "$atlas_status_path"
 }

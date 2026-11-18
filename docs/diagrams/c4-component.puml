@@ -4,7 +4,14 @@
 title Atlas — C4 Component
 
 Person(team, "Team member", "Shared-token operator of Repositories, Specs, and Sessions")
-Person(operator, "Operator", "Host, pins, secrets, admission")
+Person(operator, "Operator", "Installs git/gh/OpenCode; runs install.sh as root (curl | sudo sh); secrets, admission")
+Person(maintainer, "Maintainer", "Listed releaser; runs the manual Release workflow")
+
+Component(cli, "atlas binary", "src/cli.ts", "One compiled binary; subcommand picks serve, credentials, updater, gh, git-credential, setup, ops, version")
+Component(setup, "Setup", "src/setup/run.ts#runSetup", "Root install / re-run / adopt: atlas service account (with consent), root-owned /etc/atlas, Release folder, units, health, optional Tailscale Serve")
+Component(installer, "Installer", "install.sh", "Root only: download latest binary into a root-only /var/tmp folder, check SHA-256, run atlas setup")
+Component(releaseLayout, "Release folder builder", "src/release-layout.ts#buildReleaseFolder", "Binary, metadata, bin/git wrapper, gh/git-credential shims")
+Component(units, "Units", "src/units.ts", "All systemd unit text")
 
 System_Boundary(atlas, "Atlas UI process") {
   Component(server, "Process host", "src/server.ts", "Wires env, two loopback listeners, shutdown")
@@ -20,7 +27,7 @@ System_Boundary(atlas, "Atlas UI process") {
   Component(activityGate, "Activity gate", "src/activity-gate.ts#createActivityGate", "Shared balanced activity and pause accounting")
   Component(updatePause, "Safe update pause", "src/update-pause.ts#createUpdatePauseCoordinator", "Drain preparation/handoff without waiting for Agent execution")
   Component(viewer, "Session viewer", "src/session-viewer.ts#createSessionViewerService", "Hydrate OpenCode tree for display")
-  Component(releaseIdentity, "Release identity", "src/release.ts", "Validate tag-derived metadata for health")
+  Component(releaseIdentity, "Release identity", "src/release.ts", "Embedded identity and schema-2 metadata validation")
   Component(updateDiscovery, "Release updates", "src/update-discovery.ts#createUpdateService", "Public checks, policy selection, staging, safe-pause orchestration")
 }
 
@@ -33,25 +40,41 @@ System_Boundary(updaterService, "Atlas updater service") {
 }
 
 System_Ext(github, "GitHub", "App, issues labelled spec, PRs, native stacks, webhooks, public Releases")
+System_Ext(releaseWorkflow, "Release workflow", ".github/workflows/release.yml: allowlist, check gate, build, publish tag + 4 assets")
+System_Ext(tailscale, "Tailscale", "Optional; Serve fronts the UI")
 System_Ext(opencode, "OpenCode 2.x", "Independent process with Atlas-shipped headless config; server version is diagnostic only, never a discovery gate")
 SystemDb_Ext(sqlite, "SQLite", "WAL file; Atlas-owned projections")
 Container_Ext(sessionDirs, "Session directories", "ATLAS_SESSION_ROOT clones")
-Container_Ext(releaseDirs, "Release trees and selection", "/opt/atlas/releases/atlas-<tag> and /opt/atlas/current")
+Container_Ext(releaseDirs, "Release folders and selection", "/opt/atlas/releases/atlas-<tag> and /opt/atlas/current")
 Container_Ext(supportBundles, "Surviving service bundles", "/opt/atlas/services/releases/<bundle> and /opt/atlas/services/current")
-Container_Ext(updateState, "Updater state", "/var/lib/atlas/update-state.json")
+Container_Ext(updateState, "Updater state", "Root-only /var/lib/atlas-updater/update-state.json")
 
 Rel(team, ui, "HTTPS via Tailscale Serve")
 Rel(github, webhook, "Signed webhook to Funnel/webhook port")
 Rel(operator, credentials, "github.env, supplier key, registry")
-Rel(operator, updater, "bootstrap, updater key, host runtimes")
-Rel(operator, opencode, "select server binary; install headless config")
+Rel(operator, installer, "curl … | sh")
+Rel(installer, github, "download binary + SHA-256")
+Rel(installer, setup, "run as root")
+Rel(operator, opencode, "install server binary")
+Rel(maintainer, releaseWorkflow, "Run workflow on main")
+Rel(releaseWorkflow, github, "create tag and immutable Release")
+Rel(cli, server, "serve")
+Rel(cli, credentials, "credentials")
+Rel(cli, updater, "updater")
+Rel(cli, setup, "setup")
+Rel(setup, releaseLayout, "build first Release folder")
+Rel(setup, units, "render and write units")
+Rel(setup, supportBundles, "install and select first bundle")
+Rel(setup, opencode, "install headless config; start only on fresh install")
+Rel(setup, tailscale, "tailscale serve after explicit yes; never Funnel")
+Rel(updater, releaseLayout, "build staged Release folder")
 
 Rel(server, persistence, "open database")
 Rel(server, githubClient, "construct")
 Rel(server, sync, "construct")
 Rel(server, webhook, "serve :ATLAS_WEBHOOK_PORT")
 Rel(server, ui, "serve :ATLAS_PORT")
-Rel(server, releaseIdentity, "load generated metadata")
+Rel(server, releaseIdentity, "load embedded identity")
 Rel(server, updateDiscovery, "start / stop")
 
 Rel(ui, auth, "authenticate mutations")
@@ -71,7 +94,7 @@ Rel(sync, githubClient, "GET projections")
 Rel(sync, persistence, "write projections")
 Rel(updateDiscovery, github, "list public Releases and metadata")
 Rel(updateDiscovery, persistence, "write/read known candidates")
-Rel(updateDiscovery, updater, "policy/stage/status/activation over authenticated Unix socket")
+Rel(updateDiscovery, updater, "policy / stage tag / status / activation over authenticated Unix socket")
 Rel(preparation, persistence, "claim / checkpoints")
 Rel(preparation, credentials, "register scope, request token")
 Rel(preparation, githubClient, "refresh before clone")
@@ -88,11 +111,11 @@ Rel(credentials, supportBundles, "run selected credential source")
 Rel(updater, credentials, "read canonical helper references from shared registry contract")
 Rel(githubClient, github, "read API")
 Rel(persistence, sqlite, "WAL")
-Rel(updater, github, "download public archive/checksum")
-Rel(updater, releaseDirs, "atomic staging/current selection; remove only unprotected older trees")
+Rel(updater, github, "fetch metadata for a requested tag itself; forward-only; download binary + SHA-256 over HTTPS with size caps")
+Rel(updater, releaseDirs, "atomic staging/current selection; remove only unprotected older folders")
 Rel(updater, supportBundles, "run selected updater source; install and atomically select candidate bundle after health")
 Rel(updater, updateState, "atomic policy/staging/activation/recovery/cleanup writes")
-Rel(updater, server, "stop/restart Atlas only; validate authenticated Atlas-only health")
+Rel(updater, server, "stop/restart Atlas only; run candidates as service user via setpriv; validate authenticated Atlas-only health")
 
-' repo-map-synced: 8b75ac8fb8e65e9ae6adcaeff65b3376c1b4605c
+' repo-map-synced: b711a769e49c7d26dfdabb45b88111b4cbf43f41
 @enduml

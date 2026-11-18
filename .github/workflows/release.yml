@@ -1,57 +1,254 @@
-name: Publish Atlas release
+# Cut an Atlas Release by hand. See .github/release/README.md.
+#
+#   plan     (read)   allowlist, main only, next tag from published Releases, pin SHA
+#   gate     (read)   check.yml full tier on the pinned SHA
+#   build    (read)   build + smoke the 4 files, upload them with a digest
+#   publish  (write)  no checkout, no repo code: re-check digest + checksum,
+#                     then create the tag and Release in one gh call
+name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "patch | minor | major | build (same SemVer, next build)"
+        type: choice
+        options: [patch, minor, major, build]
+        required: true
+      dry_run:
+        description: Do everything except create the tag and Release
+        type: boolean
+        default: false
 
-permissions:
-  contents: write
+# Who may cut a Release: space-separated GitHub logins. The only place to edit.
+env:
+  RELEASERS: "SandunRathsara"
+
+permissions: {}
 
 concurrency:
-  group: atlas-release-publishing
+  group: atlas-release
   cancel-in-progress: false
 
 jobs:
-  publish:
+  plan:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.next.outputs.tag }}
+      sha: ${{ steps.pin.outputs.sha }}
+      dry_run: ${{ steps.pin.outputs.dry_run }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Refuse anyone not on the releaser allowlist
+        env:
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          for who in "$ACTOR" "$TRIGGERING_ACTOR"; do
+            if [[ " $RELEASERS " != *" $who "* ]]; then
+              echo "::error::$who is not allowed to release (allowlist: $RELEASERS)"
+              exit 1
+            fi
+          done
+          echo "releaser allowed: actor=$ACTOR triggering_actor=$TRIGGERING_ACTOR"
+
+      - name: Refuse anything but main and pin its commit
+        id: pin
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "::error::releases run only from main, not $GITHUB_REF"
+            exit 1
+          fi
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          # Defence in depth: anything not on main can only ever be a dry run.
+          dry_run=$([[ "$DRY_RUN" == true || "$GITHUB_REF" != refs/heads/main ]] && echo true || echo false)
+          echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
+          echo "pinned $GITHUB_REF at $GITHUB_SHA (dry_run=$dry_run)"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
+          ref: ${{ steps.pin.outputs.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
-      - name: Validate tag and global build sequence
+
+      - name: Compute the next tag from published Releases
+        id: next
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          BUMP: ${{ inputs.bump }}
         run: |
-          set -euo pipefail
-          tagged_commit=$(git rev-list -n 1 "$RELEASE_TAG")
-          test "$(git rev-parse HEAD)" = "$tagged_commit"
-          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' > "$RUNNER_TEMP/published-tags"
-          mapfile -t published_tags < "$RUNNER_TEMP/published-tags"
-          bun scripts/release.ts validate "$RELEASE_TAG" "${published_tags[@]}"
-          echo "RELEASE_SHA=$tagged_commit" >> "$GITHUB_ENV"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' > "$RUNNER_TEMP/releases"
+          mapfile -t published < "$RUNNER_TEMP/releases"
+          echo "published Releases: ${#published[@]}"
+          semver=0.0.0
+          build=0
+          if (( ${#published[@]} > 0 )); then
+            if bad=$(printf '%s\n' "${published[@]}" | grep -Evx 'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\+build\.[1-9][0-9]*'); then
+              echo "::error::published tags not in vX.Y.Z+build.N form: $bad"
+              exit 1
+            fi
+            semver=$(printf '%s\n' "${published[@]}" | sed -E 's/^v([^+]+)\+.*$/\1/' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
+            build=$(printf '%s\n' "${published[@]}" | sed -E 's/^.*\+build\.//' | sort -n | tail -n 1)
+          fi
+          IFS=. read -r major minor patch <<< "$semver"
+          case "$BUMP" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            build) ;;
+            *) echo "::error::unknown bump '$BUMP'"; exit 1 ;;
+          esac
+          tag="v$major.$minor.$patch+build.$((build + 1))"
+          # The repo's own sequence rules have the final say.
+          bun scripts/release.ts validate "$tag" "${published[@]}"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" --jq '.[].ref' > "$RUNNER_TEMP/tags"
+          if grep -Fxq "refs/tags/$tag" "$RUNNER_TEMP/tags"; then
+            echo "::error::tag $tag already exists without a Release; see .github/release/README.md"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "next tag: $tag (bump=$BUMP, highest SemVer $semver, highest build $build)"
+
+  gate:
+    needs: plan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/check.yml
+    with:
+      ref: ${{ needs.plan.outputs.sha }}
+
+  build:
+    needs: [plan, gate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+      artifact: ${{ steps.digest.outputs.artifact }}
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      SHA: ${{ needs.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
       - name: Install frozen dependencies
         run: bun install --frozen-lockfile
-      - name: Check tagged source
+
+      - name: Build and smoke-test the release files
+        run: bash scripts/verify-release-artifact.sh "$TAG" "$SHA" "$RUNNER_TEMP/release"
+
+      - name: Assert the exact file set and compute its digest
+        id: digest
+        working-directory: ${{ runner.temp }}/release
         run: |
-          bun run check
-          bun scripts/verify-release.ts
-          bash deploy/verify-assets.sh
-      - name: Build and smoke release archive
+          expected=$'atlas-linux-x64\natlas-linux-x64.sha256\natlas-release.json\ninstall.sh'
+          actual=$(find . -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
+          all=$(find . -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
+          if [[ "$actual" != "$expected" || "$all" != "$expected" ]]; then
+            printf '::error::release files differ from the contract:\n%s\n' "$all"
+            exit 1
+          fi
+          sha256sum atlas-linux-x64 atlas-linux-x64.sha256 atlas-release.json install.sh | tee "$RUNNER_TEMP/manifest"
+          digest=$(sha256sum < "$RUNNER_TEMP/manifest" | cut -d' ' -f1)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "artifact=atlas-release-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          echo "release set digest for $TAG at $SHA: $digest"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.digest.outputs.artifact }}
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    # The only job with write access. It never checks out or runs repo code.
+    needs: [plan, gate, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      SHA: ${{ needs.plan.outputs.sha }}
+      DIGEST: ${{ needs.build.outputs.digest }}
+      DRY_RUN: ${{ inputs.dry_run || needs.plan.outputs.dry_run == 'true' }}
+    steps:
+      # A re-run of only this job skips plan, so check the allowlist again.
+      - name: Refuse anyone not on the releaser allowlist
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: bash scripts/verify-release-artifact.sh "$RELEASE_TAG" "$RELEASE_SHA" "$RUNNER_TEMP/release"
-      - name: Publish immutable GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         run: |
-          gh release create "$RELEASE_TAG" \
-            "$RUNNER_TEMP/release/atlas-linux-x64-${RELEASE_TAG}.tar.gz" \
-            "$RUNNER_TEMP/release/atlas-linux-x64-${RELEASE_TAG}.tar.gz.sha256" \
-            "$RUNNER_TEMP/release/atlas-release.json" \
-            --verify-tag --title "$RELEASE_TAG" --generate-notes
+          for who in "$ACTOR" "$TRIGGERING_ACTOR"; do
+            if [[ " $RELEASERS " != *" $who "* ]]; then
+              echo "::error::$who is not allowed to release (allowlist: $RELEASERS)"
+              exit 1
+            fi
+          done
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}/release
+
+      - name: Re-verify the downloaded files
+        working-directory: ${{ runner.temp }}/release
+        run: |
+          expected=$'atlas-linux-x64\natlas-linux-x64.sha256\natlas-release.json\ninstall.sh'
+          actual=$(find . -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
+          [[ "$actual" == "$expected" ]] || { printf '::error::unexpected files:\n%s\n' "$actual"; exit 1; }
+          digest=$(sha256sum atlas-linux-x64 atlas-linux-x64.sha256 atlas-release.json install.sh | sha256sum | cut -d' ' -f1)
+          if [[ ! "$DIGEST" =~ ^[0-9a-f]{64}$ || "$digest" != "$DIGEST" ]]; then
+            echo "::error::digest mismatch: build said '$DIGEST', downloaded files give $digest"
+            exit 1
+          fi
+          sha256sum --strict --check atlas-linux-x64.sha256
+          binary=$(sha256sum atlas-linux-x64 | cut -d' ' -f1)
+          jq -e --arg tag "$TAG" --arg sha "$SHA" --arg binary "$binary" \
+            '.schemaVersion == 2 and .identity.tag == $tag and .identity.gitSha == $sha and .asset.sha256 == $binary' \
+            atlas-release.json > /dev/null || { echo "::error::atlas-release.json does not match $TAG at $SHA"; exit 1; }
+          echo "verified $TAG at $SHA, digest $digest"
+
+      - name: Create the tag and Release
+        working-directory: ${{ runner.temp }}/release
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" --jq '.[].ref' > "$RUNNER_TEMP/tags"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' > "$RUNNER_TEMP/releases"
+          if grep -Fxq "refs/tags/$TAG" "$RUNNER_TEMP/tags" || grep -Fxq "$TAG" "$RUNNER_TEMP/releases"; then
+            echo "::error::$TAG already exists; Releases are immutable, cut a new build"
+            exit 1
+          fi
+          # Defence in depth: never publish from anything but main.
+          if [[ "$DRY_RUN" == true || "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "DRY RUN ($GITHUB_REF): would create Release $TAG at $SHA, marked latest, with:"
+            ls -l
+            exit 0
+          fi
+          gh release create "$TAG" \
+            atlas-linux-x64 atlas-linux-x64.sha256 atlas-release.json install.sh \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "Atlas $TAG" \
+            --generate-notes \
+            --latest
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')
+          [[ "$latest" == "$TAG" ]] || { echo "::error::latest Release is $latest, not $TAG"; exit 1; }
+          echo "published $TAG"

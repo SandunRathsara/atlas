@@ -1,29 +1,19 @@
 #!/usr/bin/env bash
+# Static checks of the deployment assets. Changes nothing on the host.
+# Every unit (four services plus the Btrfs snapshot/space-check units) is
+# rendered by src/units.ts (no checked-in copies); they are rendered into a
+# scratch folder here and checked. The recovery tools run through the binary
+# (`atlas ops <tool>`), so nothing here may need Bun or a source tree.
 set -euo pipefail
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-source "$root/pins.env"
 
 required=(
   "$root/atlas.env.example"
   "$root/RECOVERY.md"
   "$root/github.env.example"
-  "$root/bootstrap.sh"
-  "$root/systemd/atlas.service"
-  "$root/systemd/atlas-credentials.service"
-  "$root/systemd/atlas-updater.service"
-  "$root/systemd/opencode.service"
-  "$root/systemd/atlas-snapshot.service"
-  "$root/systemd/atlas-snapshot.timer"
-  "$root/systemd/atlas-space-check.service"
-  "$root/systemd/atlas-space-check.timer"
-  "$root/bin/gh"
-  "$root/bin/git"
-  "$root/bin/git-credential-atlas"
   "$root/capture-recovery-config.sh"
   "$root/check-health.sh"
-  "$root/check-activation-health.sh"
-  "$root/check-opencode.sh"
   "$root/check-space.sh"
   "$root/atlas-snapshot.sh"
   "$root/atlas-snapshot.marker"
@@ -33,13 +23,13 @@ required=(
   "$root/verify-sqlite-wal.sh"
   "$root/stage-opencode.sh"
   "$root/install-opencode-config.sh"
-  "$root/scrub-opencode-credentials.ts"
   "$root/opencode/opencode.json"
-  "$root/stage-release.sh"
-  "$root/../scripts/build-release.sh"
+  "$root/../scripts/build-release.ts"
   "$root/../scripts/release.ts"
   "$root/../scripts/verify-release-artifact.sh"
   "$root/../src/release.ts"
+  "$root/../src/release-layout.ts"
+  "$root/../src/units.ts"
   "$root/../src/updater.ts"
   "$root/../src/updater-server.ts"
   "$root/../src/credentials.ts"
@@ -47,114 +37,151 @@ required=(
   "$root/../.github/workflows/release.yml"
   "$root/logrotate/atlas-opencode"
   "$root/journald/atlas.conf"
-  "$root/../scripts/check-restored-state.ts"
+  "$root/../src/ops/check-restored-state.ts"
+  "$root/../src/ops/scrub-opencode-credentials.ts"
+  "$root/../src/commands/ops.ts"
+  "$root/../src/commands/setup.ts"
+  "$root/../src/setup/run.ts"
+  "$root/../install.sh"
 )
 for path in "${required[@]}"; do
   test -f "$path" || { echo "missing deployment asset: $path" >&2; exit 1; }
 done
-
-updater_unit="$root/systemd/atlas-updater.service"
-grep -Fq 'User=root' "$updater_unit"
-grep -Fq 'Group=omega' "$updater_unit"
-grep -Fq 'ExecStart=/opt/atlas/tools/bun/1.3.14/bin/bun /opt/atlas/services/current/atlas-updater/updater-server.ts' "$updater_unit"
-grep -Fq 'ReadWritePaths=/opt/atlas/releases /opt/atlas/services /var/lib/atlas /run/atlas-updater' "$updater_unit"
-grep -Fq 'ReadOnlyPaths=/opt/atlas/tools' "$updater_unit"
-grep -Fq 'ExecStartPre=/usr/bin/test -x /opt/atlas/services/current/atlas-updater/check-activation-health.sh' "$updater_unit"
-grep -Fq 'ATLAS_CREDENTIAL_REGISTRY_PATH=/var/lib/atlas/session-scopes.json' "$updater_unit"
-grep -Fq 'ExecStartPre=/usr/bin/test -f /opt/atlas/services/current/atlas-updater/credentials.ts' "$updater_unit"
-grep -Fq 'check-activation-health.sh' "$root/../src/updater-server.ts"
-grep -Fq '["systemctl", operation === "start" ? "restart" : "stop", "atlas.service"]' "$root/../src/updater-server.ts"
-grep -Fq 'NoNewPrivileges=true' "$updater_unit"
-grep -Fq 'Restart=on-failure' "$updater_unit"
-if grep -Eiq 'opencode|EnvironmentFile=' "$updater_unit"; then
-  echo "Atlas updater must not manage OpenCode or load Atlas UI secrets" >&2
-  exit 1
-fi
-test -x "$root/bootstrap.sh" || { echo "bootstrap command is not executable" >&2; exit 1; }
-grep -Fq '"$source_root/deploy/check-activation-health.sh" "$updater_root/check-activation-health.sh"' "$root/bootstrap.sh"
-grep -Fq '"$source_root/src/credentials.ts" "$updater_root/credentials.ts"' "$root/bootstrap.sh"
-
-for script in "$root/bin/gh" "$root/bin/git" "$root/bin/git-credential-atlas" "$root/bootstrap.sh" "$root/capture-recovery-config.sh" "$root/check-health.sh" "$root/check-activation-health.sh" "$root/check-opencode.sh" "$root/check-space.sh" "$root/atlas-snapshot.sh" "$root/lib/recovery-status.sh" "$root/restore-rehearsal.sh" "$root/verify-opencode-commands.sh" "$root/verify-sqlite-wal.sh" "$root/stage-opencode.sh" "$root/install-opencode-config.sh" "$root/stage-release.sh" "$root/../scripts/build-release.sh" "$root/../scripts/verify-release-artifact.sh"; do
-  bash -n "$script"
-done
-
-for unit in "$root/systemd/atlas.service" "$root/systemd/atlas-credentials.service" "$root/systemd/opencode.service"; do
-  grep -Fq 'User=omega' "$unit"
-  grep -Fq 'Restart=on-failure' "$unit"
-  grep -Fq 'RestartSec=5s' "$unit"
-  if grep -Eiq 'mise|Requires=(atlas|opencode)|PartOf=(atlas|opencode)|BindsTo=(atlas|opencode)' "$unit"; then
-    echo "unit has an interactive-shim or lifecycle coupling" >&2
+# Retired tarball-era assets must stay gone.
+for path in bootstrap.sh stage-release.sh check-activation-health.sh check-opencode.sh bin systemd pins.env \
+    scrub-opencode-credentials.ts ../scripts/check-restored-state.ts ../scripts/build-release.sh; do
+  if [[ -e "$root/$path" ]]; then
+    echo "retired deployment asset is back: deploy/$path" >&2
     exit 1
   fi
 done
 
-for unit in "$root/systemd/atlas-snapshot.service" "$root/systemd/atlas-space-check.service"; do
+for script in "$root/capture-recovery-config.sh" "$root/check-health.sh" "$root/check-space.sh" "$root/atlas-snapshot.sh" "$root/lib/recovery-status.sh" "$root/restore-rehearsal.sh" "$root/verify-opencode-commands.sh" "$root/verify-sqlite-wal.sh" "$root/stage-opencode.sh" "$root/install-opencode-config.sh" "$root/../scripts/verify-release-artifact.sh"; do
+  bash -n "$script"
+done
+sh -n "$root/../install.sh"
+# The recovery tools must run without Bun, jq, pins, or a source tree.
+# (check-health.sh is an operator diagnostic and may use jq.)
+for script in "$root/capture-recovery-config.sh" "$root/check-space.sh" "$root/atlas-snapshot.sh" "$root/lib/recovery-status.sh" "$root/restore-rehearsal.sh" "$root/verify-sqlite-wal.sh" "$root/install-opencode-config.sh"; do
+  # (verify-sqlite-wal.sh may use the Bun runtime embedded in OpenCode, not a Bun install.)
+  if grep -Eq '^[^#]*(pins\.env|ATLAS_BUN_BINARY|(^|[[:space:];&|(])(bun|jq)[[:space:]]|\.ts\b)' "$script"; then
+    echo "recovery tool still needs Bun, jq, pins.env, or a source file: $script" >&2
+    exit 1
+  fi
+done
+
+# Render the units exactly as `atlas setup` will (default prefix and paths).
+units=$(mktemp -d)
+trap 'rm -rf -- "$units"' EXIT
+bun -e '
+  const { renderUnits, renderMaintenanceUnits } = await import(process.argv[1]);
+  const units = { ...renderUnits({ user: "omega", group: "omega", home: "/home/omega" }), ...renderMaintenanceUnits({ group: "omega" }) };
+  for (const [name, text] of Object.entries(units)) await Bun.write(`${process.argv[2]}/${name}`, text);
+  ' "$root/../src/units.ts" "$units"
+atlas_unit="$units/atlas.service"
+credentials_unit="$units/atlas-credentials.service"
+updater_unit="$units/atlas-updater.service"
+opencode_unit="$units/opencode.service"
+
+grep -Fxq 'User=root' "$updater_unit"
+grep -Fxq 'Group=omega' "$updater_unit"
+grep -Fxq 'ExecStart=/opt/atlas/services/current/atlas updater' "$updater_unit"
+grep -Fxq 'ReadWritePaths=/opt/atlas /run/atlas-updater' "$updater_unit"
+grep -Fxq 'StateDirectory=atlas-updater' "$updater_unit"
+grep -Fxq 'ReadOnlyPaths=-/opt/atlas/tools' "$updater_unit"
+grep -Fxq 'Environment=ATLAS_CREDENTIAL_REGISTRY_PATH=/var/lib/atlas/session-scopes.json' "$updater_unit"
+grep -Fxq 'Environment=ATLAS_SERVICE_USER=omega' "$updater_unit"
+grep -Fxq 'NoNewPrivileges=true' "$updater_unit"
+grep -Fxq 'ProtectSystem=strict' "$updater_unit"
+grep -Fxq 'ProtectHome=true' "$updater_unit"
+grep -Fxq 'PrivateTmp=true' "$updater_unit"
+grep -Fxq 'Restart=on-failure' "$updater_unit"
+grep -Fq 'checkActivationHealth' "$root/../src/updater-server.ts"
+grep -Fq '["systemctl", operation === "start" ? "restart" : "stop", "atlas.service"]' "$root/../src/updater-server.ts"
+if grep -Eiq 'opencode|EnvironmentFile=' "$updater_unit"; then
+  echo "Atlas updater must not manage OpenCode or load Atlas UI secrets" >&2
+  exit 1
+fi
+
+for unit in "$atlas_unit" "$credentials_unit" "$opencode_unit"; do
+  grep -Fxq 'User=omega' "$unit"
+  grep -Fxq 'Restart=on-failure' "$unit"
+  grep -Fxq 'RestartSec=5s' "$unit"
+  grep -Fxq 'LogRateLimitIntervalSec=30s' "$unit"
+  grep -Fxq 'LogRateLimitBurst=1000' "$unit"
+  if grep -Eiq 'mise|bun|/deploy/|Requires=(atlas|opencode)|PartOf=(atlas|opencode)|BindsTo=(atlas|opencode)' "$unit"; then
+    echo "unit has Bun, a source-tree path, an interactive shim, or lifecycle coupling: $unit" >&2
+    exit 1
+  fi
+done
+
+for unit in "$units/atlas-snapshot.service" "$units/atlas-space-check.service"; do
   grep -Fq 'User=root' "$unit"
   grep -Fq 'Group=omega' "$unit"
   grep -Fq 'LogRateLimitIntervalSec=30s' "$unit"
   grep -Fq 'LogNamespace=atlas' "$unit"
+  grep -Eq '^ExecStart=/opt/atlas/current/atlas ops (snapshot|check-space)$' "$unit"
+  if grep -Eiq 'bun|/deploy/' "$unit"; then
+    echo "maintenance unit still needs Bun or a source tree: $unit" >&2
+    exit 1
+  fi
 done
 
-grep -Fq 'Persistent=true' "$root/systemd/atlas-snapshot.timer"
-grep -Fq 'OnCalendar=*-*-* 03:00:00' "$root/systemd/atlas-snapshot.timer"
-grep -Fq 'SuccessExitStatus=1 2' "$root/systemd/atlas-space-check.service"
+grep -Fq 'Persistent=true' "$units/atlas-snapshot.timer"
+grep -Fq 'OnCalendar=*-*-* 03:00:00' "$units/atlas-snapshot.timer"
+grep -Fq 'SuccessExitStatus=1 2' "$units/atlas-space-check.service"
 grep -Fq 'atlas-v1-' "$root/atlas-snapshot.sh"
 grep -Fq 'daily_count -lt 7' "$root/atlas-snapshot.sh"
 grep -Fq 'weekly_count -lt 4' "$root/atlas-snapshot.sh"
 
-grep -Fq -- '--log-level warn serve --service --hostname 127.0.0.1 --port 49475' "$root/systemd/opencode.service"
-if grep -Eq 'bin/opencode2|--log-level [A-Z]' "$root/systemd/opencode.service"; then
+grep -Fq -- '--log-level warn serve --service --hostname 127.0.0.1 --port 49475' "$opencode_unit"
+if grep -Eq 'bin/opencode2|--log-level [A-Z]' "$opencode_unit"; then
   echo "OpenCode unit still uses the beta executable or an invalid log level" >&2
   exit 1
 fi
-grep -Fq 'ExecStartPre=/usr/bin/test -f /var/lib/atlas/opencode-config/opencode/opencode.json' "$root/systemd/opencode.service"
-grep -Fq 'atlas-credentials.service' "$root/systemd/atlas.service"
-grep -Fq 'atlas-updater.service' "$root/systemd/atlas.service"
-grep -Fq 'atlas-credentials.service' "$root/systemd/opencode.service"
-grep -Fq 'RuntimeDirectory=atlas' "$root/systemd/atlas-credentials.service"
-if grep -Fq 'RuntimeDirectory=atlas' "$root/systemd/atlas.service"; then
+grep -Fxq 'ExecStartPre=/usr/bin/test -f /var/lib/atlas/opencode-config/opencode/opencode.json' "$opencode_unit"
+grep -Fxq 'ExecStartPre=/opt/atlas/tools/opencode/current/bin/opencode --version' "$opencode_unit"
+grep -Fq 'ExecStart=/opt/atlas/tools/opencode/current/bin/opencode ' "$opencode_unit"
+grep -Fq 'atlas-credentials.service' "$atlas_unit"
+grep -Fq 'atlas-updater.service' "$atlas_unit"
+grep -Fq 'atlas-credentials.service' "$opencode_unit"
+grep -Fxq 'RuntimeDirectory=atlas' "$credentials_unit"
+if grep -Fq 'RuntimeDirectory=atlas' "$atlas_unit"; then
   echo "Atlas UI service must not own the credential socket directory" >&2
   exit 1
 fi
-if grep -Eq '/opt/atlas/current|EnvironmentFile=' "$root/systemd/atlas-credentials.service"; then
+if grep -Eq '/opt/atlas/current|EnvironmentFile=' "$credentials_unit"; then
   echo "credential supplier must not depend on a selected Atlas release or load UI secrets" >&2
   exit 1
 fi
-grep -Fq 'ExecStart=/opt/atlas/tools/bun/1.3.14/bin/bun /opt/atlas/services/current/atlas-credentials/credential-server.ts' "$root/systemd/atlas-credentials.service"
-grep -Fq 'ExecStartPre=/opt/atlas/current/deploy/check-opencode.sh' "$root/systemd/opencode.service"
-grep -Fq 'ExecStart=/opt/atlas/tools/opencode/current/bin/opencode ' "$root/systemd/opencode.service"
-grep -Fq 'PATH=/opt/atlas/current/deploy/bin:' "$root/systemd/atlas.service"
-grep -Fq 'PATH=/opt/atlas/current/deploy/bin:' "$root/systemd/opencode.service"
-grep -Fq 'ATLAS_GIT_BINARY=/opt/atlas/current/deploy/bin/git' "$root/systemd/atlas.service"
-grep -Fq 'ATLAS_GIT_BINARY=/opt/atlas/current/deploy/bin/git' "$root/systemd/opencode.service"
-grep -Fq 'XDG_CACHE_HOME=/var/lib/atlas/opencode-cache' "$root/systemd/opencode.service"
-grep -Fq 'ATLAS_GIT_BINARY=/opt/atlas/current/deploy/bin/git' "$root/atlas.env.example"
+grep -Fxq 'ExecStart=/opt/atlas/services/current/atlas credentials' "$credentials_unit"
+grep -Fxq 'ExecStart=/opt/atlas/current/atlas serve' "$atlas_unit"
+grep -Fq 'Environment=PATH=/opt/atlas/current/bin:' "$atlas_unit"
+grep -Fq 'Environment=PATH=/opt/atlas/current/bin:' "$opencode_unit"
+grep -Fxq 'Environment=ATLAS_GIT_BINARY=/opt/atlas/current/bin/git' "$atlas_unit"
+grep -Fxq 'Environment=ATLAS_GIT_BINARY=/opt/atlas/current/bin/git' "$opencode_unit"
+grep -Fxq 'ExecStartPre=/opt/atlas/current/bin/git --version' "$atlas_unit"
+grep -Fxq 'ExecStartPre=/opt/atlas/current/bin/git --version' "$opencode_unit"
+grep -Fxq 'Environment=XDG_CACHE_HOME=/var/lib/atlas/opencode-cache' "$opencode_unit"
+grep -Fxq 'EnvironmentFile=/etc/atlas/atlas.env' "$atlas_unit"
+if grep -Fq 'EnvironmentFile=' "$opencode_unit"; then
+  echo "OpenCode must not inherit Atlas secret environment" >&2
+  exit 1
+fi
+
+grep -Fq 'ATLAS_GIT_BINARY=/opt/atlas/current/bin/git' "$root/atlas.env.example"
 grep -Fq 'ATLAS_UPDATER_SOCKET=/run/atlas-updater/updater.sock' "$root/atlas.env.example"
 grep -Fq 'ATLAS_UPDATER_KEY_PATH=/etc/atlas/updater.key' "$root/atlas.env.example"
-grep -Fq 'ExecStartPre=/opt/atlas/current/deploy/bin/git --version' "$root/systemd/atlas.service"
-grep -Fq 'ExecStartPre=/opt/atlas/current/deploy/bin/git --version' "$root/systemd/opencode.service"
-grep -Fq 'LogRateLimitIntervalSec=30s' "$root/systemd/atlas.service"
-grep -Fq 'LogRateLimitIntervalSec=30s' "$root/systemd/opencode.service"
-grep -Fq 'LogRateLimitBurst=1000' "$root/systemd/atlas.service"
-grep -Fq 'LogRateLimitBurst=1000' "$root/systemd/opencode.service"
-grep -Fq 'EnvironmentFile=/etc/atlas/atlas.env' "$root/systemd/atlas.service"
 grep -Fq 'ATLAS_STORAGE_WARNING_BYTES=21474836480' "$root/atlas.env.example"
 grep -Fq 'ATLAS_BTRFS_METADATA_WARNING_PERCENT=80' "$root/atlas.env.example"
 grep -Fq 'ATLAS_BTRFS_METADATA_PAUSE_PERCENT=90' "$root/atlas.env.example"
 grep -Fq 'ATLAS_BTRFS_METADATA_REQUIRED=1' "$root/atlas.env.example"
 grep -Fq 'ATLAS_RECOVERY_STATUS_PATH=/var/lib/atlas/recovery-status' "$root/atlas.env.example"
 grep -Fq 'ATLAS_RECOVERY_CONFIG_ROOT=/var/lib/atlas/recovery-config' "$root/atlas.env.example"
-grep -Fq 'ATLAS_GIT_BINARY=/opt/atlas/tools/git/2.55.0/bin/git' "$root/pins.env"
-grep -Fxq 'ATLAS_OPENCODE_BINARY=/opt/atlas/tools/opencode/current/bin/opencode' "$root/pins.env"
-grep -Fq '"@opencode/client": "'"$ATLAS_OPENCODE_CLIENT_VERSION"'"' "$root/../package.json"
 grep -Fq 'server_version=%s' "$root/stage-opencode.sh"
 grep -Fq 'registry_integrity=%s' "$root/stage-opencode.sh"
-if grep -Eq 'ATLAS_OPENCODE_(VERSION|CLI_LINUX_X64_INTEGRITY|CLIENT_INTEGRITY|SCHEMA_INTEGRITY|PROTOCOL_INTEGRITY)=' "$root/pins.env"; then
-  echo "deployment manifest still pairs the OpenCode server with Atlas client packages" >&2
-  exit 1
-fi
-if grep -Eq '@opencode(-ai)?/(client|schema|protocol)|systemctl' "$root/stage-opencode.sh" "$root/stage-release.sh"; then
-  echo "staging must not bundle Atlas client packages or manage OpenCode lifecycle" >&2
+if grep -Eq '@opencode(-ai)?/(client|schema|protocol)|systemctl' "$root/stage-opencode.sh"; then
+  echo "OpenCode staging must not bundle Atlas client packages or manage OpenCode lifecycle" >&2
   exit 1
 fi
 # Headless OpenCode configuration: no update checks or installs, no .env
@@ -176,9 +203,8 @@ jq -e '
   (.policies | index({action: "tool.use", resource: "read:/etc/atlas/*", effect: "deny"}) != null) and
   (.policies | all(.effect == "deny"))
 ' "$headless_config" >/dev/null || { echo "headless OpenCode configuration lost a required safety setting" >&2; exit 1; }
-grep -Fq '"$root/install-opencode-config.sh" "$data_root/opencode-config"' "$root/bootstrap.sh"
 grep -Fq '"$root/install-opencode-config.sh" "$target/opencode-config"' "$root/restore-rehearsal.sh"
-grep -Fq '"$ATLAS_BUN_BINARY" "$root/scrub-opencode-credentials.ts" "$opencode_db"' "$root/restore-rehearsal.sh"
+grep -Fq '"$atlas_bin" ops scrub-opencode-credentials "$opencode_db"' "$root/restore-rehearsal.sh"
 grep -Fq '"$target/opencode-data/opencode/auth.json"' "$root/restore-rehearsal.sh"
 if grep -Eq 'systemctl' "$root/install-opencode-config.sh"; then
   echo "headless OpenCode configuration install must not manage OpenCode lifecycle" >&2
@@ -189,28 +215,19 @@ grep -Fq 'rotate 10' "$root/logrotate/atlas-opencode"
 grep -Fq 'copytruncate' "$root/logrotate/atlas-opencode"
 grep -Fq 'SystemMaxUse=256M' "$root/journald/atlas.conf"
 grep -Fq 'MaxRetentionSec=14day' "$root/journald/atlas.conf"
-grep -Fq "ATLAS_BUN_VERSION=$ATLAS_BUN_VERSION" "$root/pins.env"
-if grep -Fq 'EnvironmentFile=' "$root/systemd/opencode.service"; then
-  echo "OpenCode must not inherit Atlas secret environment" >&2
-  exit 1
-fi
 
 if command -v systemd-analyze >/dev/null 2>&1; then
-  unit_output=$(mktemp)
-  trap 'rm -f -- "$unit_output"' EXIT
-  if ! systemd-analyze verify "$root/systemd/atlas.service" "$root/systemd/atlas-credentials.service" "$root/systemd/atlas-updater.service" "$root/systemd/opencode.service" "$root/systemd/atlas-snapshot.service" "$root/systemd/atlas-snapshot.timer" "$root/systemd/atlas-space-check.service" "$root/systemd/atlas-space-check.timer" >"$unit_output" 2>&1; then
-    # The pinned host paths are intentionally absent during safe setup. Keep
-    # systemd's syntax/dependency check, but do not pretend staged binaries
-    # exist before the human cutover window.
-    unexpected=$(grep -Ev '^((atlas|atlas-credentials|atlas-updater|opencode|atlas-snapshot|atlas-space-check)\.service: Command /opt/atlas/(current/deploy/(bin/git|check-opencode\.sh|atlas-snapshot\.sh|check-space\.sh)|tools/(bun/1\.3\.14/bin/bun|git/2\.55\.0/bin/git|opencode/current/bin/opencode)) is not executable: No such file or directory)$' "$unit_output" || true)
+  unit_output="$units/analyze.log"
+  if ! systemd-analyze verify "$atlas_unit" "$credentials_unit" "$updater_unit" "$opencode_unit" "$units/atlas-snapshot.service" "$units/atlas-snapshot.timer" "$units/atlas-space-check.service" "$units/atlas-space-check.timer" >"$unit_output" 2>&1; then
+    # The installed paths are intentionally absent on a build host. Keep
+    # systemd's syntax/dependency check, but do not pretend the binaries exist.
+    unexpected=$(grep -Ev '^((atlas|atlas-credentials|atlas-updater|opencode|atlas-snapshot|atlas-space-check)\.service: Command /opt/atlas/(current/(atlas|bin/git|deploy/(atlas-snapshot\.sh|check-space\.sh))|services/current/atlas|tools/opencode/current/bin/opencode) is not executable: No such file or directory)$' "$unit_output" || true)
     if [[ -n "$unexpected" ]]; then
       cat "$unit_output" >&2
       exit 1
     fi
-    echo "systemd unit syntax verified; staged executable paths are not installed yet"
+    echo "systemd unit syntax verified; installed executable paths are not present yet"
   fi
-  rm -f -- "$unit_output"
-  trap - EXIT
 fi
 
 echo "deployment assets verified (static only; no service, routing, or data changes made)"

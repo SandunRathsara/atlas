@@ -182,7 +182,7 @@ if (args.includes("clone")) {
 } else if (command === "branch" && args.includes("--show-current")) {
   console.log(readFileSync(join(directory, ".git", "current-branch"), "utf8"));
 } else if (command === "config" && args.includes("--get-all")) {
-  console.log("atlas-git-credential");
+  console.log("!ATLAS_SUPPLIER_SOCKET='/run/atlas/supplier.sock' ATLAS_SUPPLIER_KEY_PATH='/etc/atlas/supplier.key' '/opt/atlas/releases/atlas-v0.1.0+build.1/atlas' 'git-credential'");
 } else if (command === "rev-parse" && args.includes("--is-shallow-repository")) {
   console.log("false");
 } else if (command === "rev-parse" && args.includes("--git-path")) {

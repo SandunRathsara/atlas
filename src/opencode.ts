@@ -1,9 +1,8 @@
-import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { OpenCode } from "@opencode/client";
+import clientManifest from "@opencode/client/package.json" with { type: "json" };
 import type { OpenCodeClient, OpenCodeEvent, SessionInfo } from "@opencode/client";
 import { Service } from "@opencode/client/service";
 import type { Endpoint } from "@opencode/client/service";
@@ -49,26 +48,13 @@ const OUTCOME_CONFIRM_MS = 10_000;
 
 const PROGRESS_EVENT = /^session\.(step\.first-token|text\.|tool\.|reasoning\.)/u;
 
-// The installed client package is the source of truth; `scripts/release.ts` pins it to deploy/pins.env.
-const readInstalledClientVersion = () => {
-  try {
-    let directory = dirname(fileURLToPath(import.meta.resolve("@opencode/client")));
-    for (let depth = 0; depth < 4; depth += 1) {
-      try {
-        const manifest = JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as { name?: unknown; version?: unknown };
-        if (manifest.name === "@opencode/client") return typeof manifest.version === "string" && manifest.version ? manifest.version : null;
-      } catch {
-        // Keep walking toward the package root.
-      }
-      directory = dirname(directory);
-    }
-  } catch {
-    // An unresolvable client cannot be reported; the warning stays silent.
-  }
-  return null;
-};
-
-export const openCodeClientVersion: string | null = readInstalledClientVersion();
+// The installed client package is the source of truth; `scripts/build-release.ts` checks it against package.json and bun.lock.
+// The JSON import is inlined at compile time, so the binary never reads node_modules.
+const installedClientManifest = clientManifest as { name?: unknown; version?: unknown };
+export const openCodeClientVersion: string | null =
+  installedClientManifest.name === "@opencode/client" && typeof installedClientManifest.version === "string" && installedClientManifest.version
+    ? installedClientManifest.version
+    : null;
 
 const majorMinor = (version: string) => /^v?(\d+)\.(\d+)(?:\.|$|-)/u.exec(version.trim())?.slice(1, 3).join(".");
 

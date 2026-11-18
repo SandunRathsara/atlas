@@ -1413,7 +1413,8 @@ export const createPersistence = (options: PersistenceOptions) => {
     const candidates = JSON.parse(row.candidates_json) as unknown;
     if (!Array.isArray(candidates)) throw new Error("Saved release discovery state is invalid");
     return {
-      candidates: candidates.map(assertReleaseMetadata),
+      // Schema-1 (tarball) candidates saved by an older Atlas are dropped; the next check rediscovers Releases.
+      candidates: candidates.filter((candidate) => (candidate as { schemaVersion?: unknown } | null)?.schemaVersion !== 1).map(assertReleaseMetadata),
       lastCheckAt: row.last_check_at,
       lastSuccessAt: row.last_success_at,
       lastFailureAt: row.last_failure_at,

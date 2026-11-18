@@ -73,8 +73,11 @@ fi
 
 [[ -f "$marker_source" && ! -L "$marker_source" ]] || fail source_invalid "snapshot marker asset is unavailable"
 [[ -d "$source_path" && ! -L "$source_path" ]] || fail source_invalid "snapshot source is missing or unsafe"
+# Files below are in the service user's data folder: read only through
+# atlas_read_regular (regular file on the open fd, 10 s limit), never directly.
 [[ -f "$source_path/$marker_name" && ! -L "$source_path/$marker_name" ]] || fail source_invalid "snapshot source marker is missing or unsafe"
-cmp -s -- "$marker_source" "$source_path/$marker_name" || fail source_invalid "snapshot source marker is invalid"
+marker_text=$(atlas_read_regular "$source_path/$marker_name" 4096) || fail source_invalid "snapshot source marker is missing or unsafe"
+[[ "$marker_text" == "$(cat -- "$marker_source")" ]] || fail source_invalid "snapshot source marker is invalid"
 if [[ "$dry_run" == false ]]; then
   (( EUID == 0 )) || fail source_invalid "production snapshots must run as root"
   [[ "$(stat -c %u:%a -- "$source_path/$marker_name")" == "0:444" ]] || fail source_invalid "snapshot source marker ownership or mode is invalid"
@@ -87,10 +90,12 @@ done
 [[ -f "$source_path/atlas.sqlite" && ! -L "$source_path/atlas.sqlite" ]] || fail scope_incomplete "Atlas database is missing from the snapshot source"
 [[ -f "$source_path/opencode-data/opencode/opencode.db" && ! -L "$source_path/opencode-data/opencode/opencode.db" ]] || fail scope_incomplete "OpenCode database is missing from the snapshot source"
 wal_record="$source_path/recovery-config/current/checksums/sqlite-wal-versions"
-[[ -f "$wal_record" && ! -L "$wal_record" ]] || fail scope_incomplete "SQLite WAL safety verification record is missing"
-grep -Fxq 'wal_reset_fix=verified' "$wal_record" || fail scope_incomplete "SQLite WAL safety verification record is invalid"
-recorded_commit=$(sed -n 's/^release_commit=//p' "$wal_record")
-[[ -n "$recorded_commit" && "$recorded_commit" == "$(cat "$source_path/recovery-config/current/release/RELEASE_COMMIT")" ]] || fail scope_incomplete "SQLite verification does not match the protected release"
+wal_text=$(atlas_read_regular "$wal_record" 65536) || fail scope_incomplete "SQLite WAL safety verification record is missing"
+grep -Fxq 'wal_reset_fix=verified' <<< "$wal_text" || fail scope_incomplete "SQLite WAL safety verification record is invalid"
+recorded_release=$(sed -n 's/^release_metadata_sha256=//p' <<< "$wal_text")
+protected_metadata="$source_path/recovery-config/current/release/RELEASE_METADATA.json"
+metadata_sha=$(atlas_read_regular "$protected_metadata" | sha256sum | cut -d ' ' -f 1) || fail scope_incomplete "recovery configuration has no Release metadata"
+[[ -n "$recorded_release" && "$recorded_release" == "$metadata_sha" ]] || fail scope_incomplete "SQLite verification does not match the protected release"
 
 [[ -d "$backup_root" && ! -L "$backup_root" ]] || fail source_invalid "snapshot destination root is missing or unsafe"
 [[ "$source_path" != "$backup_root" && "$source_path" != "$backup_root"/* && "$backup_root" != "$source_path"/* ]] || fail source_invalid "snapshot source and destination must be separate"

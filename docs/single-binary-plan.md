@@ -1,0 +1,143 @@
+# Single-binary Atlas plan
+
+Status: **Implemented on the `single-binary` branch; first Release `v0.1.0+build.1` pending.** Approved 2026-11-18 (owner directed the full build and the first Release); recorded as [ADR-0003](adr/0003-single-binary-and-installer.md). The "Build contract" section below is binding for every phase.
+
+## Goal
+
+Another team can install their own private Atlas with one command:
+
+```sh
+curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sudo sh
+```
+
+The command runs as root. It downloads one `atlas` binary into a root-only folder, checks it, and runs `atlas setup`. The setup wizard asks a few questions, writes config and systemd units, and starts Atlas.
+
+## Owner decisions (2026-11-18)
+
+| Question | Answer |
+|---|---|
+| Who installs? | Other teams, each on its own private server with its own GitHub App. Atlas stays a private app. |
+| Install script scope | Binary plus setup wizard. The wizard checks git, gh and OpenCode and says what is missing. It does not install them. |
+| Owner's existing server | Reinstall by hand with the new script, keeping `/var/lib/atlas`. No bridge release. |
+
+### Owner changes during Phase 4 (2026-11-18)
+
+These override the matching lines further down.
+
+1. **Tailscale is in scope.** `atlas setup --tailscale=yes|no|ask` may run `tailscale serve` for the UI (never Funnel; it only prints the Funnel hint for webhooks). It asks an explicit y/n first and never replaces an existing serve config without asking.
+2. **Missing OpenCode is a warning,** not a stop. Missing or too-old systemd, git or gh still stop setup before any change.
+3. **Tree-release code and `deploy/bootstrap.sh` were deleted in Phase 3,** not Phase 5. Phase 4 also removed `deploy/pins.env` and the checked-in maintenance units.
+4. **Tool minimums lowered** to git 2.36.0 and gh 2.3.0 (evidence in `src/host-tools.ts`), so stock Debian 12 and Ubuntu 24.04 packages work.
+
+## What stays the same
+
+- Release identity: `vX.Y.Z+build.N`, global build numbers, immutable Releases.
+- Self-update rules: the 4-hour check, approval vs automatic policy, safe pause, 60-second health check, rollback, and retention.
+- Three long-running processes: UI, credential supplier, updater. Only how they start changes.
+- Atlas never manages OpenCode.
+
+## What changes
+
+| Today | After |
+|---|---|
+| `.tar.gz` of source + `node_modules`, run by host Bun | One compiled `atlas` binary with Bun built in |
+| Host needs pinned Bun 1.3.14 | No Bun on the host |
+| Three entry files (`src/server.ts`, `credential-server.ts`, `updater-server.ts`) | One entry `src/cli.ts`: `atlas serve`, `atlas credentials`, `atlas updater`, `atlas gh`, `atlas git-credential`, `atlas setup`, `atlas version` |
+| Support bundle = copied `.ts` files | Support bundle = a copy of the binary |
+| `deploy/bootstrap.sh` + manual host setup | `install.sh` + `atlas setup` |
+| Service user hard-coded to `omega` | Chosen during setup (default: a dedicated `atlas` system account, created with consent) |
+
+## Code that assumes a source folder (all fixable)
+
+| # | Where | Fix |
+|---|---|---|
+| 1 | `src/app.ts` reads `public/*.css/js/fonts` through `import.meta.url` | Embed with `import … with { type: "file" }` |
+| 2 | `src/app.ts` reads `node_modules/htmx.org/dist/htmx.min.js` | Embed the same way |
+| 3 | `src/release.ts#loadReleaseIdentity` reads `RELEASE_METADATA.json` from the release folder | Keep the file next to the binary in each release folder (no change in staging), plus `atlas version --json` for local checks |
+| 4 | `src/opencode.ts#openCodeClientVersion` reads `@opencode/client/package.json` at runtime | Read it at build time (JSON import or `--define`) |
+| 5 | `src/preparation.ts` runs `bun scripts/atlas-git-credential.ts` | Run `<binary> git-credential` (`process.execPath` is the binary) |
+| 6 | `deploy/bin/gh`, `deploy/bin/git-credential-atlas` call Bun scripts | 2-line shims: `exec <release>/atlas gh "$@"` |
+| 7 | `src/updater.ts#installShippedSupportServices` copies `.ts` files | Copy the binary |
+| 8 | `src/updater-server.ts` runs `check-activation-health.sh` | Do the same `/health?activation=1` check in TypeScript |
+| 9 | Runtime checks require Bun | Drop the Bun check. Keep the Git and gh checks. |
+
+## New release layout
+
+Each release folder stays one immutable directory, so retention and Session helper references keep working:
+
+```
+/opt/atlas/releases/atlas-v1.4.0+build.12/
+  atlas                    # the binary, read-only
+  RELEASE_METADATA.json
+  bin/gh                   # shim → ../atlas gh
+  bin/git-credential-atlas # shim → ../atlas git-credential
+  bin/git                  # pinned-git wrapper (unchanged)
+/opt/atlas/current → releases/atlas-v1.4.0+build.12
+/usr/local/bin/atlas → /opt/atlas/current/atlas
+```
+
+The GitHub Release ships:
+
+- `atlas-linux-x64`: the binary
+- `atlas-linux-x64.sha256`
+- `atlas-release.json` with `schemaVersion: 2`. Old updaters reject schema 2, so the owner's server never tries to install it the old way.
+- `install.sh`, the same file for every Release
+
+## Install flow
+
+1. `install.sh` (POSIX sh, root only; without root it stops before downloading):
+   - refuses anything other than Linux x64 with glibc
+   - downloads the latest stable `atlas-linux-x64`, or a version passed as an argument, into a new root-only folder under `/var/tmp`
+   - verifies the SHA-256 and stops on mismatch
+   - runs `atlas setup --source-dir <folder>`; with no terminal and no answers it keeps the folder and prints that command to run as root
+   - never creates the release folder itself (setup does)
+2. `atlas setup` (root):
+   - **Checks:** systemd, git and gh are present at the minimum versions. Anything missing is listed with a fix-it hint, and setup stops before changing anything. A missing OpenCode is a warning.
+   - **Asks:** service user (default `atlas`; creating it needs a yes; an account that can become root is refused unless explicitly allowed), GitHub org, GitHub App ID, installation ID and private-key path, public origin URL, ports.
+   - **Generates:** shared token and webhook secret.
+   - **Writes:** root-owned `/etc/atlas` (`atlas.env` root `0600`; `github.env` and keys `root:<group> 0640`), data folders, systemd units (embedded in the binary), and the headless OpenCode config.
+   - **Starts and checks:** starts the services, then checks `/health`.
+   - **Tailscale (optional):** after a y/n, `tailscale serve` for the UI and `ATLAS_ORIGIN` from the tailnet name. An existing serve config is replaced only after another yes.
+   - **Prints:** the URL, the token (once), and the Funnel hint for webhooks.
+3. **Adopt mode:** if `/etc/atlas` and `/var/lib/atlas` already exist, setup keeps them and the existing service user (warning if it is privileged). It replaces the units and the release layout, moves the secrets to root ownership, keeps a backup of the old units and env files, and stops the old services first. This is how the owner's server moves over.
+
+## Phases
+
+Each phase ends green on its checks and is shippable on its own.
+
+1. **Compile.** Add `src/cli.ts` and fix items 1–6. `bun build --compile` produces a binary that runs `atlas serve` locally from any folder. Existing tree releases keep working.
+2. **Publish.** Change `release.yml` and `scripts/build-release.sh` to build and smoke-test the binary and publish the 4 files above. Move release metadata to schema 2.
+3. **Self-update on the binary.** Fix items 7–9. Staging downloads the binary, verifies it, and creates the release folder with shims. Update the units. Port the verify scripts (`verify:issue55`, `57`, `58`, `59`, `61`).
+4. **Installer.** Add `install.sh` and `atlas setup` with fresh and adopt modes. Tested in Docker systemd containers (Ubuntu 24.04, Debian 12) and on a modelled copy of the owner's old layout (`scripts/e2e-install-docker.sh`). Done.
+5. **Move the owner's server.** Run adopt mode on the owner's server (`docs/INSTALL.md`). After it is healthy, remove the old Release trees and Bun tools by hand.
+
+## Decisions to record (ADR-0003, needs approval)
+
+- **Supersedes ADR-0002 §2 (packaging):** a compiled binary replaces the source tree, and the host no longer needs Bun.
+- **Supersedes ADR-0002 §6 (bootstrap):** `install.sh` and `atlas setup` replace `deploy/bootstrap.sh`.
+- **DOMAIN.md non-goal "Does not automatically provision the host":** narrowed. Setup writes Atlas's own config, units and folders, and (after asking) Tailscale Serve. It still does not install git, gh, OpenCode or OS packages, and does not change the firewall or Funnel.
+- **Service user is configurable** instead of `omega`.
+
+## Build contract (binding)
+
+Decided on 2026-11-18. Every phase follows this so the parts fit together.
+
+- **No dual paths.** No Release was ever published, so there is nothing to stay compatible with. The binary replaces the tree release outright. Delete tree-release code when it is superseded instead of keeping both.
+- **Tag and identity:** unchanged `vX.Y.Z+build.N`. The first Release is `v0.1.0+build.1`.
+- **Compile target:** `bun-linux-x64-baseline`, built by Bun 1.3.14. glibc only.
+- **Release assets (exact names):** `atlas-linux-x64`, `atlas-linux-x64.sha256` (one line: `<hex>  atlas-linux-x64`), `atlas-release.json` (`schemaVersion: 2`, includes the binary's SHA-256), `install.sh`.
+- **Identity is embedded** in the binary at build time (`atlas version --json` works anywhere). `RELEASE_METADATA.json` is still written next to the binary in each release folder. Staging refuses a binary whose embedded identity disagrees with `atlas-release.json`.
+- **One implementation of the release folder.** A single TypeScript function builds `/opt/atlas/releases/atlas-<tag>/` (binary, metadata, `bin/` shims). Updater staging and `atlas setup` both call it. `install.sh` never lays out folders.
+- **`install.sh` is thin:** platform check, download, SHA-256 check, then hand off to `atlas setup`. POSIX `sh`, no bashisms.
+- **`atlas setup` is testable:** every answer can come from flags or an answers file (no TTY needed), and a root-prefix option lets checks run it in a temp folder without root and with `systemctl` faked.
+- **Tool versions:** minimum versions for git (2.36.0) and gh (2.3.0). No Bun on the host. OpenCode stays diagnostic-only.
+- **Service user:** chosen in setup (default a dedicated `atlas` account), never hard-coded. systemd units are generated from templates embedded in the binary.
+- **Root updater rule:** never execute a binary before its SHA-256 matches the published checksum. Run candidates as the service user, never as root. Fetch Release metadata itself, only move forward to a higher build, and keep state in root-only `/var/lib/atlas-updater`.
+- **Release pipeline:** manual `workflow_dispatch` with a `patch`/`minor`/`major` bump, an allowlist of releasers (`SandunRathsara`), the full check gate first, a build job with a read-only token, and a separate publish job that re-checks the SHA-256 and runs no repo code. Every Action is pinned to a commit SHA. `check.yml` runs fast checks on PRs and full checks plus a throwaway packaging check on `main`.
+- **Out of scope:** musl/Alpine, arm64, installing git/gh/OpenCode, Tailscale Funnel or the firewall, moving the owner's server (the owner runs adopt mode by hand).
+
+## Risks
+
+- **The updater runs as root.** It must only ever run binaries whose SHA-256 matches the published checksum, and it should start the candidate as the service user, never as root.
+- **Verify scripts assume the tree layout.** Phase 3 is the largest phase for this reason.
+- **Size.** The binary is about 100 MB because Bun is inside. That is fine for one download per release.

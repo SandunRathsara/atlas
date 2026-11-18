@@ -19,13 +19,13 @@
     },
     {
       "number": "2",
-      "title": "Bootstrap the surviving services",
+      "title": "Install the surviving services",
       "kind": "checklist",
       "items": [
         {
           "id": "record-processes",
           "title": "Record the selected release and OpenCode process",
-          "instruction": "Run these read-only commands before bootstrap and keep their output for the final comparison.",
+          "instruction": "Run these read-only commands before setup and keep their output for the final comparison.",
           "codeBlocks": [
             {
               "language": "bash",
@@ -33,26 +33,26 @@
             }
           ],
           "expectedResult": "The first command prints the currently selected immutable Atlas release directory; the second prints the current OpenCode process ID.",
-          "failureGuidance": "Stop if the selected release is missing or OpenCode is unexpectedly inactive; resolve the host baseline before testing bootstrap."
+          "failureGuidance": "Stop if the selected release is missing or OpenCode is unexpectedly inactive; resolve the host baseline before testing setup."
         },
         {
           "id": "run-bootstrap",
-          "title": "Run the documented bootstrap command",
-          "instruction": "Run the bootstrap from the selected reviewed release.",
+          "title": "Run the documented setup command",
+          "instruction": "Run setup from the selected reviewed release. Requires Phase 4 `atlas setup`; until it ships, this checklist cannot be run on a host.",
           "codeBlocks": [
             {
               "language": "bash",
-              "content": "sudo /opt/atlas/current/deploy/bootstrap.sh"
+              "content": "sudo /opt/atlas/current/atlas setup"
             }
           ],
           "warning": "This privileged command installs or updates systemd units, the atomically selected immutable updater/credential support bundle, and restricted keys. It may briefly restart Atlas only when credential runtime ownership must be transferred; it must not restart OpenCode.",
-          "expectedResult": "The command exits 0 and prints that the Atlas credential supplier and updater bootstrap completed and OpenCode was not restarted.",
-          "failureGuidance": "Do not proceed. Inspect systemctl status and the Atlas journal namespace without printing /etc/atlas key or credential contents. Correct the bootstrap failure, then rerun the command."
+          "expectedResult": "The command exits 0 and reports that the Atlas credential supplier and updater are installed and OpenCode was not restarted.",
+          "failureGuidance": "Do not proceed. Inspect systemctl status and the Atlas journal namespace without printing /etc/atlas key or credential contents. Correct the setup failure, then rerun the command."
         },
         {
           "id": "verify-services",
           "title": "Verify independent service continuity",
-          "instruction": "Confirm both surviving services are active and compare the OpenCode process ID with the value recorded before bootstrap.",
+          "instruction": "Confirm both surviving services are active and compare the OpenCode process ID with the value recorded before setup.",
           "codeBlocks": [
             {
               "language": "bash",
