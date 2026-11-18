@@ -10,6 +10,75 @@ Implement the theme once in the shared stylesheet and keep it synchronized with 
 
 ## Design decision record
 
+> **Overhaul in progress (2026-11-18).** The owner picked direction **A "Health"** (Apple-app feel) over B "Rex" and C "Warm" in the Phase 1 taste round of `docs/ui-overhaul-plan.md`. Prototype: `prototypes/taste/a.ts`. Direction A means large bold titles, grouped inset rounded lists, coloured status icon tiles, a translucent bar, a bottom tab bar on phones, Inter as the UI font, navy `#012B68` kept as the brand and tint, light and dark modes, and roomy spacing. The table below stays in force until each overhaul phase locks its replacement rules here. Mode, corners, density and glass are already reopened.
+>
+> **Phase 2 fine-tune (2026-11-18)**, picked on `prototypes/taste/tile.ts`. Values are prototype values; Phase 7 moves them into `src/styles.css`.
+>
+> | Question | Decision | Rejected |
+> | --- | --- | --- |
+> | Mode | Light and dark; follow the system, with a per-browser override | Dark only |
+> | Dark background | Pure black `#000000` page, `#1C1C1E` grouped cards | Soft graphite `#161618` |
+> | Corners | Round: 14px groups, 18px hero cards, 12px buttons, 9px icon tiles, pill chips | Tighter 8/6px |
+> | Primary button | Bright blue with white text: light `#0A63D8` (5.5:1), dark `#0A6CF0` (4.8:1). Apple's `#0A84FF` was rejected at 3.6:1. Navy `#012B68` stays for the logo, selection tint and light-mode tint | Deep navy fill |
+> | Status markers | Coloured rounded icon tiles (white glyph on status colour) | Small dots |
+> | Density | Roomy: 64px list rows, 16px row titles, 15px body, 34px large titles, 40px buttons | Snug 50px rows |
+> | Font | Inter (UI) + Geist Mono (code), self-hosted `.woff2`; owner approved bundling 2026-11-18 | System font (resolves to Liberation Sans on Linux) |
+>
+> **Phase 3 components (2026-11-18)**, picked on `prototypes/taste/parts.ts`. The owner approved all of Part 2 (status set incl. Stale "Not live" tag, button ladder, empty, error, toast, exact-time tooltip, Spec prose, wide table) without changes.
+>
+> | Component | Decision | Rejected |
+> | --- | --- | --- |
+> | Row status | Tinted pill (status colour at ~16% behind status-coloured text) | Bare coloured text |
+> | Secondary button | Outline (1.5px separator ring, no fill) | Grey fill |
+> | Text fields | Outlined: card background with 1.5px ring, 12px corners, 44px tall | Grey filled |
+> | Starting-target picker | Grouped Settings-style list with a trailing tick; ineligible rows dimmed with a plain reason | Bordered choice cards with radios |
+> | Phone ⋯ menu | Bottom action sheet with a separate Cancel group; destructive item red, last | Dropdown pop-up (desktop keeps the pop-up) |
+> | System warnings | Thin amber strip under the top bar, one line plus "Details" | Pill in the top bar |
+> | Loading | Shimmering skeleton shapes | Spinner |
+> | Live output | Terminal well, always dark in both modes | Page-matched well |
+>
+> **Phase 4 frame (2026-11-18)**, picked on `prototypes/taste/frame.ts`. The owner approved the quick-search overlay (desktop centred panel; phone full-screen with Cancel) without changes.
+>
+> | Question | Decision | Rejected |
+> | --- | --- | --- |
+> | Desktop sidebar | Live list: segmented Inbox · Sessions · PRs · Repos, then every Spec grouped Needs you → Working → Settled, each with a small status tile, title and age; selected item tinted | Section links (Inbox, Sessions, PRs…) |
+> | Phone navigation | Bottom tab bar: Inbox · Sessions · PRs · Repos · More | Menu button opening a sheet |
+> | Quick search entry (desktop) | Search field at the top of the sidebar with a ⌘K hint; phone uses a magnifier in the top bar | Top-right button |
+> | Repository filter | One dropdown button ("All Repositories ▾"); on phones it sits beside the large title | Chips under the title |
+> | Light/dark switch | Auto · Light · Dark segmented control in the account menu (sidebar footer; More tab on phones). Default Auto follows the device | Moon button in the top bar |
+> | Updates, Sign out | In the account menu | Sidebar links |
+>
+> **Phase 5 screens (2026-11-18)**, picked on `prototypes/taste/inbox.ts` and later Phase 5 pages. The owner approved the phone Inbox list (needs-you card with Open Session, then Working → Not started → Settled groups, unread dot on new results) without changes.
+>
+> | Screen | Decision | Rejected |
+> | --- | --- | --- |
+> | Inbox, desktop main area | Mail-style: the top Needs-you item (else the newest Working item) opens in the main pane; the sidebar live list selects what the pane shows | "Today overview" dashboard of cards |
+> | Session page structure | Title + status card on top, then a segmented control: Activity · Spec · Details (Spec = snapshot + prompt; Details = technical facts) | One long scrolling page |
+> | Agent activity | Agent messages shown in full; tool steps between them folded into one "N steps · summary" row that expands on tap; the live step stays visible | Every step listed as its own row |
+> | Pull request result | Prominent green-ringed PR card above the status card with an "Open on GitHub" primary button | One line inside the status card |
+> | Session states (approved, `prototypes/taste/session.ts` Part 2) | Waiting shows the Agent's question read-only with "Answer it in OpenCode. Atlas can't reply."; Stale shows a "Not live" amber banner, dims the page and drops the Live tag; ⋯ sheet = Spec on GitHub, Spec in Atlas, Repository Sessions, then (only when they apply) Review current target and red Release stack reservation… | — |
+> | Start Session entry | Its own page (phone: Cancel · "Start Session" · Start bar; desktop: centred modal over the Spec, approved in Part 2) | Bottom sheet over the Spec |
+> | Spec page Start button | Pinned in a bar above the phone tab bar, always in reach; desktop keeps it in the title row | Under the title, scrolls away |
+> | Start form order | "Start from" target list first (Settings-style, tick, ineligible rows dimmed with the reason), then the required prompt (outlined, "Required… Atlas sends it exactly as written") | Prompt first with a collapsed "Start from" row |
+> | Spec page states (approved, `prototypes/taste/spec.ts` Part 2) | Duplicate start shows a red "Session not queued" box linking to the existing Session; a Repository that can't start shows a plain grey note instead of the button | — |
+> | Repositories list | Cards: colour initial tile, name + owner/name, description, then a "N Specs · N working" footer | Settings-style list rows |
+> | Inside a Repository | Segmented control: Specs · Pull requests · Sessions | Pull requests / Sessions link rows above the Specs list |
+> | Spec rows in a Repository | Plain: title + "Spec #N · updated X ago"; status lives on the Spec page | Session status pill on every row |
+> | Repository management (approved, `prototypes/taste/repos.ts` Part 2) | Add Repository is its own page from "+" (filter field; Add / Added / Re-add per row; amber notes for removed or archived; footnote that adding changes nothing on GitHub). Remove from Atlas lives in the Repository ⋯ sheet and **asks first** (new behaviour: today's remove has no confirm) | — |
+> | PR stack look | Card per stack ("Stack #N · N layers") with layers joined by a vertical line; dot colour = state (purple merged, green open, red closed, grey draft); "TOP" tag on the top layer | Numbered 1/2/3 rows |
+> | PR stack order | Oldest (base) layer on top, matching GitHub's bottom-to-top order | Newest layer on top |
+> | Start eligibility on the Pull requests tab | Shown inline: a tick/cross line at the foot of each stack card and under each standalone PR row, with the real reason | Only inside the Start Session form |
+> | Pull requests states (approved, `prototypes/taste/prs.ts` Part 2) | Unverified = amber "Couldn't check GitHub just now" banner over last-seen data; blocked stack = red Closed layer + cross line with the reason; empty = centred "No open pull requests" | — |
+> | Sessions tab: status filter | Horizontal chip row (Active · All · Running · Waiting · Queued · Failed …), Active selected by default | "Active ▾" menu button |
+> | Sessions tab: list | One list, newest first, state pill on the right | Grouped under state headings |
+> | Sessions tab: prompt | Hidden in rows (shown on the Session page) | One-line prompt preview per row |
+> | Sessions tab states (approved, `prototypes/taste/allsessions.ts` Part 2) | Finished rows add one line: green "PR #N opened" or the red failure reason; empty Active = "Nothing running" with "See all Sessions ›" | — |
+> | Updates page | Simple: one centred status card (up to date / ready / installing) with the one action (Check now / Install), the policy below, everything else behind a "Technical details" row | Every stage (Installed, Available, Staging, Activation, Retention) as its own card |
+> | Update policy control | One switch: "Install small fixes automatically · Same version, newer build only" | Two-choice tick list |
+> | Sign in | Centred: big logo, title, one credential field, full-width Sign in button; no app frame | Plain left-aligned page with a brand bar |
+> | Updates & Sign in states (approved, `prototypes/taste/updates.ts` Part 2) | Ready card explains the brief restart (queued Sessions kept, OpenCode keeps running, auto-restore on failure); installing shows 3 steps incl. "Waiting for a safe moment to restart"; wrong credential = red box; preserved Start Session = blue note "Atlas won't send it on its own" | — |
+> | Remove Repository | Moves off the Session page to the Repository page (it acts on the Repository, not the Session) | Session ⋯ menu |
+
 Decided 2026-09-10 by progressive abstraction: three structurally different prototypes of the Repositories page were built on `/prototype/design?variant=A|B|C`, the owner reacted to concrete renders, and the winning choices were abstracted into the rules below. Research behind the choices lives in `docs/research/design-*.md`.
 
 | Question | Decision | Rejected |

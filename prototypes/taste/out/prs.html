@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en" data-mode="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull requests — pick — Look A</title>
+<script>(()=>{const q=new URLSearchParams(location.search).get("mode");const s=q||localStorage.getItem("proto-mode");document.documentElement.dataset.mode=s||(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark")})()</script>
+<style>@font-face{font-family:"Inter";src:url("../fonts/inter.woff2") format("woff2");font-weight:100 900;font-display:swap}@font-face{font-family:"Geist Mono";src:url("../fonts/geist-mono.woff2") format("woff2");font-weight:100 900;font-display:swap}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+.ic{flex-shrink:0;display:block}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.proto{position:fixed;right:16px;bottom:16px;z-index:99;display:flex;gap:4px;align-items:center;padding:4px;border-radius:999px;background:#0b0c0e;color:#e8e8ea;font:500 12px/1 Inter,system-ui,sans-serif;box-shadow:0 6px 24px rgb(0 0 0/.35);border:1px solid #2a2b30}
+.proto a,.proto button{padding:7px 10px;border-radius:999px;display:flex;align-items:center;gap:6px}
+.proto a:hover,.proto button:hover{background:#24262b}
+.proto .tag{padding:7px 10px;color:#E19D63;font-weight:600}
+@media (max-width:760px){.proto{bottom:96px;right:8px}.proto .hide-sm{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+[data-mode=light]{color-scheme:light;--bg:#F2F2F7;--card:#FFFFFF;--side:#E9E9EE;--bar:rgb(242 242 247/.78);--text:#0B0B0D;--sec:#6C6C70;--ter:#8A8A8E;--sep:#E2E2E7;--fill:#E6E6EB;--fill2:#F2F2F7;
+  --tint:#012B68;--link:#1450B8;--btn:#0A63D8;--btnt:#fff;--sel:#D9E3F4;--mono:#3C3C43;
+  --t-running:#0B7FB0;--t-waiting:#C25E00;--t-succeeded:#248A3D;--t-failed:#D70015;--t-idle:#6C6C70;--t-queued:#6C6C70;--t-none:#6C6C70;
+  --f-running:#32ADE6;--f-waiting:#FF9500;--f-succeeded:#34C759;--f-failed:#FF3B30;--f-idle:#8E8E93;--f-queued:#AEAEB2;--f-none:#012B68;--hero:linear-gradient(180deg,#FFF4E5,#FFFFFF 70%)}
+[data-mode=dark]{color-scheme:dark;--bg:#000000;--card:#1C1C1E;--side:#121214;--bar:rgb(0 0 0/.72);--text:#FFFFFF;--sec:#98989F;--ter:#6E6E73;--sep:#2E2E31;--fill:#2C2C2E;--fill2:#242426;
+  --tint:#7AA7F2;--link:#7AA7F2;--btn:#0A6CF0;--btnt:#fff;--sel:#1C2A44;--mono:#D1D1D6;
+  --t-running:#64D2FF;--t-waiting:#FF9F0A;--t-succeeded:#30D158;--t-failed:#FF6961;--t-idle:#98989F;--t-queued:#98989F;--t-none:#98989F;
+  --f-running:#0A9BD6;--f-waiting:#FF9F0A;--f-succeeded:#2DB84E;--f-failed:#FF453A;--f-idle:#636366;--f-queued:#48484A;--f-none:#2D63C0;--hero:linear-gradient(180deg,#2A1D0B,#1C1C1E 70%)}
+body{background:var(--bg);color:var(--text);font:400 15px/1.45 Inter,system-ui,sans-serif;letter-spacing:-.006em;-webkit-font-smoothing:antialiased}
+.mono{font-family:"Geist Mono",ui-monospace,monospace;font-size:.88em;letter-spacing:0;color:var(--mono)}
+.app{display:flex;min-height:100vh;background:linear-gradient(to right,var(--side) 256px,transparent 256px)}
+.side{width:256px;flex-shrink:0;background:var(--side);padding:14px 12px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:18px;border-right:1px solid var(--sep)}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 6px;font-weight:700;font-size:17px;letter-spacing:-.02em}
+.search{display:flex;align-items:center;gap:8px;background:var(--fill);border-radius:10px;padding:8px 10px;color:var(--sec);font-size:14px}
+.search kbd{margin-left:auto;font:500 11px Inter;color:var(--ter)}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav-h{font-size:12px;font-weight:600;color:var(--ter);padding:0 10px 6px}
+.nav a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;font-size:14px;font-weight:500}
+.nav a .ic{color:var(--tint)}
+.nav a:hover{background:var(--fill)}
+.nav a[aria-current]{background:var(--sel)}
+.nav .count{margin-left:auto;font-size:13px;color:var(--sec);font-variant-numeric:tabular-nums}
+.nav .dot{width:10px;height:10px;border-radius:50%;margin:0 4px}
+.side-foot{margin-top:auto;font-size:12px;color:var(--ter);padding:0 10px}
+.main{flex:1;min-width:0}
+.bar{position:sticky;top:0;z-index:5;height:56px;display:flex;align-items:center;gap:10px;padding:0 32px;background:var(--bar);backdrop-filter:blur(20px) saturate(1.8);-webkit-backdrop-filter:blur(20px) saturate(1.8)}
+.bar .phone-brand{display:none}
+.bar .spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:999px;background:var(--card);font-size:13px;font-weight:500;box-shadow:0 0 0 1px var(--sep)}
+.pill.warn{color:var(--t-waiting)}
+details.pop{position:relative}
+details.pop summary{list-style:none;cursor:pointer}
+details.pop summary::-webkit-details-marker{display:none}
+.pop-panel{position:absolute;right:0;top:40px;width:320px;background:var(--card);border-radius:14px;padding:6px;box-shadow:0 12px 40px rgb(0 0 0/.25),0 0 0 1px var(--sep)}
+.pop-panel div{padding:10px 12px}
+.pop-panel b{display:block;font-weight:600}
+.pop-panel span{color:var(--sec);font-size:13px}
+.content{max-width:1040px;padding:8px 40px 120px}
+.eyebrow{margin:8px 0 2px;font-size:13px;font-weight:600;color:var(--sec);text-transform:uppercase;letter-spacing:.02em}
+h1.large{margin:0 0 28px;font-size:34px;line-height:1.1;font-weight:750;letter-spacing:-.028em}
+h2{display:flex;align-items:baseline;gap:8px;margin:32px 0 10px;font-size:21px;font-weight:700;letter-spacing:-.02em}
+h2 .n{font-size:15px;font-weight:500;color:var(--sec)}
+h2 .more{margin-left:auto;font-size:15px;font-weight:500;color:var(--link)}
+.group{background:var(--card);border-radius:14px;overflow:hidden}
+.row{display:flex;align-items:center;gap:14px;padding:12px 16px;position:relative;min-height:64px}
+.row+.row::before{content:"";position:absolute;top:0;left:62px;right:0;border-top:1px solid var(--sep)}
+a.row:hover{background:var(--fill2)}
+.tile{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;color:#fff}
+.tile.lg{width:52px;height:52px;border-radius:14px}
+.f-running{background:var(--f-running)}.f-waiting{background:var(--f-waiting)}.f-succeeded{background:var(--f-succeeded)}.f-failed{background:var(--f-failed)}.f-idle{background:var(--f-idle)}.f-queued{background:var(--f-queued)}.f-none{background:var(--f-none)}
+.t-running{color:var(--t-running)}.t-waiting{color:var(--t-waiting)}.t-succeeded{color:var(--t-succeeded)}.t-failed{color:var(--t-failed)}.t-idle{color:var(--t-idle)}.t-queued{color:var(--t-queued)}.t-none{color:var(--t-none)}
+.row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.row-title{font-size:16px;font-weight:550;letter-spacing:-.012em}
+.row-sub{font-size:13.5px;color:var(--sec)}
+.row-end{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:13.5px;white-space:nowrap}
+.row-end .st{font-weight:600}
+.row-end .time{color:var(--ter);font-variant-numeric:tabular-nums}
+.chev{color:var(--ter)}
+.unread{position:absolute;left:5px;top:50%;width:8px;height:8px;margin-top:-4px;border-radius:50%;background:var(--link)}
+.cap{height:30px;padding:0 14px;border-radius:999px;background:var(--fill);color:var(--link);font-size:14px;font-weight:650;display:inline-flex;align-items:center;gap:6px}
+.btn{height:40px;padding:0 18px;border-radius:12px;background:var(--btn);color:var(--btnt);font-size:15px;font-weight:600;display:inline-flex;align-items:center;gap:8px}
+.btn.sec{background:var(--fill);color:var(--text)}
+.hero{background:var(--hero);border-radius:18px;padding:20px;display:flex;gap:16px;align-items:center}
+.hero .k{font-size:13px;font-weight:700;color:var(--t-waiting);text-transform:uppercase;letter-spacing:.03em;display:flex;align-items:center;gap:6px}
+.hero .t{font-size:20px;font-weight:700;letter-spacing:-.02em;margin:4px 0 2px}
+.hero .s{color:var(--sec);font-size:14px}
+.hero .grow{flex:1;min-width:0}
+.tabbar{display:none}
+/* Session */
+.back{display:inline-flex;align-items:center;gap:2px;color:var(--link);font-size:16px;font-weight:500;margin:4px 0 14px -6px}
+h1.title{margin:0 0 6px;font-size:30px;line-height:1.15;font-weight:750;letter-spacing:-.026em}
+.title-row{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;margin-bottom:22px}
+.title-actions{display:flex;gap:8px;flex-shrink:0;padding-top:4px}
+.icon-btn{width:40px;height:40px;border-radius:12px;background:var(--fill);display:grid;place-items:center}
+.summary{background:var(--card);border-radius:18px;padding:20px;display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
+.summary .big{font-size:24px;font-weight:750;letter-spacing:-.02em;display:flex;align-items:center;gap:10px}
+.live{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--t-running);background:color-mix(in srgb,var(--f-running) 16%,transparent);padding:3px 8px;border-radius:999px}
+.live i{width:7px;height:7px;border-radius:50%;background:var(--f-running);animation:pulse 1.6s infinite}
+@keyframes pulse{50%{opacity:.35}}
+.stats{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--sep);border-radius:12px;overflow:hidden}
+.stats>div{background:var(--card);padding:12px 14px 0 0}
+.stats>div+div{padding-left:14px}
+.stats .l{font-size:12.5px;color:var(--sec);font-weight:500}
+.stats .v{font-size:15px;font-weight:600;margin-top:2px;overflow-wrap:anywhere}
+.cols{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:28px;align-items:start}
+.act{display:flex;gap:12px;padding:12px 16px;position:relative}
+.act+.act::before{content:"";position:absolute;top:0;left:56px;right:0;border-top:1px solid var(--sep)}
+.act .tile{width:28px;height:28px;border-radius:8px;background:var(--fill);color:var(--sec)}
+.act.msg .tile{background:var(--f-none);color:#fff}
+.act .body{flex:1;min-width:0}
+.act .time{font-size:12.5px;color:var(--ter);font-variant-numeric:tabular-nums;padding-top:4px}
+.act.msg p{margin:3px 0 0}
+.act .verb{font-weight:600}
+.act .extra{color:var(--sec);font-size:13px;margin-left:6px}
+.act.live-row .tile{background:color-mix(in srgb,var(--f-running) 18%,transparent);color:var(--t-running)}
+.dots{display:inline-flex;gap:3px;margin-left:8px;vertical-align:middle}
+.dots i{width:5px;height:5px;border-radius:50%;background:var(--t-running);animation:pulse 1.2s infinite}
+.dots i:nth-child(2){animation-delay:.2s}.dots i:nth-child(3){animation-delay:.4s}
+.card{background:var(--card);border-radius:14px;padding:16px}
+.card h3{margin:0 0 8px;font-size:15px;font-weight:700}
+.card p{margin:0 0 10px;color:var(--text)}
+.card ul{margin:0;padding-left:18px;color:var(--text)}
+.card li{margin:4px 0}
+.quote{background:var(--fill2);border-radius:10px;padding:12px 14px;font-size:14.5px}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:11px 16px;position:relative;font-size:14px}
+.kv+.kv::before{content:"";position:absolute;top:0;left:16px;right:0;border-top:1px solid var(--sep)}
+.kv .l{color:var(--sec)}
+.kv .v{text-align:right;overflow-wrap:anywhere;min-width:0}
+details.disc>summary{list-style:none;display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer;font-weight:600}
+details.disc>summary::-webkit-details-marker{display:none}
+details.disc>summary .chev{margin-left:auto;transition:transform .2s}
+details.disc[open]>summary .chev{transform:rotate(90deg)}
+details.disc[open]>summary{border-bottom:1px solid var(--sep)}
+@media (max-width:980px){.cols{grid-template-columns:1fr}}
+@media (max-width:760px){
+  .side{display:none}
+  .bar{padding:0 16px}
+  .bar .phone-brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px}
+  .bar .filter{display:none}
+  .content{padding:4px 16px 120px}
+  h1.large{font-size:32px;margin-bottom:20px}
+  h1.title{font-size:25px}
+  .row-sub .hide-sm{display:none}
+  .hero{flex-wrap:wrap}.hero .btn{width:100%;justify-content:center}
+  .stats{grid-template-columns:1fr}
+  .stats>div+div{padding-left:0}
+  .stats>div{padding:10px 0}
+  .title-actions .btn{display:none}
+  .tabbar{display:flex;position:fixed;inset:auto 0 0 0;z-index:10;height:82px;padding:8px 8px 26px;background:var(--bar);backdrop-filter:blur(20px) saturate(1.8);-webkit-backdrop-filter:blur(20px) saturate(1.8);border-top:1px solid var(--sep)}
+  .tabbar a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:600;color:var(--ter)}
+  .tabbar a[aria-current]{color:var(--tint)}
+}
+
+/* locked picks from Phases 2–3 */
+.chip{display:inline-flex;align-items:center;height:24px;padding:0 9px;border-radius:999px;font-size:12.5px;font-weight:650;white-space:nowrap}
+.chip.p-running{background:color-mix(in srgb,var(--f-running) 16%,transparent);color:var(--t-running)}
+.chip.p-waiting{background:color-mix(in srgb,var(--f-waiting) 18%,transparent);color:var(--t-waiting)}
+.chip.p-succeeded{background:color-mix(in srgb,var(--f-succeeded) 16%,transparent);color:var(--t-succeeded)}
+.chip.p-failed{background:color-mix(in srgb,var(--f-failed) 14%,transparent);color:var(--t-failed)}
+.chip.p-idle,.chip.p-queued{background:var(--fill);color:var(--sec)}
+.strip{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:12px;background:color-mix(in srgb,var(--f-waiting) 14%,transparent);font-size:14px}
+.strip .ic{color:var(--t-waiting)}.strip a{margin-left:auto;color:var(--link);font-weight:600}
+/* page */
+.tile-page{max-width:1180px;margin:0 auto;padding:40px 28px 140px}
+.tile-page>h1{margin:0 0 6px;font-size:34px;font-weight:750;letter-spacing:-.028em}
+.tile-page>p.how{margin:0 0 40px;color:var(--sec);font-size:16px}
+.tile-page>p.how b{color:var(--text)}
+.part-h{margin:56px 0 6px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--sec)}
+.q{margin:0 0 48px}
+.q h2{margin:0 0 14px;font-size:19px;font-weight:650;letter-spacing:-.015em;display:flex;align-items:center;gap:10px}
+.q .num{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--btn);color:#fff;font-size:15px;flex-shrink:0}
+.q .num.check{background:var(--f-succeeded)}
+.switch,.phone-only{display:none}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.opt,.solo{border-radius:18px;padding:16px;background:var(--bg);box-shadow:0 0 0 1px var(--sep);min-width:0}
+.opt .lab{display:flex;align-items:center;gap:8px;font-weight:700;margin-bottom:12px}
+.opt .lab span{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:7px;background:var(--fill);font-size:13px}
+.opt .lab em{font-style:normal;font-weight:500;color:var(--sec);font-size:14px}
+/* scaled mock screens */
+.scalebox{position:relative;width:100%;overflow:hidden;border-radius:14px;box-shadow:0 0 0 1px var(--sep),0 10px 30px rgb(0 0 0/.12)}
+.scalebox.phone{max-width:300px;margin:0 auto;border-radius:30px;box-shadow:0 0 0 6px var(--fill),0 10px 30px rgb(0 0 0/.15)}
+.scalebox>.screen{position:absolute;top:0;left:0;transform-origin:0 0;background:var(--bg);color:var(--text);overflow:hidden}
+/* desktop mock */
+.desk{width:1100px;height:660px;display:flex}
+.d-side{width:248px;flex-shrink:0;background:var(--side);border-right:1px solid var(--sep);padding:14px 12px;display:flex;flex-direction:column;gap:14px;position:relative}
+.d-brand{display:flex;align-items:center;gap:10px;padding:2px 6px;font-weight:700;font-size:17px;letter-spacing:-.02em}
+.d-search{display:flex;align-items:center;gap:8px;background:var(--card);box-shadow:inset 0 0 0 1.5px var(--sep);border-radius:10px;padding:8px 10px;color:var(--ter);font-size:14px}
+.d-search kbd{margin-left:auto;font:500 11px Inter;color:var(--ter);background:var(--fill);padding:2px 6px;border-radius:5px}
+.d-nav{display:flex;flex-direction:column;gap:2px}
+.d-nav .h{font-size:12px;font-weight:600;color:var(--ter);padding:8px 10px 4px}
+.d-nav a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;font-size:14px;font-weight:500}
+.d-nav a .ic{color:var(--link)}
+.d-nav a.on{background:var(--sel)}
+.d-nav .n{margin-left:auto;font-size:13px;color:var(--sec)}
+.d-nav .dot{width:10px;height:10px;border-radius:50%;margin:0 5px}
+.seg{display:flex;background:var(--fill);border-radius:9px;padding:2px}
+.seg span{flex:1;text-align:center;padding:5px 0;border-radius:7px;font-size:12.5px;font-weight:600;color:var(--sec)}
+.seg span.on{background:var(--card);color:var(--text);box-shadow:0 1px 2px rgb(0 0 0/.15)}
+.lvl{display:flex;flex-direction:column;gap:1px;overflow:hidden}
+.lvl .h{font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ter);padding:10px 8px 4px}
+.lvl a{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:9px;align-items:center;padding:7px 8px;border-radius:9px}
+.lvl a.on{background:var(--sel)}
+.lvl .mt{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;color:#fff}
+.lvl .t{font-size:13.5px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lvl .w{font-size:12px;color:var(--ter)}
+.d-foot{margin-top:auto;display:flex;align-items:center;gap:10px;padding:10px 8px 2px;border-top:1px solid var(--sep);font-size:14px;font-weight:500}
+.av{width:28px;height:28px;border-radius:50%;background:var(--sel);color:var(--link);display:grid;place-items:center;font-weight:700;font-size:13px}
+.d-foot .chev{margin-left:auto}
+.acct-menu{position:absolute;left:12px;right:12px;bottom:60px;background:var(--card);border-radius:14px;padding:6px;box-shadow:0 12px 40px rgb(0 0 0/.25),0 0 0 1px var(--sep);font-size:14px}
+.acct-menu .lbl{padding:8px 10px 6px;color:var(--sec);font-size:12.5px;font-weight:600}
+.acct-menu .seg{margin:0 6px 6px}
+.acct-menu a{display:flex;gap:10px;align-items:center;padding:9px 10px;border-radius:9px}
+.acct-menu hr{border:0;border-top:1px solid var(--sep);margin:4px 6px}
+.d-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.d-bar{height:54px;display:flex;align-items:center;gap:10px;padding:0 28px;flex-shrink:0}
+.d-bar .sp{flex:1}
+.icon-b{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;box-shadow:inset 0 0 0 1.5px var(--sep)}
+.search-b{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 12px;border-radius:10px;box-shadow:inset 0 0 0 1.5px var(--sep);color:var(--sec);font-size:14px}
+.search-b kbd{font:500 11px Inter;background:var(--fill);padding:2px 6px;border-radius:5px}
+.fpill{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border-radius:999px;box-shadow:inset 0 0 0 1.5px var(--sep);font-size:13.5px;font-weight:600}
+.d-content{padding:6px 28px 0}
+.d-content .strip{margin-bottom:18px}
+.d-content h1{margin:0 0 16px;font-size:34px;font-weight:750;letter-spacing:-.028em}
+.chips{display:flex;gap:8px;margin:0 0 16px;overflow:hidden}
+.chips span{height:32px;padding:0 14px;border-radius:999px;display:inline-flex;align-items:center;font-size:14px;font-weight:600;box-shadow:inset 0 0 0 1.5px var(--sep);white-space:nowrap}
+.chips span.on{background:var(--text);color:var(--bg);box-shadow:none}
+.mock .row{min-height:60px}
+.mock .row-title{font-size:15px}
+.mock .row-end{align-items:flex-end}
+/* phone mock */
+.ph{width:375px;height:780px;display:flex;flex-direction:column;position:relative}
+.ph-status{height:44px;flex-shrink:0}
+.ph-bar{height:48px;display:flex;align-items:center;gap:10px;padding:0 16px;flex-shrink:0}
+.ph-bar b{font-size:17px}
+.ph-bar .sp{flex:1}
+.ph-bar .ib{width:36px;height:36px;display:grid;place-items:center;color:var(--link)}
+.ph-content{padding:0 16px;flex:1;overflow:hidden}
+.ph-content .strip{font-size:13px;padding:8px 12px;margin:4px 0 12px}
+.ph-content h1{margin:0 0 12px;font-size:32px;font-weight:750;letter-spacing:-.028em;display:flex;align-items:center;justify-content:space-between}
+.ph-content h1 .fpill{font-size:13px;height:32px;letter-spacing:0}
+.ph .row{padding:10px 12px;gap:12px;min-height:58px}
+.ph .row-title{font-size:15px}
+.ph .row-sub{font-size:12.5px}
+.ph .row+.row::before{left:56px}
+.ph-tabs{display:flex;height:84px;padding:8px 6px 28px;border-top:1px solid var(--sep);background:var(--bar);backdrop-filter:blur(20px);flex-shrink:0}
+.ph-tabs a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:600;color:var(--ter)}
+.ph-tabs a.on{color:var(--link)}
+.ph-dim{position:absolute;inset:0;background:rgb(0 0 0/.4)}
+.ph-sheet{position:absolute;left:0;right:0;bottom:0;background:var(--card);border-radius:22px 22px 0 0;padding:8px 14px 30px}
+.ph-sheet .grab{width:38px;height:5px;border-radius:3px;background:var(--fill);margin:0 auto 12px}
+.ph-sheet a{display:flex;align-items:center;gap:12px;padding:12px 8px;font-size:16px;font-weight:500;border-radius:10px}
+.ph-sheet a .ic{color:var(--link)}
+.ph-sheet a.on{background:var(--sel)}
+/* quick search */
+.qs-dim{position:absolute;inset:0;background:rgb(0 0 0/.35);display:flex;justify-content:center;padding-top:90px}
+.qs{width:600px;align-self:flex-start;background:var(--card);border-radius:18px;box-shadow:0 20px 60px rgb(0 0 0/.35),0 0 0 1px var(--sep);overflow:hidden}
+.qs-in{display:flex;align-items:center;gap:10px;padding:16px 18px;font-size:18px;border-bottom:1px solid var(--sep)}
+.qs-in .ic{color:var(--ter)}
+.caret{display:inline-block;width:2px;height:20px;background:var(--btn);vertical-align:-3px;animation:pulse 1s steps(2) infinite}
+.qs-h{padding:12px 18px 4px;font-size:12px;font-weight:700;color:var(--ter);text-transform:uppercase;letter-spacing:.04em}
+.qs .row{min-height:52px;padding:8px 18px}
+.qs .row.on{background:var(--sel)}
+.qs .row+.row::before{display:none}
+.qs-foot{display:flex;gap:16px;padding:10px 18px;border-top:1px solid var(--sep);font-size:12.5px;color:var(--ter)}
+.qs-foot kbd{font:500 11px Inter;background:var(--fill);padding:2px 6px;border-radius:5px;color:var(--sec)}
+.qs-ph{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column}
+.qs-ph .top{display:flex;align-items:center;gap:10px;padding:52px 16px 10px}
+.qs-ph .field{flex:1;display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;border-radius:12px;background:var(--card);box-shadow:inset 0 0 0 1.5px var(--sep);font-size:16px}
+.qs-ph .field .ic{color:var(--ter)}
+.qs-ph .cancel{color:var(--link);font-size:16px}
+.qs-ph .group{margin:0 16px}
+.qs-ph .qs-h{padding:14px 20px 6px}
+@media (max-width:760px){
+  .tile-page{padding:20px 14px 120px}.tile-page>h1{font-size:30px}.tile-page>p.how{font-size:15px;margin-bottom:20px}
+  .phone-only{display:inline}
+  .q{margin-bottom:36px}.q h2{font-size:17px;align-items:flex-start}
+  .switch{display:flex;margin:0 0 10px;padding:3px;border-radius:12px;background:var(--fill)}
+  .switch label{flex:1;position:relative}
+  .switch input{position:absolute;opacity:0;inset:0;margin:0}
+  .switch span{display:block;text-align:center;padding:10px 6px;border-radius:9px;font-size:14px;font-weight:600;color:var(--sec)}
+  .switch input:checked+span{background:var(--card);color:var(--text);box-shadow:0 1px 3px rgb(0 0 0/.18)}
+  .switch input:focus-visible+span{outline:2px solid var(--link)}
+  .pair{grid-template-columns:1fr}
+  .q:has(.o1:checked) .opt:last-child,.q:has(.o2:checked) .opt:first-child{display:none}
+  .opt,.solo{padding:12px}.opt .lab{display:none}
+  .tile-page~.proto{left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));justify-content:space-between;font-size:14px}
+  .tile-page~.proto button{padding:10px 14px}
+}
+
+.scalebox.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.swipe{display:none;font-size:13px;color:var(--ter);margin:8px 0 0;text-align:center}
+@media (max-width:760px){.swipe{display:block}}
+.pair.phones .scalebox.phone{max-width:320px}
+.ph-bar{position:relative}
+.ph-bar .bk{display:flex;align-items:center;gap:2px;color:var(--link);font-size:16px}
+.ph-content{overflow:hidden}
+.ph h1.st{font-size:26px;margin:0 0 4px;letter-spacing:-.022em;display:block}
+.desc{color:var(--sec);font-size:14.5px;margin:0 0 14px}
+.segtabs{display:flex;background:var(--fill);border-radius:10px;padding:2px;margin:4px 0 16px}
+.segtabs span{flex:1;text-align:center;padding:7px 0;border-radius:8px;font-size:13.5px;font-weight:600;color:var(--sec)}
+.segtabs span.on{background:var(--card);color:var(--text);box-shadow:0 1px 2px rgb(0 0 0/.15)}
+.sh{margin:18px 0 8px;font-size:17px;font-weight:700;display:flex;align-items:baseline;gap:8px}
+.sh:first-of-type{margin-top:0}
+.sh .n{font-size:13px;font-weight:500;color:var(--sec)}
+.ph .row{padding:10px 12px;gap:12px;min-height:56px}
+.ph .row+.row::before{left:56px}
+.prt{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:var(--fill);color:var(--sec);flex-shrink:0}
+.prt.open{background:color-mix(in srgb,var(--f-succeeded) 18%,transparent);color:var(--t-succeeded)}
+.prt.merged{background:color-mix(in srgb,#AF52DE 20%,transparent);color:#BF5AF2}
+.chip.p-merged{background:color-mix(in srgb,#AF52DE 18%,transparent);color:#BF5AF2}
+.chip.p-open{background:color-mix(in srgb,var(--f-succeeded) 16%,transparent);color:var(--t-succeeded)}
+.chip.p-closed{background:color-mix(in srgb,var(--f-failed) 14%,transparent);color:var(--t-failed)}
+.stop .dot i.closed{box-shadow:inset 0 0 0 2.5px var(--t-failed)}
+.chip.p-draft{background:var(--fill);color:var(--sec)}
+.num2{font:600 12.5px "Geist Mono",monospace;color:var(--ter)}
+/* stack: connected line */
+.train{background:var(--card);border-radius:16px;padding:12px 12px 4px}
+.train .th{display:flex;align-items:center;gap:8px;font-weight:650;font-size:15px;margin:0 0 6px}
+.train .th .ic{color:var(--sec)}.train .th .n{margin-left:auto;font-weight:500;font-size:13px;color:var(--sec)}
+.stop{display:flex;gap:12px;align-items:center;position:relative;padding:8px 0;min-height:50px}
+.stop .dot{width:22px;display:flex;justify-content:center;flex-shrink:0;align-self:stretch;position:relative}
+.stop::before{content:"";position:absolute;top:0;bottom:0;left:10px;width:2px;background:var(--sep)}
+.stop.first::before{top:50%}.stop.last::before{bottom:50%}
+.stop .dot i{position:relative;align-self:center;width:12px;height:12px;border-radius:50%;background:var(--card);box-shadow:inset 0 0 0 2.5px var(--ter)}
+.stop .dot i.merged{background:#BF5AF2;box-shadow:none}.stop .dot i.open{box-shadow:inset 0 0 0 2.5px var(--t-succeeded)}
+.stop .grow{flex:1;min-width:0}.stop b{font-weight:500;font-size:15px;display:block}.stop span.s{font-size:12.5px;color:var(--sec)}
+.toptag{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--link);margin-left:6px}
+/* stack: plain group */
+.ghead{display:flex;align-items:center;gap:12px;padding:12px;font-weight:650}
+.ghead .n{margin-left:auto;font-weight:500;font-size:13px;color:var(--sec)}
+.ghead+.row::before{content:"";position:absolute;top:0;left:12px;right:0;border-top:1px solid var(--sep)}
+.elig{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.35;padding:10px 12px;color:var(--sec);border-top:1px solid var(--sep);margin:6px -12px 0}
+.elig .ic{flex-shrink:0;margin-top:1px}
+.elig.ok .ic{color:var(--t-succeeded)}.elig.no .ic{color:var(--ter)}
+.rowelig{font-size:12.5px;display:flex;gap:4px;align-items:center;margin-top:2px}
+.rowelig.ok{color:var(--t-succeeded)}.rowelig.no{color:var(--ter)}
+.amber{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:12px;background:color-mix(in srgb,var(--f-waiting) 14%,transparent);font-size:13.5px;margin:0 0 14px;line-height:1.4}
+.amber .ic{color:var(--t-waiting);flex-shrink:0;margin-top:1px}.amber b{display:block}
+.empty{text-align:center;padding:40px 20px;color:var(--sec);font-size:14.5px;line-height:1.45}
+.empty .tile{width:56px;height:56px;border-radius:16px;margin:0 auto 12px;background:var(--fill);color:var(--sec)}
+.empty b{display:block;color:var(--text);font-size:17px;margin-bottom:4px}
+.fresh{font-size:12.5px;color:var(--ter);margin:12px 4px 0}
+/* desktop */
+.desk{width:1180px;height:760px}
+.d-content{overflow:hidden;flex:1}
+.d-content h1{font-size:30px;margin:0 0 2px}
+.d-content .segtabs{max-width:420px}
+.dcols{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+
+</style>
+</head>
+<body>
+<main class="tile-page">
+  <h1>Pull requests</h1>
+  <p class="how">A Repository’s open pull requests and GitHub stacks. Atlas only reads these; it never changes them. <span class="phone-only">Tap <b>1</b> / <b>2</b> to flip.</span><br>
+  Reply with <b>3 numbers</b>, plus any letters in part 2 that look wrong.</p>
+  <div class="part-h">Part 1 · Pick one</div>
+  <section class="q">
+  <h2><span class="num">1</span>How a stack looks</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 1">
+    <label><input class="o1" type="radio" name="q0" checked><span>1 · Connected line</span></label>
+    <label><input class="o2" type="radio" name="q0"><span>2 · Numbered list</span></label>
+  </div>
+  <div class="pair phones"><div class="opt"><div class="lab"><span>1</span>Connected line <em>layers joined like a timeline</em></div>
+<div class="scalebox phone" data-w="375" data-h="820"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p>
+  <div class="segtabs"><span>Specs</span><span class="on">Pull requests</span><span>Sessions</span></div><div class="sh">Stacks <span class="n">1</span></div><div class="train"><div class="th"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6.878V6a2.25 2.25 0 0 1 2.25-2.25h7.5A2.25 2.25 0 0 1 18 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 0 0 4.5 9v.878m13.5-3A2.25 2.25 0 0 1 19.5 9v.878m0 0a2.246 2.246 0 0 0-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0 1 21 12v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6c0-.98.626-1.813 1.5-2.122"/></svg>Stack #3<span class="n">3 layers</span></div>
+<div class="stop first"><span class="dot"><i class="merged"></i></span><div class="grow"><b>Extract webhook signer</b><span class="s"><span class="num2">#40</span> · 3d ago</span></div><span class="chip p-merged">Merged</span></div><div class="stop"><span class="dot"><i class="open"></i></span><div class="grow"><b>Refund idempotency keys</b><span class="s"><span class="num2">#42</span> · 1d ago</span></div><span class="chip p-open">Open</span></div><div class="stop last"><span class="dot"><i class="draft"></i></span><div class="grow"><b>Idempotency for partial refunds<span class="toptag">Top</span></b><span class="s"><span class="num2">#45</span> · 2h ago</span></div><span class="chip p-draft">Draft</span></div></div><div class="sh">Pull requests <span class="n">2</span></div><div class="group"><div class="row"><span class="prt open"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">#44 · into main · 8m ago</span></span><span class="row-end"><span class="chip p-open">Open</span></span></div><div class="row"><span class="prt draft"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Bump card SDK to v12</span><span class="row-sub">#47 · into release/2.x · 5h ago</span></span><span class="row-end"><span class="chip p-draft">Draft</span></span></div></div><p class="fresh">Checked GitHub 2 min ago</p></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div><div class="opt"><div class="lab"><span>2</span>Numbered list <em>1, 2, 3 rows</em></div>
+<div class="scalebox phone" data-w="375" data-h="820"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p>
+  <div class="segtabs"><span>Specs</span><span class="on">Pull requests</span><span>Sessions</span></div><div class="sh">Stacks <span class="n">1</span></div><div class="group"><div class="ghead"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6.878V6a2.25 2.25 0 0 1 2.25-2.25h7.5A2.25 2.25 0 0 1 18 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 0 0 4.5 9v.878m13.5-3A2.25 2.25 0 0 1 19.5 9v.878m0 0a2.246 2.246 0 0 0-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0 1 21 12v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6c0-.98.626-1.813 1.5-2.122"/></svg>Stack #3<span class="n">3 layers</span></div>
+<div class="row"><span class="num2" style="width:20px;text-align:center">1.</span><span class="row-main"><span class="row-title">Extract webhook signer</span><span class="row-sub">#40 · into main</span></span><span class="row-end"><span class="chip p-merged">Merged</span></span></div><div class="row"><span class="num2" style="width:20px;text-align:center">2.</span><span class="row-main"><span class="row-title">Refund idempotency keys</span><span class="row-sub">#42 · into #40</span></span><span class="row-end"><span class="chip p-open">Open</span></span></div><div class="row"><span class="num2" style="width:20px;text-align:center">3.</span><span class="row-main"><span class="row-title">Idempotency for partial refunds</span><span class="row-sub">#45 · into #42 · top</span></span><span class="row-end"><span class="chip p-draft">Draft</span></span></div></div><div class="sh">Pull requests <span class="n">2</span></div><div class="group"><div class="row"><span class="prt open"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">#44 · into main · 8m ago</span></span><span class="row-end"><span class="chip p-open">Open</span></span></div><div class="row"><span class="prt draft"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Bump card SDK to v12</span><span class="row-sub">#47 · into release/2.x · 5h ago</span></span><span class="row-end"><span class="chip p-draft">Draft</span></span></div></div><p class="fresh">Checked GitHub 2 min ago</p></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div></div>
+</section><section class="q">
+  <h2><span class="num">2</span>Stack order</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 2">
+    <label><input class="o1" type="radio" name="q1" checked><span>1 · Oldest on top</span></label>
+    <label><input class="o2" type="radio" name="q1"><span>2 · Newest on top</span></label>
+  </div>
+  <div class="pair phones"><div class="opt"><div class="lab"><span>1</span>Oldest on top <em>base layer first, like GitHub</em></div>
+<div class="scalebox phone" data-w="375" data-h="820"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p>
+  <div class="segtabs"><span>Specs</span><span class="on">Pull requests</span><span>Sessions</span></div><div class="sh">Stacks <span class="n">1</span></div><div class="train"><div class="th"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6.878V6a2.25 2.25 0 0 1 2.25-2.25h7.5A2.25 2.25 0 0 1 18 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 0 0 4.5 9v.878m13.5-3A2.25 2.25 0 0 1 19.5 9v.878m0 0a2.246 2.246 0 0 0-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0 1 21 12v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6c0-.98.626-1.813 1.5-2.122"/></svg>Stack #3<span class="n">3 layers</span></div>
+<div class="stop first"><span class="dot"><i class="merged"></i></span><div class="grow"><b>Extract webhook signer</b><span class="s"><span class="num2">#40</span> · 3d ago</span></div><span class="chip p-merged">Merged</span></div><div class="stop"><span class="dot"><i class="open"></i></span><div class="grow"><b>Refund idempotency keys</b><span class="s"><span class="num2">#42</span> · 1d ago</span></div><span class="chip p-open">Open</span></div><div class="stop last"><span class="dot"><i class="draft"></i></span><div class="grow"><b>Idempotency for partial refunds<span class="toptag">Top</span></b><span class="s"><span class="num2">#45</span> · 2h ago</span></div><span class="chip p-draft">Draft</span></div></div><div class="sh">Pull requests <span class="n">2</span></div><div class="group"><div class="row"><span class="prt open"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">#44 · into main · 8m ago</span></span><span class="row-end"><span class="chip p-open">Open</span></span></div><div class="row"><span class="prt draft"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Bump card SDK to v12</span><span class="row-sub">#47 · into release/2.x · 5h ago</span></span><span class="row-end"><span class="chip p-draft">Draft</span></span></div></div><p class="fresh">Checked GitHub 2 min ago</p></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div><div class="opt"><div class="lab"><span>2</span>Newest on top <em>the top layer first</em></div>
+<div class="scalebox phone" data-w="375" data-h="820"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p>
+  <div class="segtabs"><span>Specs</span><span class="on">Pull requests</span><span>Sessions</span></div><div class="sh">Stacks <span class="n">1</span></div><div class="train"><div class="th"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6.878V6a2.25 2.25 0 0 1 2.25-2.25h7.5A2.25 2.25 0 0 1 18 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 0 0 4.5 9v.878m13.5-3A2.25 2.25 0 0 1 19.5 9v.878m0 0a2.246 2.246 0 0 0-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0 1 21 12v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6c0-.98.626-1.813 1.5-2.122"/></svg>Stack #3<span class="n">3 layers</span></div>
+<div class="stop first"><span class="dot"><i class="draft"></i></span><div class="grow"><b>Idempotency for partial refunds<span class="toptag">Top</span></b><span class="s"><span class="num2">#45</span> · 2h ago</span></div><span class="chip p-draft">Draft</span></div><div class="stop"><span class="dot"><i class="open"></i></span><div class="grow"><b>Refund idempotency keys</b><span class="s"><span class="num2">#42</span> · 1d ago</span></div><span class="chip p-open">Open</span></div><div class="stop last"><span class="dot"><i class="merged"></i></span><div class="grow"><b>Extract webhook signer</b><span class="s"><span class="num2">#40</span> · 3d ago</span></div><span class="chip p-merged">Merged</span></div></div><div class="sh">Pull requests <span class="n">2</span></div><div class="group"><div class="row"><span class="prt open"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">#44 · into main · 8m ago</span></span><span class="row-end"><span class="chip p-open">Open</span></span></div><div class="row"><span class="prt draft"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Bump card SDK to v12</span><span class="row-sub">#47 · into release/2.x · 5h ago</span></span><span class="row-end"><span class="chip p-draft">Draft</span></span></div></div><p class="fresh">Checked GitHub 2 min ago</p></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div></div>
+</section><section class="q">
+  <h2><span class="num">3</span>“Can I start a Session here?”</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 3">
+    <label><input class="o1" type="radio" name="q2" checked><span>1 · Show it here</span></label>
+    <label><input class="o2" type="radio" name="q2"><span>2 · Only when starting</span></label>
+  </div>
+  <div class="pair phones"><div class="opt"><div class="lab"><span>1</span>Show it here <em>a line under each stack and PR</em></div>
+<div class="scalebox phone" data-w="375" data-h="900"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p>
+  <div class="segtabs"><span>Specs</span><span class="on">Pull requests</span><span>Sessions</span></div><div class="sh">Stacks <span class="n">1</span></div><div class="train"><div class="th"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6.878V6a2.25 2.25 0 0 1 2.25-2.25h7.5A2.25 2.25 0 0 1 18 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 0 0 4.5 9v.878m13.5-3A2.25 2.25 0 0 1 19.5 9v.878m0 0a2.246 2.246 0 0 0-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0 1 21 12v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6c0-.98.626-1.813 1.5-2.122"/></svg>Stack #3<span class="n">3 layers</span></div>
+<div class="stop first"><span class="dot"><i class="merged"></i></span><div class="grow"><b>Extract webhook signer</b><span class="s"><span class="num2">#40</span> · 3d ago</span></div><span class="chip p-merged">Merged</span></div><div class="stop"><span class="dot"><i class="open"></i></span><div class="grow"><b>Refund idempotency keys</b><span class="s"><span class="num2">#42</span> · 1d ago</span></div><span class="chip p-open">Open</span></div><div class="stop last"><span class="dot"><i class="draft"></i></span><div class="grow"><b>Idempotency for partial refunds<span class="toptag">Top</span></b><span class="s"><span class="num2">#45</span> · 2h ago</span></div><span class="chip p-draft">Draft</span></div><div class="elig ok"><svg class="ic " width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg><span>Can start a Session as the next layer</span></div></div><div class="sh">Pull requests <span class="n">2</span></div><div class="group"><div class="row"><span class="prt open"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">#44 · into main · 8m ago</span><span class="rowelig ok"><svg class="ic " width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg>Can start a Session on top</span></span><span class="row-end"><span class="chip p-open">Open</span></span></div><div class="row"><span class="prt draft"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Bump card SDK to v12</span><span class="row-sub">#47 · into release/2.x · 5h ago</span><span class="rowelig no"><svg class="ic " width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 18 18 6M6 6l12 12"/></svg>Based on release/2.x, not main</span></span><span class="row-end"><span class="chip p-draft">Draft</span></span></div></div><p class="fresh">Checked GitHub 2 min ago</p></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div><div class="opt"><div class="lab"><span>2</span>Only when starting <em>in the Start Session form</em></div>
+<div class="scalebox phone" data-w="375" data-h="900"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p>
+  <div class="segtabs"><span>Specs</span><span class="on">Pull requests</span><span>Sessions</span></div><div class="sh">Stacks <span class="n">1</span></div><div class="train"><div class="th"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6.878V6a2.25 2.25 0 0 1 2.25-2.25h7.5A2.25 2.25 0 0 1 18 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 0 0 4.5 9v.878m13.5-3A2.25 2.25 0 0 1 19.5 9v.878m0 0a2.246 2.246 0 0 0-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0 1 21 12v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6c0-.98.626-1.813 1.5-2.122"/></svg>Stack #3<span class="n">3 layers</span></div>
+<div class="stop first"><span class="dot"><i class="merged"></i></span><div class="grow"><b>Extract webhook signer</b><span class="s"><span class="num2">#40</span> · 3d ago</span></div><span class="chip p-merged">Merged</span></div><div class="stop"><span class="dot"><i class="open"></i></span><div class="grow"><b>Refund idempotency keys</b><span class="s"><span class="num2">#42</span> · 1d ago</span></div><span class="chip p-open">Open</span></div><div class="stop last"><span class="dot"><i class="draft"></i></span><div class="grow"><b>Idempotency for partial refunds<span class="toptag">Top</span></b><span class="s"><span class="num2">#45</span> · 2h ago</span></div><span class="chip p-draft">Draft</span></div></div><div class="sh">Pull requests <span class="n">2</span></div><div class="group"><div class="row"><span class="prt open"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">#44 · into main · 8m ago</span></span><span class="row-end"><span class="chip p-open">Open</span></span></div><div class="row"><span class="prt draft"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Bump card SDK to v12</span><span class="row-sub">#47 · into release/2.x · 5h ago</span></span><span class="row-end"><span class="chip p-draft">Draft</span></span></div></div><p class="fresh">Checked GitHub 2 min ago</p></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div></div>
+</section>
+  <div class="part-h">Part 2 · Just check</div>
+  <section class="q"><h2><span class="num check">A</span>Atlas couldn’t check GitHub</h2><div class="solo">
+<div class="scalebox phone" data-w="375" data-h="760"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p>
+  <div class="segtabs"><span>Specs</span><span class="on">Pull requests</span><span>Sessions</span></div><div class="amber"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg><div><b>Couldn’t check GitHub just now</b>Showing what Atlas last saw. Starting on these waits until GitHub can be checked.</div></div>
+  <div class="sh">Stacks <span class="n">1</span></div><div class="train"><div class="th"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6.878V6a2.25 2.25 0 0 1 2.25-2.25h7.5A2.25 2.25 0 0 1 18 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 0 0 4.5 9v.878m13.5-3A2.25 2.25 0 0 1 19.5 9v.878m0 0a2.246 2.246 0 0 0-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0 1 21 12v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6c0-.98.626-1.813 1.5-2.122"/></svg>Stack #3<span class="n">3 layers</span></div>
+<div class="stop first"><span class="dot"><i class="merged"></i></span><div class="grow"><b>Extract webhook signer</b><span class="s"><span class="num2">#40</span> · 3d ago</span></div><span class="chip p-merged">Merged</span></div><div class="stop"><span class="dot"><i class="open"></i></span><div class="grow"><b>Refund idempotency keys</b><span class="s"><span class="num2">#42</span> · 1d ago</span></div><span class="chip p-open">Open</span></div><div class="stop last"><span class="dot"><i class="draft"></i></span><div class="grow"><b>Idempotency for partial refunds<span class="toptag">Top</span></b><span class="s"><span class="num2">#45</span> · 2h ago</span></div><span class="chip p-draft">Draft</span></div></div></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div></section><section class="q"><h2><span class="num check">B</span>A stack you can’t build on</h2><div class="solo">
+<div class="scalebox phone" data-w="375" data-h="640"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p>
+  <div class="segtabs"><span>Specs</span><span class="on">Pull requests</span><span>Sessions</span></div><div class="sh">Stacks <span class="n">1</span></div><div class="train"><div class="th"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6.878V6a2.25 2.25 0 0 1 2.25-2.25h7.5A2.25 2.25 0 0 1 18 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 0 0 4.5 9v.878m13.5-3A2.25 2.25 0 0 1 19.5 9v.878m0 0a2.246 2.246 0 0 0-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0 1 21 12v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6c0-.98.626-1.813 1.5-2.122"/></svg>Stack #3<span class="n">3 layers</span></div>
+<div class="stop first"><span class="dot"><i class="merged"></i></span><div class="grow"><b>Extract webhook signer</b><span class="s"><span class="num2">#40</span> · 3d ago</span></div><span class="chip p-merged">Merged</span></div><div class="stop"><span class="dot"><i class="closed"></i></span><div class="grow"><b>Refund idempotency keys</b><span class="s"><span class="num2">#42</span> · 1d ago</span></div><span class="chip p-closed">Closed</span></div><div class="stop last"><span class="dot"><i class="draft"></i></span><div class="grow"><b>Idempotency for partial refunds<span class="toptag">Top</span></b><span class="s"><span class="num2">#45</span> · 2h ago</span></div><span class="chip p-draft">Draft</span></div><div class="elig no"><svg class="ic " width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 18 18 6M6 6l12 12"/></svg><span>Can’t build on this: a closed layer blocks the stack</span></div></div></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div></section><section class="q"><h2><span class="num check">C</span>No pull requests yet</h2><div class="solo">
+<div class="scalebox phone" data-w="375" data-h="640"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p>
+  <div class="segtabs"><span>Specs</span><span class="on">Pull requests</span><span>Sessions</span></div><div class="empty"><div class="tile"><svg class="ic " width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></div><b>No open pull requests</b>Open pull requests and GitHub stacks for this Repository show up here.</div></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div></section><section class="q"><h2><span class="num check">D</span>On a computer</h2><div class="solo">
+<div class="scalebox" data-w="1180" data-h="760" data-min="0.62"><div class="screen desk mock">
+  <aside class="d-side">
+    <div class="d-brand"><svg class="logo" width="28" height="28" viewBox="0 0 32 32" aria-hidden="true">
+    <rect width="32" height="32" rx="8" fill="#012B68"/>
+    <rect x=".5" y=".5" width="31" height="31" rx="7.5" fill="none" stroke="#ffffff" stroke-opacity=".14"/>
+    <g fill="none" stroke="#EEF2F9" stroke-width="1.8" stroke-linecap="round">
+      <circle cx="16" cy="16" r="9"/>
+      <ellipse cx="16" cy="16" rx="4" ry="9"/>
+      <path d="M7.4 13h17.2M7.4 19h17.2" stroke-opacity=".7"/>
+    </g>
+    <circle cx="23.5" cy="8.5" r="2.6" fill="#E19D63"/>
+  </svg>Atlas</div>
+    <div class="d-search"><svg class="ic " width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/></svg>Search<kbd>⌘K</kbd></div>
+    <div class="seg"><span>Inbox</span><span>Sessions</span><span>PRs</span><span class="on">Repos</span></div>
+    <nav class="lvl"><div class="h">Needs you</div><a><span class="mt f-waiting"><svg class="ic " width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></svg></span><span class="t">Add idempotency keys to refund endpoint</span><span class="w">4m</span></a><div class="h">Working</div><a><span class="mt f-running"><svg class="ic " width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span><span class="t">Retry failed webhooks with exponential backoff</span><span class="w">12m</span></a><a><span class="mt f-queued"><svg class="ic " width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z"/></svg></span><span class="t">Paginate invoices list</span><span class="w">3m</span></a><a><span class="mt f-idle"><svg class="ic " width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 5.25v13.5m-7.5-13.5v13.5"/></svg></span><span class="t">Dark mode toggle in account settings</span><span class="w">40m</span></a></nav>
+    <div class="d-foot"><span class="av">A</span>Acme team<svg class="ic chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8.25 4.5 7.5 7.5-7.5 7.5"/></svg></div>
+  </aside>
+  <div class="d-main">
+    <div class="d-bar"><span class="fpill">payments-api <svg class="ic " width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8.25 4.5 7.5 7.5-7.5 7.5"/></svg></span><span class="sp"></span></div>
+    <div class="d-content"><h1>payments-api</h1><p class="desc">Charges, refunds and webhooks</p>
+      <div class="segtabs"><span>Specs</span><span class="on">Pull requests</span><span>Sessions</span></div>
+      <div class="dcols"><div><div class="sh">Stacks <span class="n">1</span></div><div class="train"><div class="th"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6.878V6a2.25 2.25 0 0 1 2.25-2.25h7.5A2.25 2.25 0 0 1 18 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 0 0 4.5 9v.878m13.5-3A2.25 2.25 0 0 1 19.5 9v.878m0 0a2.246 2.246 0 0 0-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0 1 21 12v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6c0-.98.626-1.813 1.5-2.122"/></svg>Stack #3<span class="n">3 layers</span></div>
+<div class="stop first"><span class="dot"><i class="merged"></i></span><div class="grow"><b>Extract webhook signer</b><span class="s"><span class="num2">#40</span> · 3d ago</span></div><span class="chip p-merged">Merged</span></div><div class="stop"><span class="dot"><i class="open"></i></span><div class="grow"><b>Refund idempotency keys</b><span class="s"><span class="num2">#42</span> · 1d ago</span></div><span class="chip p-open">Open</span></div><div class="stop last"><span class="dot"><i class="draft"></i></span><div class="grow"><b>Idempotency for partial refunds<span class="toptag">Top</span></b><span class="s"><span class="num2">#45</span> · 2h ago</span></div><span class="chip p-draft">Draft</span></div></div></div><div><div class="sh">Pull requests <span class="n">2</span></div><div class="group"><div class="row"><span class="prt open"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">#44 · into main · 8m ago</span></span><span class="row-end"><span class="chip p-open">Open</span></span></div><div class="row"><span class="prt draft"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Bump card SDK to v12</span><span class="row-sub">#47 · into release/2.x · 5h ago</span></span><span class="row-end"><span class="chip p-draft">Draft</span></span></div></div></div></div>
+    </div>
+  </div>
+</div></div>
+<p class="swipe">Swipe sideways to see the whole screen →</p></div></section>
+</main>
+<script>
+(() => {
+  const fit = (box) => {
+    const cw = +box.dataset.w, ch = +box.dataset.h, min = innerWidth <= 760 ? +(box.dataset.min || 0) : 0;
+    let sc = box.clientWidth / cw;
+    const scroll = sc < min; if (scroll) sc = min;
+    box.classList.toggle("scroll", scroll);
+    box.style.height = ch * sc + "px";
+    box.querySelector(".screen").style.transform = "scale(" + sc + ")";
+    let sizer = box.querySelector(".sizer");
+    if (!sizer) { sizer = document.createElement("div"); sizer.className = "sizer"; sizer.style.height = "1px"; box.appendChild(sizer); }
+    sizer.style.width = cw * sc + "px";
+  };
+  const ro = new ResizeObserver((es) => es.forEach((e) => fit(e.target)));
+  document.querySelectorAll(".scalebox").forEach((b) => { const sc = b.querySelector(".screen"); sc.style.width = b.dataset.w + "px"; sc.style.height = b.dataset.h + "px"; ro.observe(b); });
+})();
+</script>
+<nav class="proto" aria-label="Prototype controls">
+  <span class="tag">Look A · Pull requests</span>
+  <a class="hide-sm" href="a-session.html">Show Session</a>
+  <button type="button" onclick="const m=document.documentElement.dataset.mode==='dark'?'light':'dark';document.documentElement.dataset.mode=m;localStorage.setItem('proto-mode',m)"><svg class="ic " width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z"/></svg><span>Light / Dark</span></button>
+  <a href="index.html">All looks</a>
+</nav>
+</body>
+</html>

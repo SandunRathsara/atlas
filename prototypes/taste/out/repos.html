@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en" data-mode="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Repositories — pick — Look A</title>
+<script>(()=>{const q=new URLSearchParams(location.search).get("mode");const s=q||localStorage.getItem("proto-mode");document.documentElement.dataset.mode=s||(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark")})()</script>
+<style>@font-face{font-family:"Inter";src:url("../fonts/inter.woff2") format("woff2");font-weight:100 900;font-display:swap}@font-face{font-family:"Geist Mono";src:url("../fonts/geist-mono.woff2") format("woff2");font-weight:100 900;font-display:swap}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+.ic{flex-shrink:0;display:block}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.proto{position:fixed;right:16px;bottom:16px;z-index:99;display:flex;gap:4px;align-items:center;padding:4px;border-radius:999px;background:#0b0c0e;color:#e8e8ea;font:500 12px/1 Inter,system-ui,sans-serif;box-shadow:0 6px 24px rgb(0 0 0/.35);border:1px solid #2a2b30}
+.proto a,.proto button{padding:7px 10px;border-radius:999px;display:flex;align-items:center;gap:6px}
+.proto a:hover,.proto button:hover{background:#24262b}
+.proto .tag{padding:7px 10px;color:#E19D63;font-weight:600}
+@media (max-width:760px){.proto{bottom:96px;right:8px}.proto .hide-sm{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+[data-mode=light]{color-scheme:light;--bg:#F2F2F7;--card:#FFFFFF;--side:#E9E9EE;--bar:rgb(242 242 247/.78);--text:#0B0B0D;--sec:#6C6C70;--ter:#8A8A8E;--sep:#E2E2E7;--fill:#E6E6EB;--fill2:#F2F2F7;
+  --tint:#012B68;--link:#1450B8;--btn:#0A63D8;--btnt:#fff;--sel:#D9E3F4;--mono:#3C3C43;
+  --t-running:#0B7FB0;--t-waiting:#C25E00;--t-succeeded:#248A3D;--t-failed:#D70015;--t-idle:#6C6C70;--t-queued:#6C6C70;--t-none:#6C6C70;
+  --f-running:#32ADE6;--f-waiting:#FF9500;--f-succeeded:#34C759;--f-failed:#FF3B30;--f-idle:#8E8E93;--f-queued:#AEAEB2;--f-none:#012B68;--hero:linear-gradient(180deg,#FFF4E5,#FFFFFF 70%)}
+[data-mode=dark]{color-scheme:dark;--bg:#000000;--card:#1C1C1E;--side:#121214;--bar:rgb(0 0 0/.72);--text:#FFFFFF;--sec:#98989F;--ter:#6E6E73;--sep:#2E2E31;--fill:#2C2C2E;--fill2:#242426;
+  --tint:#7AA7F2;--link:#7AA7F2;--btn:#0A6CF0;--btnt:#fff;--sel:#1C2A44;--mono:#D1D1D6;
+  --t-running:#64D2FF;--t-waiting:#FF9F0A;--t-succeeded:#30D158;--t-failed:#FF6961;--t-idle:#98989F;--t-queued:#98989F;--t-none:#98989F;
+  --f-running:#0A9BD6;--f-waiting:#FF9F0A;--f-succeeded:#2DB84E;--f-failed:#FF453A;--f-idle:#636366;--f-queued:#48484A;--f-none:#2D63C0;--hero:linear-gradient(180deg,#2A1D0B,#1C1C1E 70%)}
+body{background:var(--bg);color:var(--text);font:400 15px/1.45 Inter,system-ui,sans-serif;letter-spacing:-.006em;-webkit-font-smoothing:antialiased}
+.mono{font-family:"Geist Mono",ui-monospace,monospace;font-size:.88em;letter-spacing:0;color:var(--mono)}
+.app{display:flex;min-height:100vh;background:linear-gradient(to right,var(--side) 256px,transparent 256px)}
+.side{width:256px;flex-shrink:0;background:var(--side);padding:14px 12px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:18px;border-right:1px solid var(--sep)}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 6px;font-weight:700;font-size:17px;letter-spacing:-.02em}
+.search{display:flex;align-items:center;gap:8px;background:var(--fill);border-radius:10px;padding:8px 10px;color:var(--sec);font-size:14px}
+.search kbd{margin-left:auto;font:500 11px Inter;color:var(--ter)}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav-h{font-size:12px;font-weight:600;color:var(--ter);padding:0 10px 6px}
+.nav a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;font-size:14px;font-weight:500}
+.nav a .ic{color:var(--tint)}
+.nav a:hover{background:var(--fill)}
+.nav a[aria-current]{background:var(--sel)}
+.nav .count{margin-left:auto;font-size:13px;color:var(--sec);font-variant-numeric:tabular-nums}
+.nav .dot{width:10px;height:10px;border-radius:50%;margin:0 4px}
+.side-foot{margin-top:auto;font-size:12px;color:var(--ter);padding:0 10px}
+.main{flex:1;min-width:0}
+.bar{position:sticky;top:0;z-index:5;height:56px;display:flex;align-items:center;gap:10px;padding:0 32px;background:var(--bar);backdrop-filter:blur(20px) saturate(1.8);-webkit-backdrop-filter:blur(20px) saturate(1.8)}
+.bar .phone-brand{display:none}
+.bar .spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:999px;background:var(--card);font-size:13px;font-weight:500;box-shadow:0 0 0 1px var(--sep)}
+.pill.warn{color:var(--t-waiting)}
+details.pop{position:relative}
+details.pop summary{list-style:none;cursor:pointer}
+details.pop summary::-webkit-details-marker{display:none}
+.pop-panel{position:absolute;right:0;top:40px;width:320px;background:var(--card);border-radius:14px;padding:6px;box-shadow:0 12px 40px rgb(0 0 0/.25),0 0 0 1px var(--sep)}
+.pop-panel div{padding:10px 12px}
+.pop-panel b{display:block;font-weight:600}
+.pop-panel span{color:var(--sec);font-size:13px}
+.content{max-width:1040px;padding:8px 40px 120px}
+.eyebrow{margin:8px 0 2px;font-size:13px;font-weight:600;color:var(--sec);text-transform:uppercase;letter-spacing:.02em}
+h1.large{margin:0 0 28px;font-size:34px;line-height:1.1;font-weight:750;letter-spacing:-.028em}
+h2{display:flex;align-items:baseline;gap:8px;margin:32px 0 10px;font-size:21px;font-weight:700;letter-spacing:-.02em}
+h2 .n{font-size:15px;font-weight:500;color:var(--sec)}
+h2 .more{margin-left:auto;font-size:15px;font-weight:500;color:var(--link)}
+.group{background:var(--card);border-radius:14px;overflow:hidden}
+.row{display:flex;align-items:center;gap:14px;padding:12px 16px;position:relative;min-height:64px}
+.row+.row::before{content:"";position:absolute;top:0;left:62px;right:0;border-top:1px solid var(--sep)}
+a.row:hover{background:var(--fill2)}
+.tile{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;color:#fff}
+.tile.lg{width:52px;height:52px;border-radius:14px}
+.f-running{background:var(--f-running)}.f-waiting{background:var(--f-waiting)}.f-succeeded{background:var(--f-succeeded)}.f-failed{background:var(--f-failed)}.f-idle{background:var(--f-idle)}.f-queued{background:var(--f-queued)}.f-none{background:var(--f-none)}
+.t-running{color:var(--t-running)}.t-waiting{color:var(--t-waiting)}.t-succeeded{color:var(--t-succeeded)}.t-failed{color:var(--t-failed)}.t-idle{color:var(--t-idle)}.t-queued{color:var(--t-queued)}.t-none{color:var(--t-none)}
+.row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.row-title{font-size:16px;font-weight:550;letter-spacing:-.012em}
+.row-sub{font-size:13.5px;color:var(--sec)}
+.row-end{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:13.5px;white-space:nowrap}
+.row-end .st{font-weight:600}
+.row-end .time{color:var(--ter);font-variant-numeric:tabular-nums}
+.chev{color:var(--ter)}
+.unread{position:absolute;left:5px;top:50%;width:8px;height:8px;margin-top:-4px;border-radius:50%;background:var(--link)}
+.cap{height:30px;padding:0 14px;border-radius:999px;background:var(--fill);color:var(--link);font-size:14px;font-weight:650;display:inline-flex;align-items:center;gap:6px}
+.btn{height:40px;padding:0 18px;border-radius:12px;background:var(--btn);color:var(--btnt);font-size:15px;font-weight:600;display:inline-flex;align-items:center;gap:8px}
+.btn.sec{background:var(--fill);color:var(--text)}
+.hero{background:var(--hero);border-radius:18px;padding:20px;display:flex;gap:16px;align-items:center}
+.hero .k{font-size:13px;font-weight:700;color:var(--t-waiting);text-transform:uppercase;letter-spacing:.03em;display:flex;align-items:center;gap:6px}
+.hero .t{font-size:20px;font-weight:700;letter-spacing:-.02em;margin:4px 0 2px}
+.hero .s{color:var(--sec);font-size:14px}
+.hero .grow{flex:1;min-width:0}
+.tabbar{display:none}
+/* Session */
+.back{display:inline-flex;align-items:center;gap:2px;color:var(--link);font-size:16px;font-weight:500;margin:4px 0 14px -6px}
+h1.title{margin:0 0 6px;font-size:30px;line-height:1.15;font-weight:750;letter-spacing:-.026em}
+.title-row{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;margin-bottom:22px}
+.title-actions{display:flex;gap:8px;flex-shrink:0;padding-top:4px}
+.icon-btn{width:40px;height:40px;border-radius:12px;background:var(--fill);display:grid;place-items:center}
+.summary{background:var(--card);border-radius:18px;padding:20px;display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
+.summary .big{font-size:24px;font-weight:750;letter-spacing:-.02em;display:flex;align-items:center;gap:10px}
+.live{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--t-running);background:color-mix(in srgb,var(--f-running) 16%,transparent);padding:3px 8px;border-radius:999px}
+.live i{width:7px;height:7px;border-radius:50%;background:var(--f-running);animation:pulse 1.6s infinite}
+@keyframes pulse{50%{opacity:.35}}
+.stats{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--sep);border-radius:12px;overflow:hidden}
+.stats>div{background:var(--card);padding:12px 14px 0 0}
+.stats>div+div{padding-left:14px}
+.stats .l{font-size:12.5px;color:var(--sec);font-weight:500}
+.stats .v{font-size:15px;font-weight:600;margin-top:2px;overflow-wrap:anywhere}
+.cols{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:28px;align-items:start}
+.act{display:flex;gap:12px;padding:12px 16px;position:relative}
+.act+.act::before{content:"";position:absolute;top:0;left:56px;right:0;border-top:1px solid var(--sep)}
+.act .tile{width:28px;height:28px;border-radius:8px;background:var(--fill);color:var(--sec)}
+.act.msg .tile{background:var(--f-none);color:#fff}
+.act .body{flex:1;min-width:0}
+.act .time{font-size:12.5px;color:var(--ter);font-variant-numeric:tabular-nums;padding-top:4px}
+.act.msg p{margin:3px 0 0}
+.act .verb{font-weight:600}
+.act .extra{color:var(--sec);font-size:13px;margin-left:6px}
+.act.live-row .tile{background:color-mix(in srgb,var(--f-running) 18%,transparent);color:var(--t-running)}
+.dots{display:inline-flex;gap:3px;margin-left:8px;vertical-align:middle}
+.dots i{width:5px;height:5px;border-radius:50%;background:var(--t-running);animation:pulse 1.2s infinite}
+.dots i:nth-child(2){animation-delay:.2s}.dots i:nth-child(3){animation-delay:.4s}
+.card{background:var(--card);border-radius:14px;padding:16px}
+.card h3{margin:0 0 8px;font-size:15px;font-weight:700}
+.card p{margin:0 0 10px;color:var(--text)}
+.card ul{margin:0;padding-left:18px;color:var(--text)}
+.card li{margin:4px 0}
+.quote{background:var(--fill2);border-radius:10px;padding:12px 14px;font-size:14.5px}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:11px 16px;position:relative;font-size:14px}
+.kv+.kv::before{content:"";position:absolute;top:0;left:16px;right:0;border-top:1px solid var(--sep)}
+.kv .l{color:var(--sec)}
+.kv .v{text-align:right;overflow-wrap:anywhere;min-width:0}
+details.disc>summary{list-style:none;display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer;font-weight:600}
+details.disc>summary::-webkit-details-marker{display:none}
+details.disc>summary .chev{margin-left:auto;transition:transform .2s}
+details.disc[open]>summary .chev{transform:rotate(90deg)}
+details.disc[open]>summary{border-bottom:1px solid var(--sep)}
+@media (max-width:980px){.cols{grid-template-columns:1fr}}
+@media (max-width:760px){
+  .side{display:none}
+  .bar{padding:0 16px}
+  .bar .phone-brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px}
+  .bar .filter{display:none}
+  .content{padding:4px 16px 120px}
+  h1.large{font-size:32px;margin-bottom:20px}
+  h1.title{font-size:25px}
+  .row-sub .hide-sm{display:none}
+  .hero{flex-wrap:wrap}.hero .btn{width:100%;justify-content:center}
+  .stats{grid-template-columns:1fr}
+  .stats>div+div{padding-left:0}
+  .stats>div{padding:10px 0}
+  .title-actions .btn{display:none}
+  .tabbar{display:flex;position:fixed;inset:auto 0 0 0;z-index:10;height:82px;padding:8px 8px 26px;background:var(--bar);backdrop-filter:blur(20px) saturate(1.8);-webkit-backdrop-filter:blur(20px) saturate(1.8);border-top:1px solid var(--sep)}
+  .tabbar a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:600;color:var(--ter)}
+  .tabbar a[aria-current]{color:var(--tint)}
+}
+
+/* locked picks from Phases 2–3 */
+.chip{display:inline-flex;align-items:center;height:24px;padding:0 9px;border-radius:999px;font-size:12.5px;font-weight:650;white-space:nowrap}
+.chip.p-running{background:color-mix(in srgb,var(--f-running) 16%,transparent);color:var(--t-running)}
+.chip.p-waiting{background:color-mix(in srgb,var(--f-waiting) 18%,transparent);color:var(--t-waiting)}
+.chip.p-succeeded{background:color-mix(in srgb,var(--f-succeeded) 16%,transparent);color:var(--t-succeeded)}
+.chip.p-failed{background:color-mix(in srgb,var(--f-failed) 14%,transparent);color:var(--t-failed)}
+.chip.p-idle,.chip.p-queued{background:var(--fill);color:var(--sec)}
+.strip{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:12px;background:color-mix(in srgb,var(--f-waiting) 14%,transparent);font-size:14px}
+.strip .ic{color:var(--t-waiting)}.strip a{margin-left:auto;color:var(--link);font-weight:600}
+/* page */
+.tile-page{max-width:1180px;margin:0 auto;padding:40px 28px 140px}
+.tile-page>h1{margin:0 0 6px;font-size:34px;font-weight:750;letter-spacing:-.028em}
+.tile-page>p.how{margin:0 0 40px;color:var(--sec);font-size:16px}
+.tile-page>p.how b{color:var(--text)}
+.part-h{margin:56px 0 6px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--sec)}
+.q{margin:0 0 48px}
+.q h2{margin:0 0 14px;font-size:19px;font-weight:650;letter-spacing:-.015em;display:flex;align-items:center;gap:10px}
+.q .num{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--btn);color:#fff;font-size:15px;flex-shrink:0}
+.q .num.check{background:var(--f-succeeded)}
+.switch,.phone-only{display:none}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.opt,.solo{border-radius:18px;padding:16px;background:var(--bg);box-shadow:0 0 0 1px var(--sep);min-width:0}
+.opt .lab{display:flex;align-items:center;gap:8px;font-weight:700;margin-bottom:12px}
+.opt .lab span{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:7px;background:var(--fill);font-size:13px}
+.opt .lab em{font-style:normal;font-weight:500;color:var(--sec);font-size:14px}
+/* scaled mock screens */
+.scalebox{position:relative;width:100%;overflow:hidden;border-radius:14px;box-shadow:0 0 0 1px var(--sep),0 10px 30px rgb(0 0 0/.12)}
+.scalebox.phone{max-width:300px;margin:0 auto;border-radius:30px;box-shadow:0 0 0 6px var(--fill),0 10px 30px rgb(0 0 0/.15)}
+.scalebox>.screen{position:absolute;top:0;left:0;transform-origin:0 0;background:var(--bg);color:var(--text);overflow:hidden}
+/* desktop mock */
+.desk{width:1100px;height:660px;display:flex}
+.d-side{width:248px;flex-shrink:0;background:var(--side);border-right:1px solid var(--sep);padding:14px 12px;display:flex;flex-direction:column;gap:14px;position:relative}
+.d-brand{display:flex;align-items:center;gap:10px;padding:2px 6px;font-weight:700;font-size:17px;letter-spacing:-.02em}
+.d-search{display:flex;align-items:center;gap:8px;background:var(--card);box-shadow:inset 0 0 0 1.5px var(--sep);border-radius:10px;padding:8px 10px;color:var(--ter);font-size:14px}
+.d-search kbd{margin-left:auto;font:500 11px Inter;color:var(--ter);background:var(--fill);padding:2px 6px;border-radius:5px}
+.d-nav{display:flex;flex-direction:column;gap:2px}
+.d-nav .h{font-size:12px;font-weight:600;color:var(--ter);padding:8px 10px 4px}
+.d-nav a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;font-size:14px;font-weight:500}
+.d-nav a .ic{color:var(--link)}
+.d-nav a.on{background:var(--sel)}
+.d-nav .n{margin-left:auto;font-size:13px;color:var(--sec)}
+.d-nav .dot{width:10px;height:10px;border-radius:50%;margin:0 5px}
+.seg{display:flex;background:var(--fill);border-radius:9px;padding:2px}
+.seg span{flex:1;text-align:center;padding:5px 0;border-radius:7px;font-size:12.5px;font-weight:600;color:var(--sec)}
+.seg span.on{background:var(--card);color:var(--text);box-shadow:0 1px 2px rgb(0 0 0/.15)}
+.lvl{display:flex;flex-direction:column;gap:1px;overflow:hidden}
+.lvl .h{font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ter);padding:10px 8px 4px}
+.lvl a{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:9px;align-items:center;padding:7px 8px;border-radius:9px}
+.lvl a.on{background:var(--sel)}
+.lvl .mt{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;color:#fff}
+.lvl .t{font-size:13.5px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lvl .w{font-size:12px;color:var(--ter)}
+.d-foot{margin-top:auto;display:flex;align-items:center;gap:10px;padding:10px 8px 2px;border-top:1px solid var(--sep);font-size:14px;font-weight:500}
+.av{width:28px;height:28px;border-radius:50%;background:var(--sel);color:var(--link);display:grid;place-items:center;font-weight:700;font-size:13px}
+.d-foot .chev{margin-left:auto}
+.acct-menu{position:absolute;left:12px;right:12px;bottom:60px;background:var(--card);border-radius:14px;padding:6px;box-shadow:0 12px 40px rgb(0 0 0/.25),0 0 0 1px var(--sep);font-size:14px}
+.acct-menu .lbl{padding:8px 10px 6px;color:var(--sec);font-size:12.5px;font-weight:600}
+.acct-menu .seg{margin:0 6px 6px}
+.acct-menu a{display:flex;gap:10px;align-items:center;padding:9px 10px;border-radius:9px}
+.acct-menu hr{border:0;border-top:1px solid var(--sep);margin:4px 6px}
+.d-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.d-bar{height:54px;display:flex;align-items:center;gap:10px;padding:0 28px;flex-shrink:0}
+.d-bar .sp{flex:1}
+.icon-b{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;box-shadow:inset 0 0 0 1.5px var(--sep)}
+.search-b{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 12px;border-radius:10px;box-shadow:inset 0 0 0 1.5px var(--sep);color:var(--sec);font-size:14px}
+.search-b kbd{font:500 11px Inter;background:var(--fill);padding:2px 6px;border-radius:5px}
+.fpill{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border-radius:999px;box-shadow:inset 0 0 0 1.5px var(--sep);font-size:13.5px;font-weight:600}
+.d-content{padding:6px 28px 0}
+.d-content .strip{margin-bottom:18px}
+.d-content h1{margin:0 0 16px;font-size:34px;font-weight:750;letter-spacing:-.028em}
+.chips{display:flex;gap:8px;margin:0 0 16px;overflow:hidden}
+.chips span{height:32px;padding:0 14px;border-radius:999px;display:inline-flex;align-items:center;font-size:14px;font-weight:600;box-shadow:inset 0 0 0 1.5px var(--sep);white-space:nowrap}
+.chips span.on{background:var(--text);color:var(--bg);box-shadow:none}
+.mock .row{min-height:60px}
+.mock .row-title{font-size:15px}
+.mock .row-end{align-items:flex-end}
+/* phone mock */
+.ph{width:375px;height:780px;display:flex;flex-direction:column;position:relative}
+.ph-status{height:44px;flex-shrink:0}
+.ph-bar{height:48px;display:flex;align-items:center;gap:10px;padding:0 16px;flex-shrink:0}
+.ph-bar b{font-size:17px}
+.ph-bar .sp{flex:1}
+.ph-bar .ib{width:36px;height:36px;display:grid;place-items:center;color:var(--link)}
+.ph-content{padding:0 16px;flex:1;overflow:hidden}
+.ph-content .strip{font-size:13px;padding:8px 12px;margin:4px 0 12px}
+.ph-content h1{margin:0 0 12px;font-size:32px;font-weight:750;letter-spacing:-.028em;display:flex;align-items:center;justify-content:space-between}
+.ph-content h1 .fpill{font-size:13px;height:32px;letter-spacing:0}
+.ph .row{padding:10px 12px;gap:12px;min-height:58px}
+.ph .row-title{font-size:15px}
+.ph .row-sub{font-size:12.5px}
+.ph .row+.row::before{left:56px}
+.ph-tabs{display:flex;height:84px;padding:8px 6px 28px;border-top:1px solid var(--sep);background:var(--bar);backdrop-filter:blur(20px);flex-shrink:0}
+.ph-tabs a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:600;color:var(--ter)}
+.ph-tabs a.on{color:var(--link)}
+.ph-dim{position:absolute;inset:0;background:rgb(0 0 0/.4)}
+.ph-sheet{position:absolute;left:0;right:0;bottom:0;background:var(--card);border-radius:22px 22px 0 0;padding:8px 14px 30px}
+.ph-sheet .grab{width:38px;height:5px;border-radius:3px;background:var(--fill);margin:0 auto 12px}
+.ph-sheet a{display:flex;align-items:center;gap:12px;padding:12px 8px;font-size:16px;font-weight:500;border-radius:10px}
+.ph-sheet a .ic{color:var(--link)}
+.ph-sheet a.on{background:var(--sel)}
+/* quick search */
+.qs-dim{position:absolute;inset:0;background:rgb(0 0 0/.35);display:flex;justify-content:center;padding-top:90px}
+.qs{width:600px;align-self:flex-start;background:var(--card);border-radius:18px;box-shadow:0 20px 60px rgb(0 0 0/.35),0 0 0 1px var(--sep);overflow:hidden}
+.qs-in{display:flex;align-items:center;gap:10px;padding:16px 18px;font-size:18px;border-bottom:1px solid var(--sep)}
+.qs-in .ic{color:var(--ter)}
+.caret{display:inline-block;width:2px;height:20px;background:var(--btn);vertical-align:-3px;animation:pulse 1s steps(2) infinite}
+.qs-h{padding:12px 18px 4px;font-size:12px;font-weight:700;color:var(--ter);text-transform:uppercase;letter-spacing:.04em}
+.qs .row{min-height:52px;padding:8px 18px}
+.qs .row.on{background:var(--sel)}
+.qs .row+.row::before{display:none}
+.qs-foot{display:flex;gap:16px;padding:10px 18px;border-top:1px solid var(--sep);font-size:12.5px;color:var(--ter)}
+.qs-foot kbd{font:500 11px Inter;background:var(--fill);padding:2px 6px;border-radius:5px;color:var(--sec)}
+.qs-ph{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column}
+.qs-ph .top{display:flex;align-items:center;gap:10px;padding:52px 16px 10px}
+.qs-ph .field{flex:1;display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;border-radius:12px;background:var(--card);box-shadow:inset 0 0 0 1.5px var(--sep);font-size:16px}
+.qs-ph .field .ic{color:var(--ter)}
+.qs-ph .cancel{color:var(--link);font-size:16px}
+.qs-ph .group{margin:0 16px}
+.qs-ph .qs-h{padding:14px 20px 6px}
+@media (max-width:760px){
+  .tile-page{padding:20px 14px 120px}.tile-page>h1{font-size:30px}.tile-page>p.how{font-size:15px;margin-bottom:20px}
+  .phone-only{display:inline}
+  .q{margin-bottom:36px}.q h2{font-size:17px;align-items:flex-start}
+  .switch{display:flex;margin:0 0 10px;padding:3px;border-radius:12px;background:var(--fill)}
+  .switch label{flex:1;position:relative}
+  .switch input{position:absolute;opacity:0;inset:0;margin:0}
+  .switch span{display:block;text-align:center;padding:10px 6px;border-radius:9px;font-size:14px;font-weight:600;color:var(--sec)}
+  .switch input:checked+span{background:var(--card);color:var(--text);box-shadow:0 1px 3px rgb(0 0 0/.18)}
+  .switch input:focus-visible+span{outline:2px solid var(--link)}
+  .pair{grid-template-columns:1fr}
+  .q:has(.o1:checked) .opt:last-child,.q:has(.o2:checked) .opt:first-child{display:none}
+  .opt,.solo{padding:12px}.opt .lab{display:none}
+  .tile-page~.proto{left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));justify-content:space-between;font-size:14px}
+  .tile-page~.proto button{padding:10px 14px}
+}
+
+.pair.phones .scalebox.phone{max-width:320px}
+.ph-bar{position:relative}
+.ph-bar .bk{display:flex;align-items:center;gap:2px;color:var(--link);font-size:16px}
+.ph-bar .ct{position:absolute;left:0;right:0;text-align:center;font-weight:650;font-size:17px;pointer-events:none}
+.ph-bar .lnk{color:var(--link);font-size:16px}
+.ph-content{overflow:hidden}
+.ph h1.big{font-size:32px;margin:0 0 12px;letter-spacing:-.028em;display:flex;align-items:center;justify-content:space-between}
+.ph h1.st{font-size:26px;margin:0 0 4px;letter-spacing:-.022em;display:block}
+.desc{color:var(--sec);font-size:14.5px;margin:0 0 14px}
+.ph .row{padding:10px 12px;gap:12px;min-height:58px}
+.ph .row+.row::before{left:60px}
+.chev{color:var(--ter)}
+.rtile{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;color:#fff;font-weight:750;font-size:15px;flex-shrink:0}
+.c1{background:#5E5CE6}.c2{background:#0A84FF}.c3{background:#30B0C7}.c4{background:#8E8E93}
+.rcards{display:flex;flex-direction:column;gap:10px}
+.rcard{background:var(--card);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.rcard .top{display:flex;align-items:center;gap:12px}
+.rcard .nm{font-weight:650;font-size:16px}.rcard .fn{font-size:12.5px;color:var(--ter)}
+.rcard .d{font-size:14px;color:var(--sec)}
+.rcard .rstat{display:flex;gap:14px;font-size:13px;color:var(--sec);padding-top:8px;border-top:1px solid var(--sep)}
+.rcard .rstat b{color:var(--text);font-weight:650}
+.warnt{color:var(--t-waiting);font-size:12.5px;font-weight:600}
+.segtabs{display:flex;background:var(--fill);border-radius:10px;padding:2px;margin:4px 0 14px}
+.segtabs span{flex:1;text-align:center;padding:7px 0;border-radius:8px;font-size:13.5px;font-weight:600;color:var(--sec)}
+.segtabs span.on{background:var(--card);color:var(--text);box-shadow:0 1px 2px rgb(0 0 0/.15)}
+.navrows{margin-bottom:16px}
+.navrows .row{min-height:50px}
+.navrows .ri{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:#fff}
+.sh{margin:6px 0 8px;font-size:17px;font-weight:700;display:flex;align-items:baseline;gap:8px}
+.sh .n{font-size:13px;font-weight:500;color:var(--sec)}
+.fresh{font-size:12.5px;color:var(--ter);margin:10px 4px 0}
+.srch{display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;border-radius:12px;background:var(--card);box-shadow:inset 0 0 0 1.5px var(--sep);color:var(--ter);font-size:15px;margin:4px 0 14px}
+.addb{height:30px;padding:0 14px;border-radius:999px;display:inline-flex;align-items:center;font-size:14px;font-weight:650;color:var(--link);box-shadow:inset 0 0 0 1.5px var(--sep)}
+.addb.done{box-shadow:none;color:var(--ter);font-weight:500}
+.fh{font-size:13px;color:var(--sec);margin:8px 4px 0;line-height:1.4}
+.ph-sheet .group{background:var(--fill2);border-radius:14px;overflow:hidden}
+.ph-sheet .group a{padding:13px 12px;justify-content:center;color:var(--link);font-weight:500;border-radius:0}
+.ph-sheet .group a+a{border-top:1px solid var(--sep)}
+.ph-sheet .group a.red{color:var(--t-failed);font-weight:650}
+.ph-sheet .shnote{font-size:13px;color:var(--sec);text-align:center;padding:4px 14px 12px;line-height:1.4}
+.ph-sheet .shnote b{display:block;color:var(--text);font-size:15px;margin-bottom:4px}
+.ph-sheet .cancelg{margin-top:10px}.ph-sheet .cancelg a{font-weight:650}
+
+</style>
+</head>
+<body>
+<main class="tile-page">
+  <h1>Repositories</h1>
+  <p class="how">Where your GitHub Repositories and their Specs live. <span class="phone-only">Tap <b>1</b> / <b>2</b> to flip.</span><br>
+  Reply with <b>3 numbers</b>, plus any letters in part 2 that look wrong.</p>
+  <div class="part-h">Part 1 · Pick one</div>
+  <section class="q">
+  <h2><span class="num">1</span>Your Repositories</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 1">
+    <label><input class="o1" type="radio" name="q0" checked><span>1 · Simple list</span></label>
+    <label><input class="o2" type="radio" name="q0"><span>2 · Cards</span></label>
+  </div>
+  <div class="pair phones"><div class="opt"><div class="lab"><span>1</span>Simple list <em>like Settings</em></div>
+<div class="scalebox phone" data-w="375" data-h="780"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4.5v15m7.5-7.5h-15"/></svg></span></div>
+  <div class="ph-content"><h1 class="big">Repositories</h1><div class="group"><div class="row"><span class="rtile c1" style="width:36px;height:36px">P</span><span class="row-main"><span class="row-title">payments-api</span><span class="row-sub">Charges, refunds and webhooks</span></span>
+      <span class="row-end"><span class="time">2 working</span></span><svg class="ic chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8.25 4.5 7.5 7.5-7.5 7.5"/></svg></div><div class="row"><span class="rtile c2" style="width:36px;height:36px">W</span><span class="row-main"><span class="row-title">web-dashboard</span><span class="row-sub">Customer dashboard (Next.js)</span></span>
+      <span class="row-end"><span class="time">1 working</span></span><svg class="ic chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8.25 4.5 7.5 7.5-7.5 7.5"/></svg></div><div class="row"><span class="rtile c3" style="width:36px;height:36px">L</span><span class="row-main"><span class="row-title">ledger</span><span class="row-sub">Double-entry ledger service</span></span>
+      <span class="row-end"><span class="time">2 Specs</span></span><svg class="ic chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8.25 4.5 7.5 7.5-7.5 7.5"/></svg></div><div class="row"><span class="rtile c4" style="width:36px;height:36px">L</span><span class="row-main"><span class="row-title">legacy-billing</span><span class="row-sub"><span class="warnt">Archived · can’t start Sessions</span></span></span>
+      <span class="row-end"><span class="time">1 Spec</span></span><svg class="ic chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8.25 4.5 7.5 7.5-7.5 7.5"/></svg></div></div></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div><div class="opt"><div class="lab"><span>2</span>Cards <em>with Spec and working counts</em></div>
+<div class="scalebox phone" data-w="375" data-h="780"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4.5v15m7.5-7.5h-15"/></svg></span></div>
+  <div class="ph-content"><h1 class="big">Repositories</h1><div class="rcards"><div class="rcard"><div class="top"><span class="rtile c1" style="width:40px;height:40px">P</span><div><div class="nm">payments-api</div><div class="fn">Acme/payments-api</div></div></div>
+      <div class="d">Charges, refunds and webhooks</div><div class="rstat"><span><b>6</b> Specs</span><span><b>2</b> working</span></div></div><div class="rcard"><div class="top"><span class="rtile c2" style="width:40px;height:40px">W</span><div><div class="nm">web-dashboard</div><div class="fn">Acme/web-dashboard</div></div></div>
+      <div class="d">Customer dashboard (Next.js)</div><div class="rstat"><span><b>4</b> Specs</span><span><b>1</b> working</span></div></div><div class="rcard"><div class="top"><span class="rtile c3" style="width:40px;height:40px">L</span><div><div class="nm">ledger</div><div class="fn">Acme/ledger</div></div></div>
+      <div class="d">Double-entry ledger service</div><div class="rstat"><span><b>2</b> Specs</span><span><b>0</b> working</span></div></div></div></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div></div>
+</section><section class="q">
+  <h2><span class="num">2</span>Inside a Repository</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 2">
+    <label><input class="o1" type="radio" name="q1" checked><span>1 · Tabs</span></label>
+    <label><input class="o2" type="radio" name="q1"><span>2 · Links on top</span></label>
+  </div>
+  <div class="pair phones"><div class="opt"><div class="lab"><span>1</span>Tabs <em>Specs · Pull requests · Sessions</em></div>
+<div class="scalebox phone" data-w="375" data-h="760"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p><div class="segtabs"><span class="on">Specs</span><span>Pull requests</span><span>Sessions</span></div><div class="group"><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">Spec #11 · updated 1d ago</span></span>
+      <span class="row-end"><span class="chip p-running">Running</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">Spec #10 · updated 2d ago</span></span>
+      <span class="row-end"><span class="chip p-waiting">Waiting</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Sign outgoing webhooks</span><span class="row-sub">Spec #16 · updated 2d ago</span></span>
+      <span class="row-end"><span class="chip p-failed">Failed</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Remove legacy v1 charge route</span><span class="row-sub">Spec #14 · updated 3d ago</span></span>
+      <span class="row-end"><span class="time">Not started</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Rate limit card tokenization</span><span class="row-sub">Spec #15 · updated 4d ago</span></span>
+      <span class="row-end"><span class="time">Not started</span></span></div></div><p class="fresh">Specs checked 2 min ago</p></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div><div class="opt"><div class="lab"><span>2</span>Links on top <em>then the Specs</em></div>
+<div class="scalebox phone" data-w="375" data-h="760"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p><div class="group navrows">
+    <div class="row"><span class="ri" style="background:#30B0C7"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg></span><span class="row-main"><span class="row-title">Pull requests</span></span><span class="time">5</span><svg class="ic chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8.25 4.5 7.5 7.5-7.5 7.5"/></svg></div>
+    <div class="row"><span class="ri" style="background:#0A84FF"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span><span class="row-main"><span class="row-title">Sessions</span></span><span class="time">2 working</span><svg class="ic chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8.25 4.5 7.5 7.5-7.5 7.5"/></svg></div>
+  </div><div class="sh">Specs <span class="n">6</span></div><div class="group"><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">Spec #11 · updated 1d ago</span></span>
+      <span class="row-end"><span class="chip p-running">Running</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">Spec #10 · updated 2d ago</span></span>
+      <span class="row-end"><span class="chip p-waiting">Waiting</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Sign outgoing webhooks</span><span class="row-sub">Spec #16 · updated 2d ago</span></span>
+      <span class="row-end"><span class="chip p-failed">Failed</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Remove legacy v1 charge route</span><span class="row-sub">Spec #14 · updated 3d ago</span></span>
+      <span class="row-end"><span class="time">Not started</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Rate limit card tokenization</span><span class="row-sub">Spec #15 · updated 4d ago</span></span>
+      <span class="row-end"><span class="time">Not started</span></span></div></div></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div></div>
+</section><section class="q">
+  <h2><span class="num">3</span>Each Spec in the list</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 3">
+    <label><input class="o1" type="radio" name="q2" checked><span>1 · Show its Session status</span></label>
+    <label><input class="o2" type="radio" name="q2"><span>2 · Plain</span></label>
+  </div>
+  <div class="pair phones"><div class="opt"><div class="lab"><span>1</span>Show its Session status <em>Running, Failed, Not started</em></div>
+<div class="scalebox phone" data-w="375" data-h="640"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p><div class="segtabs"><span class="on">Specs</span><span>Pull requests</span><span>Sessions</span></div><div class="group"><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">Spec #11 · updated 1d ago</span></span>
+      <span class="row-end"><span class="chip p-running">Running</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">Spec #10 · updated 2d ago</span></span>
+      <span class="row-end"><span class="chip p-waiting">Waiting</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Sign outgoing webhooks</span><span class="row-sub">Spec #16 · updated 2d ago</span></span>
+      <span class="row-end"><span class="chip p-failed">Failed</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Remove legacy v1 charge route</span><span class="row-sub">Spec #14 · updated 3d ago</span></span>
+      <span class="row-end"><span class="time">Not started</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Rate limit card tokenization</span><span class="row-sub">Spec #15 · updated 4d ago</span></span>
+      <span class="row-end"><span class="time">Not started</span></span></div></div></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div><div class="opt"><div class="lab"><span>2</span>Plain <em>just the title</em></div>
+<div class="scalebox phone" data-w="375" data-h="640"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p><div class="segtabs"><span class="on">Specs</span><span>Pull requests</span><span>Sessions</span></div><div class="group"><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">Spec #11 · updated 1d ago</span></span>
+      </div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">Spec #10 · updated 2d ago</span></span>
+      </div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Sign outgoing webhooks</span><span class="row-sub">Spec #16 · updated 2d ago</span></span>
+      </div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Remove legacy v1 charge route</span><span class="row-sub">Spec #14 · updated 3d ago</span></span>
+      </div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Rate limit card tokenization</span><span class="row-sub">Spec #15 · updated 4d ago</span></span>
+      </div></div></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div></div>
+</section>
+  <div class="part-h">Part 2 · Just check</div>
+  <section class="q"><h2><span class="num check">A</span>Adding a Repository (the + button)</h2><div class="solo">
+<div class="scalebox phone" data-w="375" data-h="640"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="lnk">Done</span><span class="ct">Add Repository</span><span class="sp"></span></div>
+  <div class="ph-content"><div class="srch"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/></svg>Filter Repositories</div>
+  <div class="group">
+    <div class="row"><span class="rtile c2" style="width:36px;height:36px">N</span><span class="row-main"><span class="row-title">notifications</span><span class="row-sub">Email and SMS sender</span></span><span class="addb">Add</span></div>
+    <div class="row"><span class="rtile c1" style="width:36px;height:36px">P</span><span class="row-main"><span class="row-title">payments-api</span><span class="row-sub">Already added</span></span><span class="addb done">Added</span></div>
+    <div class="row"><span class="rtile c3" style="width:36px;height:36px">S</span><span class="row-main"><span class="row-title">search-indexer</span><span class="row-sub"><span class="warnt">Removed earlier · history kept</span></span></span><span class="addb">Re-add</span></div>
+    <div class="row"><span class="rtile c4" style="width:36px;height:36px">W</span><span class="row-main"><span class="row-title">wiki</span><span class="row-sub"><span class="warnt">Archived · browsing only</span></span></span><span class="addb">Add</span></div>
+  </div>
+  <p class="fh">Only Repositories the Atlas GitHub App can see are listed. Adding one doesn’t change anything on GitHub.</p></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav>
+</div></div></div></section><section class="q"><h2><span class="num check">B</span>Removing a Repository (from its ⋯ menu, now asks first)</h2><div class="solo">
+<div class="scalebox phone" data-w="375" data-h="760"><div class="screen ph mock">
+  <div class="ph-status"></div><div class="ph-bar"><span class="bk"><svg class="ic " width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>Repos</span><span class="sp"></span><span class="ib"><svg class="ic " width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg></span></div>
+  <div class="ph-content"><h1 class="st">payments-api</h1><p class="desc">Charges, refunds and webhooks</p><div class="segtabs"><span class="on">Specs</span><span>Pull requests</span><span>Sessions</span></div><div class="group"><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">Spec #11 · updated 1d ago</span></span>
+      <span class="row-end"><span class="chip p-running">Running</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">Spec #10 · updated 2d ago</span></span>
+      <span class="row-end"><span class="chip p-waiting">Waiting</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Sign outgoing webhooks</span><span class="row-sub">Spec #16 · updated 2d ago</span></span>
+      <span class="row-end"><span class="chip p-failed">Failed</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Remove legacy v1 charge route</span><span class="row-sub">Spec #14 · updated 3d ago</span></span>
+      <span class="row-end"><span class="time">Not started</span></span></div><div class="row"><span class="tile f-none"><svg class="ic " width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg></span><span class="row-main"><span class="row-title">Rate limit card tokenization</span><span class="row-sub">Spec #15 · updated 4d ago</span></span>
+      <span class="row-end"><span class="time">Not started</span></span></div></div></div><nav class="ph-tabs"><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg>Inbox</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg>Sessions</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 0v7.5m0 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm12 0a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Zm0 0V9a3 3 0 0 0-3-3h-3m0 0 2.25-2.25M12 6l2.25 2.25"/></svg>PRs</a><a class="on"><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>Repos</a><a><svg class="ic " width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></svg>More</a></nav><div class="ph-dim"></div><div class="ph-sheet"><div class="grab"></div>
+   <div class="shnote"><b>Remove payments-api from Atlas?</b>It leaves your lists and can’t start new Sessions. Its history is kept, and you can re-add it later.</div>
+   <div class="group"><a class="red">Remove from Atlas</a></div>
+   <div class="group cancelg"><a>Cancel</a></div></div>
+</div></div></div></section>
+</main>
+<script>
+(() => {
+  const fit = (box) => {
+    const cw = +box.dataset.w, ch = +box.dataset.h, sc = box.clientWidth / cw;
+    box.style.height = ch * sc + "px";
+    box.querySelector(".screen").style.transform = "scale(" + sc + ")";
+  };
+  const ro = new ResizeObserver((es) => es.forEach((e) => fit(e.target)));
+  document.querySelectorAll(".scalebox").forEach((b) => { const sc = b.querySelector(".screen"); sc.style.width = b.dataset.w + "px"; sc.style.height = b.dataset.h + "px"; ro.observe(b); });
+})();
+</script>
+<nav class="proto" aria-label="Prototype controls">
+  <span class="tag">Look A · Repositories</span>
+  <a class="hide-sm" href="a-session.html">Show Session</a>
+  <button type="button" onclick="const m=document.documentElement.dataset.mode==='dark'?'light':'dark';document.documentElement.dataset.mode=m;localStorage.setItem('proto-mode',m)"><svg class="ic " width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z"/></svg><span>Light / Dark</span></button>
+  <a href="index.html">All looks</a>
+</nav>
+</body>
+</html>

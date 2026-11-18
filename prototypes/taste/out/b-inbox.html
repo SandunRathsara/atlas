@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en" data-mode="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inbox — Look B</title>
+<script>(()=>{const q=new URLSearchParams(location.search).get("mode");const s=q||localStorage.getItem("proto-mode");document.documentElement.dataset.mode=s||(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark")})()</script>
+<style>@font-face{font-family:"Geist";src:url("../fonts/geist.woff2") format("woff2");font-weight:100 900;font-display:swap}@font-face{font-family:"Geist Mono";src:url("../fonts/geist-mono.woff2") format("woff2");font-weight:100 900;font-display:swap}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+.ic{flex-shrink:0;display:block}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.proto{position:fixed;right:16px;bottom:16px;z-index:99;display:flex;gap:4px;align-items:center;padding:4px;border-radius:999px;background:#0b0c0e;color:#e8e8ea;font:500 12px/1 Inter,system-ui,sans-serif;box-shadow:0 6px 24px rgb(0 0 0/.35);border:1px solid #2a2b30}
+.proto a,.proto button{padding:7px 10px;border-radius:999px;display:flex;align-items:center;gap:6px}
+.proto a:hover,.proto button:hover{background:#24262b}
+.proto .tag{padding:7px 10px;color:#E19D63;font-weight:600}
+@media (max-width:760px){.proto{bottom:96px;right:8px}.proto .hide-sm{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+[data-mode=dark]{color-scheme:dark;--win:#141518;--main:#1A1B1F;--raised:#222328;--hover:#1F2025;--text:#ECECEE;--sec:#9B9CA3;--faint:#6A6B72;--line:rgb(255 255 255/.07);
+  --sel:#1C2A44;--tint:#7FA8EE;--btn:#2F62B8;--btnt:#fff;--kbd:#2A2B31;
+  --running:#5BBDEB;--waiting:#EBA941;--succeeded:#5EC27A;--failed:#F0716A;--idle:#7D7E86}
+[data-mode=light]{color-scheme:light;--win:#EDEAE4;--main:#F9F8F5;--raised:#FFFFFF;--hover:#E5E1DA;--text:#1D1C1A;--sec:#69655D;--faint:#8F8A80;--line:rgb(0 0 0/.08);
+  --sel:#D6E0F1;--tint:#0F3F8C;--btn:#012B68;--btnt:#fff;--kbd:#E2DED6;
+  --running:#1D8CC4;--waiting:#C47A0E;--succeeded:#2E8A4A;--failed:#C9372F;--idle:#8F8A80}
+body{background:var(--main);color:var(--text);font:400 14px/1.5 Geist,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:"Geist Mono",ui-monospace,monospace;font-size:13px}
+.app{display:grid;grid-template-columns:320px minmax(0,1fr);min-height:100vh;background:linear-gradient(to right,var(--win) 320px,transparent 320px)}
+.side{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;padding:12px 10px 10px;gap:12px;border-right:1px solid var(--line)}
+.top{display:flex;align-items:center;gap:10px;padding:2px 6px}
+.top b{font-weight:600;font-size:14px;letter-spacing:-.01em}
+.top .icon-btn{margin-left:auto}
+.jump{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-radius:8px;background:var(--main);color:var(--faint);box-shadow:inset 0 0 0 1px var(--line)}
+kbd{font:500 11px "Geist Mono",monospace;background:var(--kbd);color:var(--sec);border-radius:5px;padding:2px 5px}
+.jump kbd{margin-left:auto}
+.seg{display:flex;background:var(--hover);border-radius:8px;padding:2px}
+.seg span{flex:1;text-align:center;padding:5px 0;border-radius:6px;font-size:12.5px;font-weight:500;color:var(--sec)}
+.seg span.on{background:var(--raised);color:var(--text);box-shadow:0 1px 2px rgb(0 0 0/.12)}
+.list{flex:1;overflow:auto;margin:0 -4px;padding:0 4px}
+.gh{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--faint);padding:14px 8px 6px}
+.gh .n{margin-left:auto;font-variant-numeric:tabular-nums;letter-spacing:0}
+.gh .new{color:var(--tint);text-transform:none;letter-spacing:0;font-weight:500}
+.it{display:grid;grid-template-columns:18px minmax(0,1fr) auto;column-gap:10px;align-items:center;padding:8px;border-radius:8px}
+.it:hover{background:var(--hover)}
+.it[aria-current]{background:var(--sel)}
+.it .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.it .w{font-size:12px;color:var(--faint);font-variant-numeric:tabular-nums}
+.it .m{grid-column:2/4;font-size:12.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.it.dim .t{color:var(--sec);font-weight:400}
+.ind{width:18px;height:18px;display:grid;place-items:center}
+.ind .d{width:8px;height:8px;border-radius:50%}
+.ind.waiting .d{background:var(--waiting);box-shadow:0 0 0 3px color-mix(in srgb,var(--waiting) 25%,transparent)}
+.ind.failed .d{background:var(--failed)}
+.ind.idle .d{background:transparent;box-shadow:inset 0 0 0 1.5px var(--idle)}
+.ind.queued .d{background:transparent;border:1.5px dashed var(--idle);width:10px;height:10px}
+.ind.none .d{width:6px;height:6px;background:var(--line);box-shadow:inset 0 0 0 1px var(--faint)}
+.ind.succeeded{color:var(--succeeded)}
+.ind.running{gap:2px;display:flex;align-items:center;justify-content:center}
+.ind.running i{width:3.5px;height:3.5px;border-radius:50%;background:var(--running);animation:blink 1.2s infinite}
+.ind.running i:nth-child(2){animation-delay:.2s}.ind.running i:nth-child(3){animation-delay:.4s}
+@keyframes blink{50%{opacity:.25}}
+.foot{display:flex;gap:2px;border-top:1px solid var(--line);padding-top:8px}
+.icon-btn{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;color:var(--sec);position:relative}
+.icon-btn:hover{background:var(--hover);color:var(--text)}
+.icon-btn .badge{position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--waiting)}
+.foot .grow{flex:1}
+main{min-width:0;display:flex;flex-direction:column}
+.crumbs{height:48px;display:flex;align-items:center;gap:8px;padding:0 28px;color:var(--faint);font-size:13px;border-bottom:1px solid var(--line);position:sticky;top:0;background:color-mix(in srgb,var(--main) 85%,transparent);backdrop-filter:blur(12px);z-index:3}
+.crumbs b{color:var(--text);font-weight:500}
+.crumbs .sp{flex:1}
+.crumbs .phone-back{display:none}
+.pane{padding:28px 28px 120px;max-width:1120px;width:100%}
+.btn{height:32px;padding:0 12px;border-radius:7px;background:var(--btn);color:var(--btnt);font-weight:500;display:inline-flex;align-items:center;gap:8px}
+.btn kbd{background:rgb(255 255 255/.16);color:#fff}
+.btn.ghost{background:transparent;color:var(--text);box-shadow:inset 0 0 0 1px var(--line)}
+.btn.ghost:hover{background:var(--hover)}
+h1{margin:0;font-size:22px;font-weight:600;letter-spacing:-.02em;line-height:1.25}
+.lede{color:var(--sec);margin:6px 0 24px}
+.lede b{color:var(--text);font-weight:500}
+.panel{background:var(--raised);border-radius:10px;box-shadow:0 0 0 1px var(--line)}
+.focus{padding:18px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;box-shadow:0 0 0 1px color-mix(in srgb,var(--waiting) 45%,transparent)}
+.focus .k{font-size:12px;color:var(--waiting);font-weight:600}
+.focus .t{font-size:16px;font-weight:600;margin:2px 0}
+.focus .s{color:var(--sec);font-size:13px}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);font-weight:600;margin:32px 0 10px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.line{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 14px}
+.line+.line{border-top:1px solid var(--line)}
+.line .s{color:var(--faint);font-size:12.5px}
+.sys{padding:10px 14px;display:flex;gap:10px}
+.sys+.sys{border-top:1px solid var(--line)}
+.sys .ic{color:var(--waiting);margin-top:2px}
+.sys .b{color:var(--sec);font-size:13px}
+.hints{display:flex;gap:18px;margin-top:36px;color:var(--faint);font-size:12.5px}
+.hints span{display:flex;gap:6px;align-items:center}
+/* session */
+.head{display:flex;gap:16px;align-items:flex-start;justify-content:space-between}
+.state{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--running);margin-bottom:8px}
+.tabs{display:flex;gap:2px;margin:20px 0 0;border-bottom:1px solid var(--line)}
+.tabs span{padding:8px 12px;color:var(--sec);font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs span.on{color:var(--text);border-color:var(--tint)}
+.split{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:28px;margin-top:20px}
+.log{display:flex;flex-direction:column}
+.ev{display:grid;grid-template-columns:48px 20px minmax(0,1fr);gap:10px;padding:9px 0}
+.ev .tm{font:12px "Geist Mono",monospace;color:var(--faint);padding-top:2px}
+.ev .ic{color:var(--faint);margin-top:1px}
+.ev.msg .ic{color:var(--tint)}
+.ev.msg .tx{font-size:14.5px;line-height:1.55}
+.ev.tool .tx{font:13px "Geist Mono",monospace;color:var(--sec)}
+.ev.tool .tx b{color:var(--text);font-weight:500;display:inline-block;min-width:64px}
+.ev.tool .x{color:var(--faint);margin-left:8px}
+.ev.live .tx{color:var(--text)}
+.ev.live .ic{color:var(--running)}
+.cursor{display:inline-block;width:7px;height:14px;background:var(--running);vertical-align:-2px;margin-left:6px;animation:blink 1s steps(2) infinite}
+.insp{display:flex;flex-direction:column;gap:16px}
+.kv{display:grid;grid-template-columns:110px minmax(0,1fr);gap:4px 12px;padding:14px;font-size:13px}
+.kv .l{color:var(--faint)}
+.kv .v{overflow-wrap:anywhere}
+.insp h3{margin:0;padding:12px 14px 0;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);font-weight:600}
+details.adv summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;align-items:center;gap:8px;color:var(--sec);font-size:13px;font-weight:500}
+details.adv summary::-webkit-details-marker{display:none}
+details.adv[open] summary .ic{transform:rotate(90deg)}
+@media (max-width:860px){
+  .app{grid-template-columns:1fr;background:none}
+  .side{position:static;height:auto;border:0;padding:12px}
+  .app.detail .side{display:none}
+  .app.list main{display:none}
+  .app.list .side{min-height:100vh;background:var(--win)}
+  .crumbs{padding:0 12px}
+  .crumbs .phone-back{display:inline-flex;align-items:center;color:var(--tint);gap:2px;font-weight:500}
+  .crumbs .path{display:none}
+  .pane{padding:20px 16px 120px}
+  .split,.grid2{grid-template-columns:1fr}
+  .ev{grid-template-columns:20px minmax(0,1fr)}
+  .ev .tm{display:none}
+  .head .btn{display:none}
+}
+
+</style>
+</head>
+<body>
+
+<div class="app list">
+  
+<aside class="side" aria-label="Inbox">
+  <div class="top"><svg class="logo" width="24" height="24" viewBox="0 0 32 32" aria-hidden="true">
+    <rect width="32" height="32" rx="6" fill="#012B68"/>
+    <rect x=".5" y=".5" width="31" height="31" rx="5.5" fill="none" stroke="#ffffff" stroke-opacity=".14"/>
+    <g fill="none" stroke="#EEF2F9" stroke-width="1.8" stroke-linecap="round">
+      <circle cx="16" cy="16" r="9"/>
+      <ellipse cx="16" cy="16" rx="4" ry="9"/>
+      <path d="M7.4 13h17.2M7.4 19h17.2" stroke-opacity=".7"/>
+    </g>
+    <circle cx="23.5" cy="8.5" r="2.6" fill="#E19D63"/>
+  </svg><b>Atlas</b><button class="icon-btn" aria-label="Filter Repositories"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75"/></svg></button></div>
+  <div class="jump"><svg class="ic " width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/></svg>Jump to a Spec or Session<kbd>⌘K</kbd></div>
+  <div class="seg" role="tablist"><span class="on">Inbox</span><span>Sessions</span><span>PRs</span></div>
+  <nav class="list" aria-label="Spec inbox">
+    <div class="gh">Needs you<span class="n">1</span></div>
+    
+<a class="it " href="b-session.html" >
+  <span class="ind waiting" title="Waiting"><span class="d"></span></span>
+  <span class="t">Add idempotency keys to refund endpoint</span>
+  <span class="w">4m</span>
+  <span class="m">payments-api · #10 · The Agent asked a question in OpenCode</span>
+</a>
+    <div class="gh">Working<span class="n">3</span></div>
+    
+<a class="it " href="b-session.html" >
+  <span class="ind running" title="Running"><i></i><i></i><i></i></span>
+  <span class="t">Retry failed webhooks with exponential backoff</span>
+  <span class="w">12m</span>
+  <span class="m">payments-api · #11 · Running tests</span>
+</a>
+<a class="it " href="b-session.html" >
+  <span class="ind queued" title="Queued"><span class="d"></span></span>
+  <span class="t">Paginate invoices list</span>
+  <span class="w">3m</span>
+  <span class="m">web-dashboard · #11 · Waiting for a free slot</span>
+</a>
+<a class="it " href="b-session.html" >
+  <span class="ind idle" title="Idle"><span class="d"></span></span>
+  <span class="t">Dark mode toggle in account settings</span>
+  <span class="w">40m</span>
+  <span class="m">web-dashboard · #10 · No activity for 40 minutes</span>
+</a>
+    <div class="gh">Not started<span class="n">3</span></div>
+    
+<a class="it dim" href="b-session.html" >
+  <span class="ind none" title="No Session"><span class="d"></span></span>
+  <span class="t">Remove legacy v1 charge route</span>
+  <span class="w">2d</span>
+  <span class="m">payments-api · #15 · Not started</span>
+</a>
+<a class="it dim" href="b-session.html" >
+  <span class="ind none" title="No Session"><span class="d"></span></span>
+  <span class="t">Rate limit card tokenization</span>
+  <span class="w">4d</span>
+  <span class="m">payments-api · #14 · Not started</span>
+</a>
+<a class="it dim" href="b-session.html" >
+  <span class="ind none" title="No Session"><span class="d"></span></span>
+  <span class="t">Keyboard shortcuts for search</span>
+  <span class="w">5d</span>
+  <span class="m">web-dashboard · #13 · Not started</span>
+</a>
+    <div class="gh">Settled<span class="new">· 2 new</span><span class="n">3</span></div>
+    
+<a class="it " href="b-session.html" >
+  <span class="ind succeeded" title="Succeeded"><svg class="ic " width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span>
+  <span class="t">Migrate ledger table to bigint ids</span>
+  <span class="w">1h</span>
+  <span class="m">payments-api · #12 · Pull request #43 opened</span>
+</a>
+<a class="it " href="b-session.html" >
+  <span class="ind failed" title="Failed"><span class="d"></span></span>
+  <span class="t">Expose settlement report CSV export</span>
+  <span class="w">3h</span>
+  <span class="m">payments-api · #13 · Tests failed</span>
+</a>
+<a class="it " href="b-session.html" >
+  <span class="ind succeeded" title="Succeeded"><svg class="ic " width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span>
+  <span class="t">Show failed payment banner</span>
+  <span class="w">1d</span>
+  <span class="m">web-dashboard · #12 · Pull request #18 opened</span>
+</a>
+  </nav>
+  <div class="foot">
+    <button class="icon-btn" aria-label="Repositories"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg></button>
+    <button class="icon-btn" aria-label="Updates"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.023 9.348h4.992V4.356m-1.291 15.17a9 9 0 1 1 1.33-9.035M3.528 4.474v4.992H8.52"/></svg></button>
+    <button class="icon-btn" aria-label="2 system warnings"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg><span class="badge"></span></button>
+    <span class="grow"></span>
+    <button class="icon-btn" aria-label="Sign out"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></svg></button>
+  </div>
+</aside>
+  <main id="main">
+    <div class="crumbs"><span class="path"><b>Inbox</b> · All Repositories</span><span class="sp"></span></div>
+    <div class="pane">
+      <h1>Inbox</h1>
+      <p class="lede"><b>1</b> needs you · <b>2</b> working · <b>1</b> idle · <b>3</b> not started</p>
+
+      <div class="panel focus">
+        <span class="ind waiting" title="Waiting"><span class="d"></span></span>
+        <div>
+          <div class="k">Needs you · 4m</div>
+          <div class="t">Add idempotency keys to refund endpoint</div>
+          <div class="s">payments-api · Spec #10 · The Agent asked a question in OpenCode</div>
+        </div>
+        <a class="btn" href="b-session.html">Open Session <kbd>⏎</kbd></a>
+      </div>
+
+      <div class="grid2">
+        <section>
+          <h2>Recently settled</h2>
+          <div class="panel">
+            <a class="line" href="b-session.html"><span class="ind succeeded" title="Succeeded"><svg class="ic " width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span><span>Migrate ledger table to bigint ids<div class="s">payments-api · Pull request #43 opened</div></span><span class="s">1h</span></a><a class="line" href="b-session.html"><span class="ind failed" title="Failed"><span class="d"></span></span><span>Expose settlement report CSV export<div class="s">payments-api · Tests failed</div></span><span class="s">3h</span></a>
+          </div>
+        </section>
+        <section>
+          <h2>System</h2>
+          <div class="panel">
+            <div class="sys"><svg class="ic " width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg><div>Backup status unknown<div class="b">No current local recovery status is available.</div></div></div><div class="sys"><svg class="ic " width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg><div>Storage check unknown<div class="b">New Sessions stay queued until a storage check succeeds.</div></div></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="hints"><span><kbd>⌘K</kbd> jump</span><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>⏎</kbd> open</span><span><kbd>S</kbd> start Session</span></div>
+    </div>
+  </main>
+</div>
+<nav class="proto" aria-label="Prototype controls">
+  <span class="tag">Look B · Rex</span>
+  <a class="hide-sm" href="b-session.html">Show Session</a>
+  <button type="button" onclick="const m=document.documentElement.dataset.mode==='dark'?'light':'dark';document.documentElement.dataset.mode=m;localStorage.setItem('proto-mode',m)"><svg class="ic " width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z"/></svg><span>Light / Dark</span></button>
+  <a href="index.html">All looks</a>
+</nav>
+</body>
+</html>

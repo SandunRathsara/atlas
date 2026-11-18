@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en" data-mode="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fine-tune Look A — Look A</title>
+<script>(()=>{const q=new URLSearchParams(location.search).get("mode");const s=q||localStorage.getItem("proto-mode");document.documentElement.dataset.mode=s||(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark")})()</script>
+<style>@font-face{font-family:"Inter";src:url("../fonts/inter.woff2") format("woff2");font-weight:100 900;font-display:swap}@font-face{font-family:"Geist Mono";src:url("../fonts/geist-mono.woff2") format("woff2");font-weight:100 900;font-display:swap}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+.ic{flex-shrink:0;display:block}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.proto{position:fixed;right:16px;bottom:16px;z-index:99;display:flex;gap:4px;align-items:center;padding:4px;border-radius:999px;background:#0b0c0e;color:#e8e8ea;font:500 12px/1 Inter,system-ui,sans-serif;box-shadow:0 6px 24px rgb(0 0 0/.35);border:1px solid #2a2b30}
+.proto a,.proto button{padding:7px 10px;border-radius:999px;display:flex;align-items:center;gap:6px}
+.proto a:hover,.proto button:hover{background:#24262b}
+.proto .tag{padding:7px 10px;color:#E19D63;font-weight:600}
+@media (max-width:760px){.proto{bottom:96px;right:8px}.proto .hide-sm{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+[data-mode=light]{color-scheme:light;--bg:#F2F2F7;--card:#FFFFFF;--side:#E9E9EE;--bar:rgb(242 242 247/.78);--text:#0B0B0D;--sec:#6C6C70;--ter:#8A8A8E;--sep:#E2E2E7;--fill:#E6E6EB;--fill2:#F2F2F7;
+  --tint:#012B68;--link:#1450B8;--btn:#0A63D8;--btnt:#fff;--sel:#D9E3F4;--mono:#3C3C43;
+  --t-running:#0B7FB0;--t-waiting:#C25E00;--t-succeeded:#248A3D;--t-failed:#D70015;--t-idle:#6C6C70;--t-queued:#6C6C70;--t-none:#6C6C70;
+  --f-running:#32ADE6;--f-waiting:#FF9500;--f-succeeded:#34C759;--f-failed:#FF3B30;--f-idle:#8E8E93;--f-queued:#AEAEB2;--f-none:#012B68;--hero:linear-gradient(180deg,#FFF4E5,#FFFFFF 70%)}
+[data-mode=dark]{color-scheme:dark;--bg:#000000;--card:#1C1C1E;--side:#121214;--bar:rgb(0 0 0/.72);--text:#FFFFFF;--sec:#98989F;--ter:#6E6E73;--sep:#2E2E31;--fill:#2C2C2E;--fill2:#242426;
+  --tint:#7AA7F2;--link:#7AA7F2;--btn:#0A6CF0;--btnt:#fff;--sel:#1C2A44;--mono:#D1D1D6;
+  --t-running:#64D2FF;--t-waiting:#FF9F0A;--t-succeeded:#30D158;--t-failed:#FF6961;--t-idle:#98989F;--t-queued:#98989F;--t-none:#98989F;
+  --f-running:#0A9BD6;--f-waiting:#FF9F0A;--f-succeeded:#2DB84E;--f-failed:#FF453A;--f-idle:#636366;--f-queued:#48484A;--f-none:#2D63C0;--hero:linear-gradient(180deg,#2A1D0B,#1C1C1E 70%)}
+body{background:var(--bg);color:var(--text);font:400 15px/1.45 Inter,system-ui,sans-serif;letter-spacing:-.006em;-webkit-font-smoothing:antialiased}
+.mono{font-family:"Geist Mono",ui-monospace,monospace;font-size:.88em;letter-spacing:0;color:var(--mono)}
+.app{display:flex;min-height:100vh;background:linear-gradient(to right,var(--side) 256px,transparent 256px)}
+.side{width:256px;flex-shrink:0;background:var(--side);padding:14px 12px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:18px;border-right:1px solid var(--sep)}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 6px;font-weight:700;font-size:17px;letter-spacing:-.02em}
+.search{display:flex;align-items:center;gap:8px;background:var(--fill);border-radius:10px;padding:8px 10px;color:var(--sec);font-size:14px}
+.search kbd{margin-left:auto;font:500 11px Inter;color:var(--ter)}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav-h{font-size:12px;font-weight:600;color:var(--ter);padding:0 10px 6px}
+.nav a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;font-size:14px;font-weight:500}
+.nav a .ic{color:var(--tint)}
+.nav a:hover{background:var(--fill)}
+.nav a[aria-current]{background:var(--sel)}
+.nav .count{margin-left:auto;font-size:13px;color:var(--sec);font-variant-numeric:tabular-nums}
+.nav .dot{width:10px;height:10px;border-radius:50%;margin:0 4px}
+.side-foot{margin-top:auto;font-size:12px;color:var(--ter);padding:0 10px}
+.main{flex:1;min-width:0}
+.bar{position:sticky;top:0;z-index:5;height:56px;display:flex;align-items:center;gap:10px;padding:0 32px;background:var(--bar);backdrop-filter:blur(20px) saturate(1.8);-webkit-backdrop-filter:blur(20px) saturate(1.8)}
+.bar .phone-brand{display:none}
+.bar .spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:999px;background:var(--card);font-size:13px;font-weight:500;box-shadow:0 0 0 1px var(--sep)}
+.pill.warn{color:var(--t-waiting)}
+details.pop{position:relative}
+details.pop summary{list-style:none;cursor:pointer}
+details.pop summary::-webkit-details-marker{display:none}
+.pop-panel{position:absolute;right:0;top:40px;width:320px;background:var(--card);border-radius:14px;padding:6px;box-shadow:0 12px 40px rgb(0 0 0/.25),0 0 0 1px var(--sep)}
+.pop-panel div{padding:10px 12px}
+.pop-panel b{display:block;font-weight:600}
+.pop-panel span{color:var(--sec);font-size:13px}
+.content{max-width:1040px;padding:8px 40px 120px}
+.eyebrow{margin:8px 0 2px;font-size:13px;font-weight:600;color:var(--sec);text-transform:uppercase;letter-spacing:.02em}
+h1.large{margin:0 0 28px;font-size:34px;line-height:1.1;font-weight:750;letter-spacing:-.028em}
+h2{display:flex;align-items:baseline;gap:8px;margin:32px 0 10px;font-size:21px;font-weight:700;letter-spacing:-.02em}
+h2 .n{font-size:15px;font-weight:500;color:var(--sec)}
+h2 .more{margin-left:auto;font-size:15px;font-weight:500;color:var(--link)}
+.group{background:var(--card);border-radius:14px;overflow:hidden}
+.row{display:flex;align-items:center;gap:14px;padding:12px 16px;position:relative;min-height:64px}
+.row+.row::before{content:"";position:absolute;top:0;left:62px;right:0;border-top:1px solid var(--sep)}
+a.row:hover{background:var(--fill2)}
+.tile{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;color:#fff}
+.tile.lg{width:52px;height:52px;border-radius:14px}
+.f-running{background:var(--f-running)}.f-waiting{background:var(--f-waiting)}.f-succeeded{background:var(--f-succeeded)}.f-failed{background:var(--f-failed)}.f-idle{background:var(--f-idle)}.f-queued{background:var(--f-queued)}.f-none{background:var(--f-none)}
+.t-running{color:var(--t-running)}.t-waiting{color:var(--t-waiting)}.t-succeeded{color:var(--t-succeeded)}.t-failed{color:var(--t-failed)}.t-idle{color:var(--t-idle)}.t-queued{color:var(--t-queued)}.t-none{color:var(--t-none)}
+.row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.row-title{font-size:16px;font-weight:550;letter-spacing:-.012em}
+.row-sub{font-size:13.5px;color:var(--sec)}
+.row-end{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:13.5px;white-space:nowrap}
+.row-end .st{font-weight:600}
+.row-end .time{color:var(--ter);font-variant-numeric:tabular-nums}
+.chev{color:var(--ter)}
+.unread{position:absolute;left:5px;top:50%;width:8px;height:8px;margin-top:-4px;border-radius:50%;background:var(--link)}
+.cap{height:30px;padding:0 14px;border-radius:999px;background:var(--fill);color:var(--link);font-size:14px;font-weight:650;display:inline-flex;align-items:center;gap:6px}
+.btn{height:40px;padding:0 18px;border-radius:12px;background:var(--btn);color:var(--btnt);font-size:15px;font-weight:600;display:inline-flex;align-items:center;gap:8px}
+.btn.sec{background:var(--fill);color:var(--text)}
+.hero{background:var(--hero);border-radius:18px;padding:20px;display:flex;gap:16px;align-items:center}
+.hero .k{font-size:13px;font-weight:700;color:var(--t-waiting);text-transform:uppercase;letter-spacing:.03em;display:flex;align-items:center;gap:6px}
+.hero .t{font-size:20px;font-weight:700;letter-spacing:-.02em;margin:4px 0 2px}
+.hero .s{color:var(--sec);font-size:14px}
+.hero .grow{flex:1;min-width:0}
+.tabbar{display:none}
+/* Session */
+.back{display:inline-flex;align-items:center;gap:2px;color:var(--link);font-size:16px;font-weight:500;margin:4px 0 14px -6px}
+h1.title{margin:0 0 6px;font-size:30px;line-height:1.15;font-weight:750;letter-spacing:-.026em}
+.title-row{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;margin-bottom:22px}
+.title-actions{display:flex;gap:8px;flex-shrink:0;padding-top:4px}
+.icon-btn{width:40px;height:40px;border-radius:12px;background:var(--fill);display:grid;place-items:center}
+.summary{background:var(--card);border-radius:18px;padding:20px;display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
+.summary .big{font-size:24px;font-weight:750;letter-spacing:-.02em;display:flex;align-items:center;gap:10px}
+.live{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--t-running);background:color-mix(in srgb,var(--f-running) 16%,transparent);padding:3px 8px;border-radius:999px}
+.live i{width:7px;height:7px;border-radius:50%;background:var(--f-running);animation:pulse 1.6s infinite}
+@keyframes pulse{50%{opacity:.35}}
+.stats{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--sep);border-radius:12px;overflow:hidden}
+.stats>div{background:var(--card);padding:12px 14px 0 0}
+.stats>div+div{padding-left:14px}
+.stats .l{font-size:12.5px;color:var(--sec);font-weight:500}
+.stats .v{font-size:15px;font-weight:600;margin-top:2px;overflow-wrap:anywhere}
+.cols{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:28px;align-items:start}
+.act{display:flex;gap:12px;padding:12px 16px;position:relative}
+.act+.act::before{content:"";position:absolute;top:0;left:56px;right:0;border-top:1px solid var(--sep)}
+.act .tile{width:28px;height:28px;border-radius:8px;background:var(--fill);color:var(--sec)}
+.act.msg .tile{background:var(--f-none);color:#fff}
+.act .body{flex:1;min-width:0}
+.act .time{font-size:12.5px;color:var(--ter);font-variant-numeric:tabular-nums;padding-top:4px}
+.act.msg p{margin:3px 0 0}
+.act .verb{font-weight:600}
+.act .extra{color:var(--sec);font-size:13px;margin-left:6px}
+.act.live-row .tile{background:color-mix(in srgb,var(--f-running) 18%,transparent);color:var(--t-running)}
+.dots{display:inline-flex;gap:3px;margin-left:8px;vertical-align:middle}
+.dots i{width:5px;height:5px;border-radius:50%;background:var(--t-running);animation:pulse 1.2s infinite}
+.dots i:nth-child(2){animation-delay:.2s}.dots i:nth-child(3){animation-delay:.4s}
+.card{background:var(--card);border-radius:14px;padding:16px}
+.card h3{margin:0 0 8px;font-size:15px;font-weight:700}
+.card p{margin:0 0 10px;color:var(--text)}
+.card ul{margin:0;padding-left:18px;color:var(--text)}
+.card li{margin:4px 0}
+.quote{background:var(--fill2);border-radius:10px;padding:12px 14px;font-size:14.5px}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:11px 16px;position:relative;font-size:14px}
+.kv+.kv::before{content:"";position:absolute;top:0;left:16px;right:0;border-top:1px solid var(--sep)}
+.kv .l{color:var(--sec)}
+.kv .v{text-align:right;overflow-wrap:anywhere;min-width:0}
+details.disc>summary{list-style:none;display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer;font-weight:600}
+details.disc>summary::-webkit-details-marker{display:none}
+details.disc>summary .chev{margin-left:auto;transition:transform .2s}
+details.disc[open]>summary .chev{transform:rotate(90deg)}
+details.disc[open]>summary{border-bottom:1px solid var(--sep)}
+@media (max-width:980px){.cols{grid-template-columns:1fr}}
+@media (max-width:760px){
+  .side{display:none}
+  .bar{padding:0 16px}
+  .bar .phone-brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px}
+  .bar .filter{display:none}
+  .content{padding:4px 16px 120px}
+  h1.large{font-size:32px;margin-bottom:20px}
+  h1.title{font-size:25px}
+  .row-sub .hide-sm{display:none}
+  .hero{flex-wrap:wrap}.hero .btn{width:100%;justify-content:center}
+  .stats{grid-template-columns:1fr}
+  .stats>div+div{padding-left:0}
+  .stats>div{padding:10px 0}
+  .title-actions .btn{display:none}
+  .tabbar{display:flex;position:fixed;inset:auto 0 0 0;z-index:10;height:82px;padding:8px 8px 26px;background:var(--bar);backdrop-filter:blur(20px) saturate(1.8);-webkit-backdrop-filter:blur(20px) saturate(1.8);border-top:1px solid var(--sep)}
+  .tabbar a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:600;color:var(--ter)}
+  .tabbar a[aria-current]{color:var(--tint)}
+}
+
+.tile-page{max-width:1120px;margin:0 auto;padding:40px 28px 140px}
+.tile-page>h1{margin:0 0 6px;font-size:34px;font-weight:750;letter-spacing:-.028em}
+.tile-page>p.how{margin:0 0 40px;color:var(--sec);font-size:16px}
+.tile-page>p.how b{color:var(--text)}
+.q{margin:0 0 44px}
+.q h2{margin:0 0 14px;font-size:19px;font-weight:650;letter-spacing:-.015em;display:flex;align-items:center;gap:10px}
+.q .num{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--btn);color:#fff;font-size:15px}
+.q .num{flex-shrink:0}
+.switch,.phone-only{display:none}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.opt{border-radius:18px;padding:18px;background:var(--bg);box-shadow:0 0 0 1px var(--sep);color:var(--text)}
+.opt .lab{display:flex;align-items:center;gap:8px;font-weight:700;margin-bottom:14px}
+.opt .lab span{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:7px;background:var(--fill);font-size:13px}
+.opt .lab em{font-style:normal;font-weight:500;color:var(--sec);font-size:14px}
+.opt .mini-title{font-size:26px;font-weight:750;letter-spacing:-.025em;margin:0 0 12px}
+.opt .acts{display:flex;gap:8px;margin-top:14px}
+/* choice overrides */
+.graphite[data-mode=dark]{--bg:#161618;--card:#232326;--sep:#36363A;--fill:#303034;--fill2:#2A2A2D}
+.tight .group{border-radius:8px}.tight .tile{border-radius:6px}.tight .btn{border-radius:7px}.tight .cap{border-radius:6px}
+.bright{--btn:#0A63D8}[data-mode=dark] .bright,.bright[data-mode=dark]{--btn:#0A84FF}
+.dotmode .row .tile{width:10px;height:10px;border-radius:50%;margin:0 11px}.dotmode .row .tile svg{display:none}
+.snug .row{min-height:50px;padding:8px 14px;gap:12px}.snug .row-title{font-size:14.5px}.snug .row-sub,.snug .row-end{font-size:12.5px}.snug .tile{width:26px;height:26px;border-radius:7px}.snug .tile svg{width:15px;height:15px}.snug .mini-title{font-size:22px}.snug .btn{height:34px;font-size:14px;padding:0 14px}
+@media (max-width:760px){
+  .tile-page{padding:20px 14px 120px}.tile-page>h1{font-size:30px}.tile-page>p.how{font-size:15px;margin-bottom:28px}
+  .phone-only{display:inline}
+  .q{margin-bottom:36px}.q h2{font-size:17px;align-items:flex-start}
+  .switch{display:flex;margin:0 0 10px;padding:3px;border-radius:12px;background:var(--fill);box-shadow:0 2px 10px rgb(0 0 0/.12)}
+  .switch label{flex:1;position:relative}
+  .switch input{position:absolute;opacity:0;inset:0;margin:0}
+  .switch span{display:block;text-align:center;padding:10px 6px;border-radius:9px;font-size:14px;font-weight:600;color:var(--sec)}
+  .switch input:checked+span{background:var(--card);color:var(--text);box-shadow:0 1px 3px rgb(0 0 0/.18)}
+  .switch input:focus-visible+span{outline:2px solid var(--link)}
+  .pair{grid-template-columns:1fr}
+  .q:has(.o1:checked) .opt:last-child,.q:has(.o2:checked) .opt:first-child{display:none}
+  .opt{padding:14px 12px}.opt .lab{display:none}
+  .opt .row{padding:12px}.opt .row+.row::before{left:56px}
+  .tile-page~.proto{left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));justify-content:space-between;font-size:14px}
+  .tile-page~.proto button{padding:10px 14px}
+}
+
+</style>
+</head>
+<body>
+<main class="tile-page">
+  <h1>Fine-tune Look A</h1>
+  <p class="how">Five quick choices, each showing the same bit of the Inbox two ways. <span class="phone-only">Tap <b>1</b> / <b>2</b> to flip between them.</span> Use <b>Light / Dark</b> in the bottom bar to check both modes.<br>
+  Reply with five numbers, like <b>1, 2, 1, 1, 2</b>.</p>
+  <section class="q">
+  <h2><span class="num">1</span>Dark mode background. (Both shown in dark.)</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 1">
+    <label><input class="o1" type="radio" name="q0" checked><span>1 · Pure black</span></label>
+    <label><input class="o2" type="radio" name="q0"><span>2 · Soft graphite</span></label>
+  </div>
+  <div class="pair"><div class="opt " data-mode="dark"><div class="lab"><span>1</span>Pure black <em>like iPhone</em></div>
+<div class="mini-title">Inbox</div>
+<div class="group"><a class="row" href="#">
+  <span class="tile f-waiting"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">payments-api · Asked a question</span></span>
+  <span class="row-end"><span class="st t-waiting">Waiting</span><span class="time">4m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">payments-api · Running tests</span></span>
+  <span class="row-end"><span class="st t-running">Running</span><span class="time">12m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-succeeded"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span>
+  <span class="row-main"><span class="row-title">Migrate ledger table to bigint ids</span><span class="row-sub">payments-api · Pull request #43 opened</span></span>
+  <span class="row-end"><span class="st t-succeeded">Succeeded</span><span class="time">1h ago</span></span>
+</a></div>
+<div class="acts"><a class="btn" href="#">Open Session</a><a class="btn sec" href="#">View Spec</a></div></div><div class="opt graphite" data-mode="dark"><div class="lab"><span>2</span>Soft graphite <em>a bit lighter</em></div>
+<div class="mini-title">Inbox</div>
+<div class="group"><a class="row" href="#">
+  <span class="tile f-waiting"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">payments-api · Asked a question</span></span>
+  <span class="row-end"><span class="st t-waiting">Waiting</span><span class="time">4m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">payments-api · Running tests</span></span>
+  <span class="row-end"><span class="st t-running">Running</span><span class="time">12m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-succeeded"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span>
+  <span class="row-main"><span class="row-title">Migrate ledger table to bigint ids</span><span class="row-sub">payments-api · Pull request #43 opened</span></span>
+  <span class="row-end"><span class="st t-succeeded">Succeeded</span><span class="time">1h ago</span></span>
+</a></div>
+<div class="acts"><a class="btn" href="#">Open Session</a><a class="btn sec" href="#">View Spec</a></div></div></div>
+</section><section class="q">
+  <h2><span class="num">2</span>Corners.</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 2">
+    <label><input class="o1" type="radio" name="q1" checked><span>1 · Round</span></label>
+    <label><input class="o2" type="radio" name="q1"><span>2 · Tighter</span></label>
+  </div>
+  <div class="pair"><div class="opt " ><div class="lab"><span>1</span>Round <em>what you saw in A</em></div>
+<div class="mini-title">Inbox</div>
+<div class="group"><a class="row" href="#">
+  <span class="tile f-waiting"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">payments-api · Asked a question</span></span>
+  <span class="row-end"><span class="st t-waiting">Waiting</span><span class="time">4m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">payments-api · Running tests</span></span>
+  <span class="row-end"><span class="st t-running">Running</span><span class="time">12m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-succeeded"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span>
+  <span class="row-main"><span class="row-title">Migrate ledger table to bigint ids</span><span class="row-sub">payments-api · Pull request #43 opened</span></span>
+  <span class="row-end"><span class="st t-succeeded">Succeeded</span><span class="time">1h ago</span></span>
+</a></div>
+<div class="acts"><a class="btn" href="#">Open Session</a><a class="btn sec" href="#">View Spec</a></div></div><div class="opt tight" ><div class="lab"><span>2</span>Tighter <em>less bubbly</em></div>
+<div class="mini-title">Inbox</div>
+<div class="group"><a class="row" href="#">
+  <span class="tile f-waiting"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">payments-api · Asked a question</span></span>
+  <span class="row-end"><span class="st t-waiting">Waiting</span><span class="time">4m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">payments-api · Running tests</span></span>
+  <span class="row-end"><span class="st t-running">Running</span><span class="time">12m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-succeeded"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span>
+  <span class="row-main"><span class="row-title">Migrate ledger table to bigint ids</span><span class="row-sub">payments-api · Pull request #43 opened</span></span>
+  <span class="row-end"><span class="st t-succeeded">Succeeded</span><span class="time">1h ago</span></span>
+</a></div>
+<div class="acts"><a class="btn" href="#">Open Session</a><a class="btn sec" href="#">View Spec</a></div></div></div>
+</section><section class="q">
+  <h2><span class="num">3</span>Main button colour. The Atlas logo stays navy either way.</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 3">
+    <label><input class="o1" type="radio" name="q2" checked><span>1 · Deep navy</span></label>
+    <label><input class="o2" type="radio" name="q2"><span>2 · Bright blue</span></label>
+  </div>
+  <div class="pair"><div class="opt " ><div class="lab"><span>1</span>Deep navy <em>what you saw in A</em></div>
+<div class="mini-title">Inbox</div>
+<div class="group"><a class="row" href="#">
+  <span class="tile f-waiting"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">payments-api · Asked a question</span></span>
+  <span class="row-end"><span class="st t-waiting">Waiting</span><span class="time">4m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">payments-api · Running tests</span></span>
+  <span class="row-end"><span class="st t-running">Running</span><span class="time">12m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-succeeded"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span>
+  <span class="row-main"><span class="row-title">Migrate ledger table to bigint ids</span><span class="row-sub">payments-api · Pull request #43 opened</span></span>
+  <span class="row-end"><span class="st t-succeeded">Succeeded</span><span class="time">1h ago</span></span>
+</a></div>
+<div class="acts"><a class="btn" href="#">Open Session</a><a class="btn sec" href="#">View Spec</a></div></div><div class="opt bright" ><div class="lab"><span>2</span>Bright blue <em>like Apple's default</em></div>
+<div class="mini-title">Inbox</div>
+<div class="group"><a class="row" href="#">
+  <span class="tile f-waiting"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">payments-api · Asked a question</span></span>
+  <span class="row-end"><span class="st t-waiting">Waiting</span><span class="time">4m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">payments-api · Running tests</span></span>
+  <span class="row-end"><span class="st t-running">Running</span><span class="time">12m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-succeeded"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span>
+  <span class="row-main"><span class="row-title">Migrate ledger table to bigint ids</span><span class="row-sub">payments-api · Pull request #43 opened</span></span>
+  <span class="row-end"><span class="st t-succeeded">Succeeded</span><span class="time">1h ago</span></span>
+</a></div>
+<div class="acts"><a class="btn" href="#">Open Session</a><a class="btn sec" href="#">View Spec</a></div></div></div>
+</section><section class="q">
+  <h2><span class="num">4</span>Status markers.</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 4">
+    <label><input class="o1" type="radio" name="q3" checked><span>1 · Coloured icons</span></label>
+    <label><input class="o2" type="radio" name="q3"><span>2 · Small dots</span></label>
+  </div>
+  <div class="pair"><div class="opt " ><div class="lab"><span>1</span>Coloured icons <em>what you saw in A</em></div>
+<div class="mini-title">Inbox</div>
+<div class="group"><a class="row" href="#">
+  <span class="tile f-waiting"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">payments-api · Asked a question</span></span>
+  <span class="row-end"><span class="st t-waiting">Waiting</span><span class="time">4m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">payments-api · Running tests</span></span>
+  <span class="row-end"><span class="st t-running">Running</span><span class="time">12m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-succeeded"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span>
+  <span class="row-main"><span class="row-title">Migrate ledger table to bigint ids</span><span class="row-sub">payments-api · Pull request #43 opened</span></span>
+  <span class="row-end"><span class="st t-succeeded">Succeeded</span><span class="time">1h ago</span></span>
+</a></div>
+<div class="acts"><a class="btn" href="#">Open Session</a><a class="btn sec" href="#">View Spec</a></div></div><div class="opt dotmode" ><div class="lab"><span>2</span>Small dots <em>quieter</em></div>
+<div class="mini-title">Inbox</div>
+<div class="group"><a class="row" href="#">
+  <span class="tile f-waiting"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">payments-api · Asked a question</span></span>
+  <span class="row-end"><span class="st t-waiting">Waiting</span><span class="time">4m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">payments-api · Running tests</span></span>
+  <span class="row-end"><span class="st t-running">Running</span><span class="time">12m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-succeeded"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span>
+  <span class="row-main"><span class="row-title">Migrate ledger table to bigint ids</span><span class="row-sub">payments-api · Pull request #43 opened</span></span>
+  <span class="row-end"><span class="st t-succeeded">Succeeded</span><span class="time">1h ago</span></span>
+</a></div>
+<div class="acts"><a class="btn" href="#">Open Session</a><a class="btn sec" href="#">View Spec</a></div></div></div>
+</section><section class="q">
+  <h2><span class="num">5</span>Size and spacing.</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 5">
+    <label><input class="o1" type="radio" name="q4" checked><span>1 · Roomy</span></label>
+    <label><input class="o2" type="radio" name="q4"><span>2 · Snug</span></label>
+  </div>
+  <div class="pair"><div class="opt " ><div class="lab"><span>1</span>Roomy <em>what you saw in A</em></div>
+<div class="mini-title">Inbox</div>
+<div class="group"><a class="row" href="#">
+  <span class="tile f-waiting"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">payments-api · Asked a question</span></span>
+  <span class="row-end"><span class="st t-waiting">Waiting</span><span class="time">4m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">payments-api · Running tests</span></span>
+  <span class="row-end"><span class="st t-running">Running</span><span class="time">12m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-succeeded"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span>
+  <span class="row-main"><span class="row-title">Migrate ledger table to bigint ids</span><span class="row-sub">payments-api · Pull request #43 opened</span></span>
+  <span class="row-end"><span class="st t-succeeded">Succeeded</span><span class="time">1h ago</span></span>
+</a></div>
+<div class="acts"><a class="btn" href="#">Open Session</a><a class="btn sec" href="#">View Spec</a></div></div><div class="opt snug" ><div class="lab"><span>2</span>Snug <em>fits more on screen</em></div>
+<div class="mini-title">Inbox</div>
+<div class="group"><a class="row" href="#">
+  <span class="tile f-waiting"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Add idempotency keys to refund endpoint</span><span class="row-sub">payments-api · Asked a question</span></span>
+  <span class="row-end"><span class="st t-waiting">Waiting</span><span class="time">4m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+  <span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">payments-api · Running tests</span></span>
+  <span class="row-end"><span class="st t-running">Running</span><span class="time">12m ago</span></span>
+</a><a class="row" href="#">
+  <span class="tile f-succeeded"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span>
+  <span class="row-main"><span class="row-title">Migrate ledger table to bigint ids</span><span class="row-sub">payments-api · Pull request #43 opened</span></span>
+  <span class="row-end"><span class="st t-succeeded">Succeeded</span><span class="time">1h ago</span></span>
+</a></div>
+<div class="acts"><a class="btn" href="#">Open Session</a><a class="btn sec" href="#">View Spec</a></div></div></div>
+</section>
+</main>
+<nav class="proto" aria-label="Prototype controls">
+  <span class="tag">Look A · Fine-tune</span>
+  <a class="hide-sm" href="a-session.html">Show Session</a>
+  <button type="button" onclick="const m=document.documentElement.dataset.mode==='dark'?'light':'dark';document.documentElement.dataset.mode=m;localStorage.setItem('proto-mode',m)"><svg class="ic " width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z"/></svg><span>Light / Dark</span></button>
+  <a href="index.html">All looks</a>
+</nav>
+</body>
+</html>

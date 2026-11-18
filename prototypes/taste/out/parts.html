@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en" data-mode="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Building blocks — Look A</title>
+<script>(()=>{const q=new URLSearchParams(location.search).get("mode");const s=q||localStorage.getItem("proto-mode");document.documentElement.dataset.mode=s||(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark")})()</script>
+<style>@font-face{font-family:"Inter";src:url("../fonts/inter.woff2") format("woff2");font-weight:100 900;font-display:swap}@font-face{font-family:"Geist Mono";src:url("../fonts/geist-mono.woff2") format("woff2");font-weight:100 900;font-display:swap}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+.ic{flex-shrink:0;display:block}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.proto{position:fixed;right:16px;bottom:16px;z-index:99;display:flex;gap:4px;align-items:center;padding:4px;border-radius:999px;background:#0b0c0e;color:#e8e8ea;font:500 12px/1 Inter,system-ui,sans-serif;box-shadow:0 6px 24px rgb(0 0 0/.35);border:1px solid #2a2b30}
+.proto a,.proto button{padding:7px 10px;border-radius:999px;display:flex;align-items:center;gap:6px}
+.proto a:hover,.proto button:hover{background:#24262b}
+.proto .tag{padding:7px 10px;color:#E19D63;font-weight:600}
+@media (max-width:760px){.proto{bottom:96px;right:8px}.proto .hide-sm{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+[data-mode=light]{color-scheme:light;--bg:#F2F2F7;--card:#FFFFFF;--side:#E9E9EE;--bar:rgb(242 242 247/.78);--text:#0B0B0D;--sec:#6C6C70;--ter:#8A8A8E;--sep:#E2E2E7;--fill:#E6E6EB;--fill2:#F2F2F7;
+  --tint:#012B68;--link:#1450B8;--btn:#0A63D8;--btnt:#fff;--sel:#D9E3F4;--mono:#3C3C43;
+  --t-running:#0B7FB0;--t-waiting:#C25E00;--t-succeeded:#248A3D;--t-failed:#D70015;--t-idle:#6C6C70;--t-queued:#6C6C70;--t-none:#6C6C70;
+  --f-running:#32ADE6;--f-waiting:#FF9500;--f-succeeded:#34C759;--f-failed:#FF3B30;--f-idle:#8E8E93;--f-queued:#AEAEB2;--f-none:#012B68;--hero:linear-gradient(180deg,#FFF4E5,#FFFFFF 70%)}
+[data-mode=dark]{color-scheme:dark;--bg:#000000;--card:#1C1C1E;--side:#121214;--bar:rgb(0 0 0/.72);--text:#FFFFFF;--sec:#98989F;--ter:#6E6E73;--sep:#2E2E31;--fill:#2C2C2E;--fill2:#242426;
+  --tint:#7AA7F2;--link:#7AA7F2;--btn:#0A6CF0;--btnt:#fff;--sel:#1C2A44;--mono:#D1D1D6;
+  --t-running:#64D2FF;--t-waiting:#FF9F0A;--t-succeeded:#30D158;--t-failed:#FF6961;--t-idle:#98989F;--t-queued:#98989F;--t-none:#98989F;
+  --f-running:#0A9BD6;--f-waiting:#FF9F0A;--f-succeeded:#2DB84E;--f-failed:#FF453A;--f-idle:#636366;--f-queued:#48484A;--f-none:#2D63C0;--hero:linear-gradient(180deg,#2A1D0B,#1C1C1E 70%)}
+body{background:var(--bg);color:var(--text);font:400 15px/1.45 Inter,system-ui,sans-serif;letter-spacing:-.006em;-webkit-font-smoothing:antialiased}
+.mono{font-family:"Geist Mono",ui-monospace,monospace;font-size:.88em;letter-spacing:0;color:var(--mono)}
+.app{display:flex;min-height:100vh;background:linear-gradient(to right,var(--side) 256px,transparent 256px)}
+.side{width:256px;flex-shrink:0;background:var(--side);padding:14px 12px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:18px;border-right:1px solid var(--sep)}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 6px;font-weight:700;font-size:17px;letter-spacing:-.02em}
+.search{display:flex;align-items:center;gap:8px;background:var(--fill);border-radius:10px;padding:8px 10px;color:var(--sec);font-size:14px}
+.search kbd{margin-left:auto;font:500 11px Inter;color:var(--ter)}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav-h{font-size:12px;font-weight:600;color:var(--ter);padding:0 10px 6px}
+.nav a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;font-size:14px;font-weight:500}
+.nav a .ic{color:var(--tint)}
+.nav a:hover{background:var(--fill)}
+.nav a[aria-current]{background:var(--sel)}
+.nav .count{margin-left:auto;font-size:13px;color:var(--sec);font-variant-numeric:tabular-nums}
+.nav .dot{width:10px;height:10px;border-radius:50%;margin:0 4px}
+.side-foot{margin-top:auto;font-size:12px;color:var(--ter);padding:0 10px}
+.main{flex:1;min-width:0}
+.bar{position:sticky;top:0;z-index:5;height:56px;display:flex;align-items:center;gap:10px;padding:0 32px;background:var(--bar);backdrop-filter:blur(20px) saturate(1.8);-webkit-backdrop-filter:blur(20px) saturate(1.8)}
+.bar .phone-brand{display:none}
+.bar .spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:999px;background:var(--card);font-size:13px;font-weight:500;box-shadow:0 0 0 1px var(--sep)}
+.pill.warn{color:var(--t-waiting)}
+details.pop{position:relative}
+details.pop summary{list-style:none;cursor:pointer}
+details.pop summary::-webkit-details-marker{display:none}
+.pop-panel{position:absolute;right:0;top:40px;width:320px;background:var(--card);border-radius:14px;padding:6px;box-shadow:0 12px 40px rgb(0 0 0/.25),0 0 0 1px var(--sep)}
+.pop-panel div{padding:10px 12px}
+.pop-panel b{display:block;font-weight:600}
+.pop-panel span{color:var(--sec);font-size:13px}
+.content{max-width:1040px;padding:8px 40px 120px}
+.eyebrow{margin:8px 0 2px;font-size:13px;font-weight:600;color:var(--sec);text-transform:uppercase;letter-spacing:.02em}
+h1.large{margin:0 0 28px;font-size:34px;line-height:1.1;font-weight:750;letter-spacing:-.028em}
+h2{display:flex;align-items:baseline;gap:8px;margin:32px 0 10px;font-size:21px;font-weight:700;letter-spacing:-.02em}
+h2 .n{font-size:15px;font-weight:500;color:var(--sec)}
+h2 .more{margin-left:auto;font-size:15px;font-weight:500;color:var(--link)}
+.group{background:var(--card);border-radius:14px;overflow:hidden}
+.row{display:flex;align-items:center;gap:14px;padding:12px 16px;position:relative;min-height:64px}
+.row+.row::before{content:"";position:absolute;top:0;left:62px;right:0;border-top:1px solid var(--sep)}
+a.row:hover{background:var(--fill2)}
+.tile{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;color:#fff}
+.tile.lg{width:52px;height:52px;border-radius:14px}
+.f-running{background:var(--f-running)}.f-waiting{background:var(--f-waiting)}.f-succeeded{background:var(--f-succeeded)}.f-failed{background:var(--f-failed)}.f-idle{background:var(--f-idle)}.f-queued{background:var(--f-queued)}.f-none{background:var(--f-none)}
+.t-running{color:var(--t-running)}.t-waiting{color:var(--t-waiting)}.t-succeeded{color:var(--t-succeeded)}.t-failed{color:var(--t-failed)}.t-idle{color:var(--t-idle)}.t-queued{color:var(--t-queued)}.t-none{color:var(--t-none)}
+.row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.row-title{font-size:16px;font-weight:550;letter-spacing:-.012em}
+.row-sub{font-size:13.5px;color:var(--sec)}
+.row-end{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:13.5px;white-space:nowrap}
+.row-end .st{font-weight:600}
+.row-end .time{color:var(--ter);font-variant-numeric:tabular-nums}
+.chev{color:var(--ter)}
+.unread{position:absolute;left:5px;top:50%;width:8px;height:8px;margin-top:-4px;border-radius:50%;background:var(--link)}
+.cap{height:30px;padding:0 14px;border-radius:999px;background:var(--fill);color:var(--link);font-size:14px;font-weight:650;display:inline-flex;align-items:center;gap:6px}
+.btn{height:40px;padding:0 18px;border-radius:12px;background:var(--btn);color:var(--btnt);font-size:15px;font-weight:600;display:inline-flex;align-items:center;gap:8px}
+.btn.sec{background:var(--fill);color:var(--text)}
+.hero{background:var(--hero);border-radius:18px;padding:20px;display:flex;gap:16px;align-items:center}
+.hero .k{font-size:13px;font-weight:700;color:var(--t-waiting);text-transform:uppercase;letter-spacing:.03em;display:flex;align-items:center;gap:6px}
+.hero .t{font-size:20px;font-weight:700;letter-spacing:-.02em;margin:4px 0 2px}
+.hero .s{color:var(--sec);font-size:14px}
+.hero .grow{flex:1;min-width:0}
+.tabbar{display:none}
+/* Session */
+.back{display:inline-flex;align-items:center;gap:2px;color:var(--link);font-size:16px;font-weight:500;margin:4px 0 14px -6px}
+h1.title{margin:0 0 6px;font-size:30px;line-height:1.15;font-weight:750;letter-spacing:-.026em}
+.title-row{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;margin-bottom:22px}
+.title-actions{display:flex;gap:8px;flex-shrink:0;padding-top:4px}
+.icon-btn{width:40px;height:40px;border-radius:12px;background:var(--fill);display:grid;place-items:center}
+.summary{background:var(--card);border-radius:18px;padding:20px;display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
+.summary .big{font-size:24px;font-weight:750;letter-spacing:-.02em;display:flex;align-items:center;gap:10px}
+.live{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--t-running);background:color-mix(in srgb,var(--f-running) 16%,transparent);padding:3px 8px;border-radius:999px}
+.live i{width:7px;height:7px;border-radius:50%;background:var(--f-running);animation:pulse 1.6s infinite}
+@keyframes pulse{50%{opacity:.35}}
+.stats{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--sep);border-radius:12px;overflow:hidden}
+.stats>div{background:var(--card);padding:12px 14px 0 0}
+.stats>div+div{padding-left:14px}
+.stats .l{font-size:12.5px;color:var(--sec);font-weight:500}
+.stats .v{font-size:15px;font-weight:600;margin-top:2px;overflow-wrap:anywhere}
+.cols{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:28px;align-items:start}
+.act{display:flex;gap:12px;padding:12px 16px;position:relative}
+.act+.act::before{content:"";position:absolute;top:0;left:56px;right:0;border-top:1px solid var(--sep)}
+.act .tile{width:28px;height:28px;border-radius:8px;background:var(--fill);color:var(--sec)}
+.act.msg .tile{background:var(--f-none);color:#fff}
+.act .body{flex:1;min-width:0}
+.act .time{font-size:12.5px;color:var(--ter);font-variant-numeric:tabular-nums;padding-top:4px}
+.act.msg p{margin:3px 0 0}
+.act .verb{font-weight:600}
+.act .extra{color:var(--sec);font-size:13px;margin-left:6px}
+.act.live-row .tile{background:color-mix(in srgb,var(--f-running) 18%,transparent);color:var(--t-running)}
+.dots{display:inline-flex;gap:3px;margin-left:8px;vertical-align:middle}
+.dots i{width:5px;height:5px;border-radius:50%;background:var(--t-running);animation:pulse 1.2s infinite}
+.dots i:nth-child(2){animation-delay:.2s}.dots i:nth-child(3){animation-delay:.4s}
+.card{background:var(--card);border-radius:14px;padding:16px}
+.card h3{margin:0 0 8px;font-size:15px;font-weight:700}
+.card p{margin:0 0 10px;color:var(--text)}
+.card ul{margin:0;padding-left:18px;color:var(--text)}
+.card li{margin:4px 0}
+.quote{background:var(--fill2);border-radius:10px;padding:12px 14px;font-size:14.5px}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:11px 16px;position:relative;font-size:14px}
+.kv+.kv::before{content:"";position:absolute;top:0;left:16px;right:0;border-top:1px solid var(--sep)}
+.kv .l{color:var(--sec)}
+.kv .v{text-align:right;overflow-wrap:anywhere;min-width:0}
+details.disc>summary{list-style:none;display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer;font-weight:600}
+details.disc>summary::-webkit-details-marker{display:none}
+details.disc>summary .chev{margin-left:auto;transition:transform .2s}
+details.disc[open]>summary .chev{transform:rotate(90deg)}
+details.disc[open]>summary{border-bottom:1px solid var(--sep)}
+@media (max-width:980px){.cols{grid-template-columns:1fr}}
+@media (max-width:760px){
+  .side{display:none}
+  .bar{padding:0 16px}
+  .bar .phone-brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px}
+  .bar .filter{display:none}
+  .content{padding:4px 16px 120px}
+  h1.large{font-size:32px;margin-bottom:20px}
+  h1.title{font-size:25px}
+  .row-sub .hide-sm{display:none}
+  .hero{flex-wrap:wrap}.hero .btn{width:100%;justify-content:center}
+  .stats{grid-template-columns:1fr}
+  .stats>div+div{padding-left:0}
+  .stats>div{padding:10px 0}
+  .title-actions .btn{display:none}
+  .tabbar{display:flex;position:fixed;inset:auto 0 0 0;z-index:10;height:82px;padding:8px 8px 26px;background:var(--bar);backdrop-filter:blur(20px) saturate(1.8);-webkit-backdrop-filter:blur(20px) saturate(1.8);border-top:1px solid var(--sep)}
+  .tabbar a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:600;color:var(--ter)}
+  .tabbar a[aria-current]{color:var(--tint)}
+}
+
+.tile-page{max-width:1120px;margin:0 auto;padding:40px 28px 140px}
+.tile-page>h1{margin:0 0 6px;font-size:34px;font-weight:750;letter-spacing:-.028em}
+.tile-page>p.how{margin:0 0 40px;color:var(--sec);font-size:16px}
+.tile-page>p.how b{color:var(--text)}
+.part-h{margin:56px 0 6px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--sec)}
+.q{margin:0 0 44px}
+.q h2{margin:0 0 14px;font-size:19px;font-weight:650;letter-spacing:-.015em;display:flex;align-items:center;gap:10px}
+.q .num{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--btn);color:#fff;font-size:15px;flex-shrink:0}
+.q .num.check{background:var(--f-succeeded)}
+.switch,.phone-only{display:none}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.opt{border-radius:18px;padding:18px;background:var(--bg);box-shadow:0 0 0 1px var(--sep);color:var(--text);min-width:0}
+.opt .lab{display:flex;align-items:center;gap:8px;font-weight:700;margin-bottom:14px}
+.opt .lab span{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:7px;background:var(--fill);font-size:13px}
+.opt .lab em{font-style:normal;font-weight:500;color:var(--sec);font-size:14px}
+.solo{border-radius:18px;padding:18px;box-shadow:0 0 0 1px var(--sep)}
+.stack{display:flex;flex-direction:column;gap:14px}
+.wrap{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.cap-note{font-size:13px;color:var(--ter);margin:0 0 8px}
+.btn.quiet{background:none;color:var(--link);padding:0 6px}
+.btn.outline{background:none;color:var(--text);box-shadow:inset 0 0 0 1.5px var(--sep)}
+.btn.danger{background:none;color:var(--t-failed)}
+.chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:999px;font-size:13px;font-weight:650;white-space:nowrap}
+.chip.p-running{background:color-mix(in srgb,var(--f-running) 16%,transparent);color:var(--t-running)}
+.chip.p-waiting{background:color-mix(in srgb,var(--f-waiting) 18%,transparent);color:var(--t-waiting)}
+.chip.p-succeeded{background:color-mix(in srgb,var(--f-succeeded) 16%,transparent);color:var(--t-succeeded)}
+.chip.p-failed{background:color-mix(in srgb,var(--f-failed) 14%,transparent);color:var(--t-failed)}
+.chip.p-idle,.chip.p-queued{background:var(--fill);color:var(--sec)}
+.stale{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:600;color:var(--t-waiting)}
+/* fields */
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:14px;font-weight:600}
+.field .hint{font-size:13px;color:var(--sec)}
+.input{height:44px;border-radius:12px;padding:0 14px;font:inherit;color:var(--text);border:0;width:100%}
+textarea.input{height:96px;padding:12px 14px;resize:none;line-height:1.45}
+.filled .input{background:var(--fill)}
+.outlined .input{background:var(--card);box-shadow:inset 0 0 0 1.5px var(--sep)}
+.input::placeholder{color:var(--ter)}
+/* target picker */
+.choice{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:14px;background:var(--card);box-shadow:inset 0 0 0 1.5px var(--sep)}
+.choice.on{box-shadow:inset 0 0 0 2px var(--btn);background:color-mix(in srgb,var(--btn) 7%,var(--card))}
+.choice.off{opacity:.55}
+.choice .radio{width:20px;height:20px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--ter);flex-shrink:0;margin-top:2px}
+.choice.on .radio{box-shadow:inset 0 0 0 6px var(--btn)}
+.choice b{display:block;font-weight:600}
+.choice span{font-size:13.5px;color:var(--sec)}
+.setrow{display:flex;gap:12px;align-items:center;padding:12px 16px;position:relative;min-height:56px}
+.setrow+.setrow::before{content:"";position:absolute;top:0;left:16px;right:0;border-top:1px solid var(--sep)}
+.setrow .grow{flex:1;min-width:0}.setrow b{display:block;font-weight:500}.setrow span{font-size:13.5px;color:var(--sec)}
+.setrow .tick{color:var(--btn)}
+.setrow.off b{color:var(--ter)}
+/* menus */
+.menu{width:260px;background:var(--card);border-radius:14px;padding:6px;box-shadow:0 12px 40px rgb(0 0 0/.22),0 0 0 1px var(--sep)}
+.menu a{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:9px;font-size:15px}
+.menu a:hover{background:var(--fill2)}
+.menu hr{border:0;border-top:1px solid var(--sep);margin:4px 6px}
+.menu .red{color:var(--t-failed)}
+.sheet{background:var(--card);border-radius:22px 22px 0 0;padding:8px 14px 18px;box-shadow:0 -8px 40px rgb(0 0 0/.2);max-width:390px}
+.sheet .grab{width:38px;height:5px;border-radius:3px;background:var(--fill);margin:0 auto 10px}
+.sheet .sh-t{text-align:center;font-size:13px;color:var(--sec);padding:4px 0 10px}
+.sheet .group{background:var(--fill2)}
+.sheet .setrow{min-height:50px;justify-content:center;color:var(--link);font-size:16px}
+.sheet .setrow.red{color:var(--t-failed)}
+.sheet .cancel{margin-top:10px;font-weight:650}
+.dim{background:rgb(0 0 0/.35);border-radius:16px;padding:60px 0 0;display:flex;justify-content:center;overflow:hidden}
+/* warnings */
+.strip{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;background:color-mix(in srgb,var(--f-waiting) 14%,transparent);color:var(--text);font-size:14px}
+.strip .ic{color:var(--t-waiting)}
+.strip a{margin-left:auto;color:var(--link);font-weight:600;white-space:nowrap}
+.fakebar{display:flex;align-items:center;gap:10px;padding:10px 0 14px}
+.fakebar b{font-size:16px;flex:1}
+.panel-open{margin-top:8px;background:var(--card);border-radius:14px;padding:6px;box-shadow:0 12px 40px rgb(0 0 0/.18),0 0 0 1px var(--sep)}
+.panel-open div{padding:10px 12px}.panel-open b{display:block;font-weight:600}.panel-open span{color:var(--sec);font-size:13.5px}
+/* loading */
+.sk{border-radius:8px;background:linear-gradient(90deg,var(--fill) 0%,var(--fill2) 50%,var(--fill) 100%);background-size:200% 100%;animation:skm 1.4s linear infinite}
+@keyframes skm{to{background-position:-200% 0}}
+.spin{width:28px;height:28px;border-radius:50%;border:3px solid var(--fill);border-top-color:var(--btn);animation:sp .8s linear infinite;margin:24px auto 8px}
+@keyframes sp{to{transform:rotate(360deg)}}
+/* live output */
+.well{border-radius:14px;padding:14px 16px;font:13px/1.65 "Geist Mono",ui-monospace,monospace;overflow:auto}
+.well.term{background:#0B0B0D;color:#D7D7DC;box-shadow:0 0 0 1px #2A2A2E}
+.well.term .ok{color:#30D158}.well.term .dimt{color:#7C7C83}
+.well.page{background:var(--card);color:var(--text)}
+.well.page .ok{color:var(--t-succeeded)}.well.page .dimt{color:var(--ter)}
+.cursor{display:inline-block;width:7px;height:14px;background:currentColor;vertical-align:-2px;animation:pulse 1s steps(2) infinite}
+/* misc */
+.empty{text-align:center;padding:28px 12px}
+.empty .tile{margin:0 auto 12px;background:var(--fill);color:var(--sec)}
+.empty b{display:block;font-size:17px;margin-bottom:4px}
+.empty p{margin:0 auto 14px;color:var(--sec);max-width:320px}
+.err{display:flex;gap:12px;padding:14px 16px;border-radius:14px;background:color-mix(in srgb,var(--f-failed) 10%,var(--card))}
+.err .ic{color:var(--t-failed);margin-top:1px}.err b{display:block}.err span{color:var(--sec);font-size:14px}
+.toast{display:inline-flex;align-items:center;gap:10px;padding:12px 16px;border-radius:14px;background:var(--text);color:var(--bg);font-weight:500;box-shadow:0 10px 30px rgb(0 0 0/.25)}
+.toast .ic{color:var(--f-succeeded)}
+.time-tip{position:relative;display:inline-block;border-bottom:1px dotted var(--ter);cursor:help}
+.time-tip i{position:absolute;bottom:130%;left:50%;transform:translateX(-50%);white-space:nowrap;font-style:normal;font-size:12.5px;background:var(--text);color:var(--bg);padding:5px 9px;border-radius:8px}
+.prose{background:var(--card);border-radius:14px;padding:18px 20px;line-height:1.6}
+.prose h3{margin:0 0 6px;font-size:17px}.prose p{margin:0 0 12px}.prose ul{margin:0 0 12px;padding-left:20px}
+.prose code{font:13px "Geist Mono",monospace;background:var(--fill);padding:2px 6px;border-radius:6px}
+.tbl{width:100%;border-collapse:collapse;background:var(--card);border-radius:14px;overflow:hidden;font-size:14px}
+.tbl th{text-align:left;font-size:12.5px;font-weight:600;color:var(--sec);padding:10px 16px;border-bottom:1px solid var(--sep)}
+.tbl td{padding:12px 16px;border-top:1px solid var(--sep)}
+.tbl tr:first-child td{border-top:0}
+@media (max-width:760px){
+  .tile-page{padding:20px 14px 120px}.tile-page>h1{font-size:30px}.tile-page>p.how{font-size:15px;margin-bottom:20px}
+  .phone-only{display:inline}
+  .q{margin-bottom:36px}.q h2{font-size:17px;align-items:flex-start}
+  .switch{display:flex;margin:0 0 10px;padding:3px;border-radius:12px;background:var(--fill)}
+  .switch label{flex:1;position:relative}
+  .switch input{position:absolute;opacity:0;inset:0;margin:0}
+  .switch span{display:block;text-align:center;padding:10px 6px;border-radius:9px;font-size:14px;font-weight:600;color:var(--sec)}
+  .switch input:checked+span{background:var(--card);color:var(--text);box-shadow:0 1px 3px rgb(0 0 0/.18)}
+  .switch input:focus-visible+span{outline:2px solid var(--link)}
+  .pair{grid-template-columns:1fr}
+  .q:has(.o1:checked) .opt:last-child,.q:has(.o2:checked) .opt:first-child{display:none}
+  .opt,.solo{padding:14px 12px}.opt .lab{display:none}
+  .tile-page~.proto{left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));justify-content:space-between;font-size:14px}
+  .tile-page~.proto button{padding:10px 14px}
+  .menu{width:100%}
+  .tbl .hide-sm{display:none}
+}
+
+</style>
+</head>
+<body>
+<main class="tile-page">
+  <h1>Building blocks</h1>
+  <p class="how">Everything here uses your picks. <span class="phone-only">Tap <b>1</b> / <b>2</b> to flip.</span> Try <b>Light / Dark</b> in the bottom bar too.<br>
+  Reply with <b>8 numbers</b> for part 1, and name anything in part 2 that looks wrong.</p>
+  <div class="part-h">Part 1 · Pick one</div>
+  <section class="q">
+  <h2><span class="num">1</span>How a status shows at the end of a row</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 1">
+    <label><input class="o1" type="radio" name="q0" checked><span>1 · Coloured text</span></label>
+    <label><input class="o2" type="radio" name="q0"><span>2 · Tinted pill</span></label>
+  </div>
+  <div class="pair"><div class="opt"><div class="lab"><span>1</span>Coloured text <em>what you saw in A</em></div><div class="group">
+<a class="row" href="#"><span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+<span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">payments-api · Running tests</span></span><span class="row-end"><span class="st t-running">Running</span><span class="time">12m ago</span></span></a>
+<a class="row" href="#"><span class="tile f-idle"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 5.25v13.5m-7.5-13.5v13.5"/></svg></span>
+<span class="row-main"><span class="row-title">Dark mode toggle in account settings</span><span class="row-sub">web-dashboard · No activity for 40 minutes</span></span><span class="row-end"><span class="st t-idle">Idle</span><span class="time">12m ago</span></span></a>
+<a class="row" href="#"><span class="tile f-failed"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 18 18 6M6 6l12 12"/></svg></span>
+<span class="row-main"><span class="row-title">Expose settlement report CSV export</span><span class="row-sub">payments-api · Tests failed</span></span><span class="row-end"><span class="st t-failed">Failed</span><span class="time">12m ago</span></span></a></div></div><div class="opt"><div class="lab"><span>2</span>Tinted pill <em>a soft capsule</em></div><div class="group">
+<a class="row" href="#"><span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+<span class="row-main"><span class="row-title">Retry failed webhooks with backoff</span><span class="row-sub">payments-api · Running tests</span></span><span class="row-end"><span class="chip p-running">Running</span><span class="time">12m ago</span></span></a>
+<a class="row" href="#"><span class="tile f-idle"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 5.25v13.5m-7.5-13.5v13.5"/></svg></span>
+<span class="row-main"><span class="row-title">Dark mode toggle in account settings</span><span class="row-sub">web-dashboard · No activity for 40 minutes</span></span><span class="row-end"><span class="chip p-idle">Idle</span><span class="time">12m ago</span></span></a>
+<a class="row" href="#"><span class="tile f-failed"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 18 18 6M6 6l12 12"/></svg></span>
+<span class="row-main"><span class="row-title">Expose settlement report CSV export</span><span class="row-sub">payments-api · Tests failed</span></span><span class="row-end"><span class="chip p-failed">Failed</span><span class="time">12m ago</span></span></a></div></div></div>
+</section><section class="q">
+  <h2><span class="num">2</span>Second-choice buttons</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 2">
+    <label><input class="o1" type="radio" name="q1" checked><span>1 · Grey fill</span></label>
+    <label><input class="o2" type="radio" name="q1"><span>2 · Outline</span></label>
+  </div>
+  <div class="pair"><div class="opt"><div class="lab"><span>1</span>Grey fill <em>what you saw in A</em></div><div class="wrap"><a class="btn">Start Session</a><a class="btn sec">View Spec</a><a class="btn sec"><svg class="ic " width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></svg>GitHub</a></div></div><div class="opt"><div class="lab"><span>2</span>Outline <em>a thin border</em></div><div class="wrap"><a class="btn">Start Session</a><a class="btn outline">View Spec</a><a class="btn outline"><svg class="ic " width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></svg>GitHub</a></div></div></div>
+</section><section class="q">
+  <h2><span class="num">3</span>Text boxes</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 3">
+    <label><input class="o1" type="radio" name="q2" checked><span>1 · Grey fill</span></label>
+    <label><input class="o2" type="radio" name="q2"><span>2 · Outlined</span></label>
+  </div>
+  <div class="pair"><div class="opt"><div class="lab"><span>1</span>Grey fill <em>like iPhone search</em></div><div class="stack filled"><div class="field"><label>Prompt</label><textarea class="input" placeholder="Tell the Agent anything extra…"></textarea><span class="hint">Optional. Sent with the Spec.</span></div></div></div><div class="opt"><div class="lab"><span>2</span>Outlined <em>white box with a border</em></div><div class="stack outlined"><div class="field"><label>Prompt</label><textarea class="input" placeholder="Tell the Agent anything extra…"></textarea><span class="hint">Optional. Sent with the Spec.</span></div></div></div></div>
+</section><section class="q">
+  <h2><span class="num">4</span>Picking where a Session starts</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 4">
+    <label><input class="o1" type="radio" name="q3" checked><span>1 · Cards</span></label>
+    <label><input class="o2" type="radio" name="q3"><span>2 · Settings list</span></label>
+  </div>
+  <div class="pair"><div class="opt"><div class="lab"><span>1</span>Cards <em>each option is a box</em></div><div class="stack">
+      <div class="choice on"><span class="radio"></span><div><b>Default branch · main</b><span>Start fresh from the latest main.</span></div></div>
+      <div class="choice"><span class="radio"></span><div><b>On top of PR #42</b><span>Build on an open pull request.</span></div></div>
+      <div class="choice off"><span class="radio"></span><div><b>Stack #3</b><span>Can’t use: auto-merge is on for the top layer.</span></div></div>
+    </div></div><div class="opt"><div class="lab"><span>2</span>Settings list <em>like iPhone Settings, with a tick</em></div><div class="group">
+      <div class="setrow"><div class="grow"><b>Default branch · main</b><span>Start fresh from the latest main.</span></div><svg class="ic tick" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></div>
+      <div class="setrow"><div class="grow"><b>On top of PR #42</b><span>Build on an open pull request.</span></div></div>
+      <div class="setrow off"><div class="grow"><b>Stack #3</b><span>Can’t use: auto-merge is on for the top layer.</span></div></div>
+    </div></div></div>
+</section><section class="q">
+  <h2><span class="num">5</span>The ⋯ menu on a phone</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 5">
+    <label><input class="o1" type="radio" name="q4" checked><span>1 · Pop-up menu</span></label>
+    <label><input class="o2" type="radio" name="q4"><span>2 · Bottom sheet</span></label>
+  </div>
+  <div class="pair"><div class="opt"><div class="lab"><span>1</span>Pop-up menu <em>drops down from the button</em></div><div class="menu">
+      <a href="#"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></svg>Open Spec on GitHub</a>
+      <a href="#"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.023 9.348h4.992V4.356m-1.291 15.17a9 9 0 1 1 1.33-9.035M3.528 4.474v4.992H8.52"/></svg>Check again now</a>
+      <hr>
+      <a href="#" class="red"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 18 18 6M6 6l12 12"/></svg>Remove from Atlas…</a>
+    </div></div><div class="opt"><div class="lab"><span>2</span>Bottom sheet <em>slides up, like iPhone</em></div><div class="dim"><div class="sheet">
+      <div class="grab"></div><div class="sh-t">Retry failed webhooks with backoff</div>
+      <div class="group"><div class="setrow">Open Spec on GitHub</div><div class="setrow">Check again now</div><div class="setrow red">Remove from Atlas…</div></div>
+      <div class="group cancel"><div class="setrow">Cancel</div></div>
+    </div></div></div></div>
+</section><section class="q">
+  <h2><span class="num">6</span>System warnings (backup, storage)</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 6">
+    <label><input class="o1" type="radio" name="q5" checked><span>1 · Pill in the top bar</span></label>
+    <label><input class="o2" type="radio" name="q5"><span>2 · Thin strip</span></label>
+  </div>
+  <div class="pair"><div class="opt"><div class="lab"><span>1</span>Pill in the top bar <em>tap to see details</em></div><div class="fakebar"><b>Inbox</b><span class="pill warn"><svg class="ic " width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>2 warnings</span></div>
+      <div class="panel-open"><div><b>Backup status unknown</b><span>No current local recovery status is available.</span></div><div><b>Storage check unknown</b><span>New Sessions stay queued until a storage check succeeds.</span></div></div></div><div class="opt"><div class="lab"><span>2</span>Thin strip <em>under the top bar, always readable</em></div><div class="fakebar"><b>Inbox</b></div>
+      <div class="strip"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg><span>Backup and storage status unknown</span><a href="#">Details</a></div></div></div>
+</section><section class="q">
+  <h2><span class="num">7</span>While something loads</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 7">
+    <label><input class="o1" type="radio" name="q6" checked><span>1 · Grey placeholders</span></label>
+    <label><input class="o2" type="radio" name="q6"><span>2 · Spinner</span></label>
+  </div>
+  <div class="pair"><div class="opt"><div class="lab"><span>1</span>Grey placeholders <em>shimmering shapes</em></div><div class="group"><div class="row"><span class="tile sk"></span><span class="row-main"><span class="sk" style="height:14px;width:70%"></span><span class="sk" style="height:11px;width:45%;margin-top:6px"></span></span></div><div class="row"><span class="tile sk"></span><span class="row-main"><span class="sk" style="height:14px;width:70%"></span><span class="sk" style="height:11px;width:45%;margin-top:6px"></span></span></div><div class="row"><span class="tile sk"></span><span class="row-main"><span class="sk" style="height:14px;width:70%"></span><span class="sk" style="height:11px;width:45%;margin-top:6px"></span></span></div></div></div><div class="opt"><div class="lab"><span>2</span>Spinner <em>a turning circle</em></div><div class="group" style="padding:12px 0 18px;text-align:center;color:var(--sec)"><div class="spin"></div>Loading Sessions…</div></div></div>
+</section><section class="q">
+  <h2><span class="num">8</span>The Agent’s live output</h2>
+  <div class="switch" role="radiogroup" aria-label="Choice 8">
+    <label><input class="o1" type="radio" name="q7" checked><span>1 · Terminal box</span></label>
+    <label><input class="o2" type="radio" name="q7"><span>2 · Matches the page</span></label>
+  </div>
+  <div class="pair"><div class="opt"><div class="lab"><span>1</span>Terminal box <em>always dark</em></div><div class="well term"><span class="dimt">$</span> bun test webhooks<br><span class="ok">✓</span> retry schedule doubles each attempt<br><span class="ok">✓</span> jitter stays within 20%<br><span class="dimt">running</span> gives up after 24 hours <span class="cursor"></span></div></div><div class="opt"><div class="lab"><span>2</span>Matches the page <em>light in light mode</em></div><div class="well page"><span class="dimt">$</span> bun test webhooks<br><span class="ok">✓</span> retry schedule doubles each attempt<br><span class="ok">✓</span> jitter stays within 20%<br><span class="dimt">running</span> gives up after 24 hours <span class="cursor"></span></div></div></div>
+</section>
+  <div class="part-h">Part 2 · Just check, nothing to pick</div>
+  <section class="q"><h2><span class="num check">A</span>Every status</h2><div class="solo"><div class="group">
+<a class="row" href="#"><span class="tile f-waiting"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></svg></span>
+<span class="row-main"><span class="row-title">Waiting</span><span class="row-sub">Example Session</span></span><span class="row-end"><span class="st t-waiting">Waiting</span></span></a>
+<a class="row" href="#"><span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+<span class="row-main"><span class="row-title">Running</span><span class="row-sub">Example Session</span></span><span class="row-end"><span class="st t-running">Running</span></span></a>
+<a class="row" href="#"><span class="tile f-queued"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z"/></svg></span>
+<span class="row-main"><span class="row-title">Queued</span><span class="row-sub">Waiting for a free slot</span></span><span class="row-end"><span class="st t-queued">Queued</span></span></a>
+<a class="row" href="#"><span class="tile f-idle"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.75 5.25v13.5m-7.5-13.5v13.5"/></svg></span>
+<span class="row-main"><span class="row-title">Idle</span><span class="row-sub">Idle doesn’t mean done; nothing has been confirmed</span></span><span class="row-end"><span class="st t-idle">Idle</span></span></a>
+<a class="row" href="#"><span class="tile f-succeeded"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg></span>
+<span class="row-main"><span class="row-title">Succeeded</span><span class="row-sub">Example Session</span></span><span class="row-end"><span class="st t-succeeded">Succeeded</span></span></a>
+<a class="row" href="#"><span class="tile f-failed"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 18 18 6M6 6l12 12"/></svg></span>
+<span class="row-main"><span class="row-title">Failed</span><span class="row-sub">Example Session</span></span><span class="row-end"><span class="st t-failed">Failed</span></span></a>
+      
+<a class="row" href="#"><span class="tile f-running"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></svg></span>
+<span class="row-main"><span class="row-title">Running, but Atlas lost touch</span><span class="row-sub">Shown when the live connection drops. The real state may have changed.</span></span><span class="row-end"><span class="st t-running">Running</span><span class="stale"><svg class="ic " width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>Not live</span></span></a>
+    </div></div></section><section class="q"><h2><span class="num check">B</span>Buttons, from loudest to quietest</h2><div class="solo"><div class="wrap"><a class="btn">Start Session</a><a class="btn sec">View Spec</a><a class="btn quiet">Show all</a><a class="btn danger">Remove…</a></div><p class="cap-note" style="margin-top:10px">Red actions live inside the ⋯ menu, never next to everyday buttons.</p></div></section><section class="q"><h2><span class="num check">C</span>Nothing here yet</h2><div class="solo"><div class="group"><div class="empty"><span class="tile lg"><svg class="ic " width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></svg></span><b>No Specs yet</b><p>Label a GitHub issue <code>spec</code> in this Repository and it shows up here.</p><a class="btn sec"><svg class="ic " width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.023 9.348h4.992V4.356m-1.291 15.17a9 9 0 1 1 1.33-9.035M3.528 4.474v4.992H8.52"/></svg>Check again</a></div></div></div></section><section class="q"><h2><span class="num check">D</span>Something went wrong</h2><div class="solo"><div class="err"><svg class="ic " width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg><div><b>Couldn’t reach GitHub</b><span>Showing what Atlas saw 5 minutes ago.</span></div></div></div></section><section class="q"><h2><span class="num check">E</span>Quick confirmation</h2><div class="solo"><div class="toast"><svg class="ic " width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg>Session queued</div></div></section><section class="q"><h2><span class="num check">F</span>Times</h2><div class="solo"><p style="margin:28px 0 0">Started <span class="time-tip">12 minutes ago<i>18 Nov 2026, 14:02 your time</i></span>. Tap or hover any time to see the exact moment.</p></div></section><section class="q"><h2><span class="num check">G</span>Spec text</h2><div class="solo"><div class="prose"><h3>Goal</h3><p>Webhook deliveries that fail are dropped after one attempt. Retry them with exponential backoff.</p><h3>Acceptance</h3><ul><li>Retries at 1s, 2s, 4s … capped at 5 minutes</li><li>Gives up after 24 hours</li></ul><p>Touches <code>src/webhooks/dispatch.ts</code>.</p></div></div></section><section class="q"><h2><span class="num check">H</span>Wide lists (desktop table)</h2><div class="solo"><table class="tbl"><thead><tr><th>Pull request</th><th>Status</th><th class="hide-sm">Branch</th><th>Updated</th></tr></thead><tbody>
+      <tr><td>#43 Migrate ledger ids</td><td><span class="st t-succeeded" style="font-weight:600">Open</span></td><td class="hide-sm mono">atlas/spec-12</td><td>1h ago</td></tr>
+      <tr><td>#42 Refund idempotency</td><td><span class="st t-waiting" style="font-weight:600">Draft</span></td><td class="hide-sm mono">atlas/spec-10</td><td>3h ago</td></tr>
+    </tbody></table></div></section>
+</main>
+<nav class="proto" aria-label="Prototype controls">
+  <span class="tag">Look A · Building blocks</span>
+  <a class="hide-sm" href="a-session.html">Show Session</a>
+  <button type="button" onclick="const m=document.documentElement.dataset.mode==='dark'?'light':'dark';document.documentElement.dataset.mode=m;localStorage.setItem('proto-mode',m)"><svg class="ic " width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z"/></svg><span>Light / Dark</span></button>
+  <a href="index.html">All looks</a>
+</nav>
+</body>
+</html>
