@@ -22,7 +22,8 @@ Bun `1.3.14`, TypeScript `7.0.2`, Hono `4.13.7`, HTMX `2.0.10`, Tailwind CSS `4.
 | `htmx.org` | Served at `/assets/htmx.min.js`; templates use `hx-*`. |
 | `@opencode/client` `2.3.2` | Discover an independently running OpenCode 2.x service without a server-version filter, probe readiness with `client.server.info()` (`GET /api/info`), validate events, create/associate/prompt, and consume events (`src/opencode.ts#createOpenCodeHandoffService`); report the installed client version and a non-gating major.minor skew warning (`src/opencode.ts#openCodeClientVersion`, `src/opencode.ts#openCodeVersionWarning`); viewer reads (`src/session-viewer.ts#createSessionViewerService`). Upstream labels this API experimental with no cross-minor compatibility promise, so the pin is exact; `scripts/release.ts`, `deploy/verify-assets.sh`, and `scripts/verify-release-artifact.sh` enforce it. |
 | `bun:sqlite` | Sole database (`src/persistence.ts#createPersistence`). |
-| `tailwindcss` + `daisyui` | Build `public/app.css` via `bun run build:css`. Theme tokens live in `src/styles.css`, not templates. |
+| `tailwindcss` + `daisyui` | Build `public/app.css` via `bun run build:css` from `src/styles.css` and its slices in `src/styles/*.css`. Light/dark tokens live in `src/styles.css`, not templates. daisyUI is still loaded but no template uses its components (removal is pending). |
+| Self-hosted fonts | Inter and Geist Mono as `public/fonts/*.woff2`, served at `/assets/fonts/*.woff2`. No font CDN; CSP is `font-src 'self'`. |
 | Native `fetch` | GitHub REST + one GraphQL merge-state read (`src/github.ts#createGitHubClient`), public Release metadata discovery, and updater artifact downloads. No Octokit. |
 | `deploy/bin/git`, `deploy/bin/gh`, `deploy/bin/git-credential-atlas` | Pinned Git; scoped gh/git credential helpers that call `scripts/atlas-gh.ts` and `scripts/atlas-git-credential.ts`. |
 
@@ -84,6 +85,7 @@ src/updater-server.ts
 | Headless OpenCode global configuration | Atlas release ships it; operator-run bootstrap and restore rehearsal install it; OpenCode reads it on its next start | `deploy/opencode/opencode.json` → `/var/lib/atlas/opencode-config/opencode/opencode.json` (mode `0400`) |
 | Space/backup status | host scripts; Atlas reads | `ATLAS_RECOVERY_STATUS_PATH` |
 | Inbox filter and last visit | UI app sets; browser holds | Cookies `atlas_inbox`, `atlas_visit` (`Path=/; Secure; HttpOnly; SameSite=Strict`) |
+| Light/Dark choice | `public/theme.js` (served at `/assets/theme.js`, loaded in `<head>` before first paint); browser `localStorage` holds | Sets `data-theme` on `<html>`; no choice = Auto (`prefers-color-scheme`). Never sent to the server |
 | Inbox poll continuity | `public/app.js`; browser DOM holds | Active element, open `<details>`, and scroll position are transient and restored after list swaps |
 | Safe update pause | `src/update-pause.ts`; preparation/handoff report drain completion; `src/server.ts` restores during host activation | Process memory derived at startup from durable updater status; Session/checkpoint/reservation truth remains in SQLite |
 | Release identity and artifact contract | Git tag + release workflow | Generated `RELEASE_METADATA.json`; published `atlas-release.json`, archive, checksum |
@@ -121,6 +123,7 @@ Accepted decisions are indexed in `docs/adr/INDEX.md`; ADR-0001 makes OpenCode s
 - Bind UI and webhook to `127.0.0.1`. Funnel the webhook only.
 - Cookie: `Path=/; Secure; HttpOnly; SameSite=Strict` for `atlas_session`, `atlas_inbox`, and `atlas_visit` (`atlas_session` also has a seven-day max age). Browser mutations need same-origin CSRF. Health is authenticated and exists only on the UI app.
 - Inbox filter state is URL-canonical on `/inbox`; a valid remembered `atlas_inbox` filter redirects bare `/inbox` to `?repository=...`, while removed or invalid Repositories fall back to all enrolled Repositories.
+- Static assets are same-origin only (`/assets/*`: `app.css`, `app.js`, `theme.js`, `htmx.min.js`, `fonts/*.woff2`, and the inline `icon.svg` tab icon), matching the CSP in `src/app.ts`. No external requests from the UI.
 - The `/inbox/list` fragment owns its 30-second `outerHTML` poll boundary; `public/app.js` must restore focus, open details, and scroll after a successful swap without adding history.
 - The Updates page polls only `#updates-live-status`; Check, Install/Retry, and policy forms stay outside that `outerHTML` boundary, disable their submit button during HTMX requests, expose labelled pending state, and return value-preserving HTML errors with a retry/Inbox path.
 - GitHub client is read-only (GET plus one GraphQL merge-state query). Atlas never creates, changes, or submits PRs or stacks.

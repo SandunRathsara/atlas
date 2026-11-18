@@ -35,7 +35,8 @@ Returns `AtlasApp`. Options: `AppOptions`.
 | Method | Path | Concern |
 |---|---|---|
 | GET | `/health` | Authenticated Atlas release identity + persistence health + independent OpenCode readiness/observed-version JSON. `openCode` also carries `clientVersion` and `versionWarning` (string or `null`), built in `currentOpenCodeReadiness`; both are diagnostics only. `?activation=1` omits the whole `openCode` object for candidate validation. Persistence determines HTTP status. UI app only. |
-| GET | `/assets/app.css`, `/assets/app.js`, `/assets/htmx.min.js` | Static assets. |
+| GET | `/assets/app.css`, `/assets/app.js`, `/assets/theme.js`, `/assets/htmx.min.js`, `/assets/fonts/{inter,geist-mono}.woff2` | Static assets from `public/` (htmx from `node_modules`). |
+| GET | `/assets/icon.svg` | Atlas mark tab icon, inline in `src/app.ts` (no `favicon.ico` request). |
 | GET | `/` | Landing: `findLandingSession` + `atlas_visit` / `atlas_inbox`; 303 to Session, Spec list, `/inbox`, or `/repositories/new`. |
 | GET | `/inbox` | Inbox page. `?repository=` is the canonical filter URL and sets/clears `atlas_inbox`; a remembered valid filter redirects a bare `/inbox` here. |
 | GET | `/inbox/list` | Inbox list fragment when `HX-Request`; full page otherwise. The fragment swaps its own outerHTML every 30s with `hx-push-url="false"`. |
@@ -54,6 +55,8 @@ Returns `AtlasApp`. Options: `AppOptions`.
 | GET | `/repositories/:repositoryId/pull-requests` | PRs + native stacks. |
 | GET | `/repositories/:repositoryId/sessions` | Session list (`?status=`). |
 | GET | `/sessions` | Session list across all enrolled, non-removed Repositories (`?status=`, including `?status=all`). |
+| GET | `/pull-requests` | PRs + stacks across enrolled Repositories, or the filtered one (`src/views/pull-requests.ts#renderAllPullRequestsPage`). Honors the Inbox filter. |
+| GET | `/more` | Phone/tablet More tab: Updates, theme, sign-out (`src/views/shell.ts#renderMorePage`). |
 | GET | `/sessions/:sessionId` | Session detail + viewer. |
 | GET/POST | `/sessions/:sessionId/target` | Target reconfirmation. |
 | GET/POST | `/sessions/:sessionId/reservation/release` | Explicit reservation release. |
@@ -128,21 +131,24 @@ Returns `{ hydrate }`. Also `createViewerEventReducer`, `ViewerScopeError`. Type
 
 | Symbol | Owner |
 |---|---|
-| `renderShell`, `renderLoginForm`, `renderLoginPage`, `PendingStartSession` | `src/views/shell.ts` |
+| `renderShell`, `ShellHeader`, `renderMorePage`, `renderLoginForm`, `renderLoginPage`, `PendingStartSession` | `src/views/shell.ts` |
+| `tabForPath`, `renderSideNav`, `renderTabBar`, `repositoryFilter`, `inboxItemHref`, `renderLiveList`, `themeControl`, `renderAccountMenu`, `systemWarnings`, `renderWarningStrip` | `src/views/frame.ts` (frame chrome used by `renderShell`) |
+| `renderSessionsPage` | `src/views/session-list.ts` (sorted by `submittedAt` desc) |
+| `renderMarkdown` | `src/views/markdown.ts` (safe Markdown for Spec bodies; wide tables scroll in place) |
 | `InboxContext`, `renderInboxFilter`, `renderInboxGroups`, `renderInboxList`, `renderInboxPage` | `src/views/inbox.ts` |
 | `renderRepositoriesPage`, `renderAddRepositoryPage`, `repositoryMatchesQuery` | `src/views/repositories.ts` |
 | `renderSpecsPage`, `renderSpecDetailPage`, `renderSpecUnavailablePage` | `src/views/specs.ts` |
 | `renderStartTargetOptions`, `startTargetOptions`, `targetObservation` | `src/views/targets.ts` |
-| `renderPullRequestsPage` | `src/views/pull-requests.ts` |
+| `renderPullRequestsPage`, `renderAllPullRequestsPage` | `src/views/pull-requests.ts` |
 | `renderStartSessionForm`, `renderStartSessionPage`, `renderSessionsPage`, `renderPendingStartSessionPage`, `renderPendingStartSessionFragment`, `renderTargetReconfirmationPage`, `renderTargetReconfirmationForm`, `renderReservationReleasePage`, `renderReservationReleaseForm` | `src/views/sessions.ts` |
-| `renderSessionDetailPage`, `renderSessionViewerFragment` | `src/views/viewer.ts` |
+| `renderSessionDetailPage`, `renderSessionViewerFragment`, `renderSessionLiveCards` | `src/views/viewer.ts` (`renderSessionLiveCards`: status/now/result cards swapped over SSE) |
 | `renderUpdatesPage`, `renderUpdatesStatus` | `src/views/updates.ts` |
 
 Inbox navigation internals: `src/views/inbox.ts#renderInboxUtility` owns the filtered Repository utility links and their path/query current-state predicates; `utilityLink` owns their shared markup.
 
 Viewer message rendering (`src/views/viewer.ts#renderViewerMessage`) includes an `idle` message as "Execution <outcome>" plus its error text.
 
-Shared markup: `src/views/html.ts` (`escapeHtml`, `safeExternalUrl`, `renderDocument`), `src/views/shared.ts` (`pageHeader`, `recordTable`, access labels/badges, refresh warnings, session/publication markup, and `openCodeReadinessNotice` — the paused-launch alert plus a separate `data-opencode-version-warning` mismatch notice, shown only on Session detail), `src/views/icons.ts#icon`. Theme: `src/styles.css` → `public/app.css`. Client glue: `public/app.js` preserves inbox poll focus, open details, and scroll position after outerHTML swaps.
+Shared markup: `src/views/html.ts` (`escapeHtml`, `safeExternalUrl`, `renderDocument`), `src/views/kit.ts` (the UI kit: status tiles/pills, rows, groups, `pageTitle`, `segmented`, `button`, `settingsRow`, `banner`, `moreMenu`, `confirmAction`, `prose`, `terminalWell`, `relativeTime`), `src/views/shared.ts` (`repositoryPage` — the Repository header + Specs/Sessions/PRs segments — access labels/notices, Session state/target/publication labels). The OpenCode paused-launch and `data-opencode-version-warning` mismatch banners render only on Session detail (`src/views/viewer.ts#renderSessionDetailPage`), `src/views/icons.ts#icon`. Theme: `src/styles.css` → `public/app.css`. Client glue: `public/app.js` preserves inbox poll focus, open details, and scroll position after outerHTML swaps, and adopts the Inbox desktop pane (`adoptPane`: demotes its h1, renames clashing ids).
 
 ### Recovery status — `src/recovery-status.ts#readRecoveryStatus`
 
@@ -263,7 +269,7 @@ the resulting selection and Session helper registry; a cleanup failure is shown
 separately without changing the activation result. Startup and completed staging
 also reconcile the same durable cleanup rules.
 
-**All Sessions.** GET `/sessions` → `persistence.listRepositories()` → `listSessions(repositoryId, filter)` for every enrolled, non-removed Repository → flatten and sort by submission order → `renderSessionsPage` in global mode. `?status=all` includes terminal history; default `active` includes every unfinished state.
+**All Sessions.** GET `/sessions` → `persistence.listRepositories()` → `listSessions(repositoryId, filter)` for every enrolled, non-removed Repository → flatten and sort by `submittedAt` desc (tie-break submission order) → `renderSessionsPage` in global mode. `?status=all` includes terminal history; default `active` includes every unfinished state.
 
 **Webhook → refresh.** `src/server.ts` webhook listener → `createWebhookApp` POST `/webhooks/github` → `verifyGitHubSignature` → `Persistence.acceptWebhookDelivery` → `RefreshCoordinator.wake`.
 
@@ -284,9 +290,12 @@ extraction/startup with no OpenCode → `gh release create` without overwrite.
 
 - `src/inbox-state.ts` — `atlas_inbox` / `atlas_visit` cookie parse and set.
 - `src/views/html.ts` — HTML escaping, document shell, HTMX includes.
-- `src/views/shared.ts` — layout primitives, access labels/badges, refresh warnings, and Session/Repository status markup.
-- `src/views/icons.ts` — Heroicons paths.
-- `src/styles.css` / `public/app.css` — Tailwind + daisyUI `atlas` theme.
+- `src/views/kit.ts` — UI kit (see Views).
+- `src/views/shared.ts` — `repositoryPage`, access labels/notices, and Session/Repository labels.
+- `src/views/icons.ts` — inline SVG icon paths (`icon()`).
+- `src/styles.css` / `public/app.css` — Tailwind build; Look A tokens (`--a-*`, `--t-*`, `--f-*`, light + dark), fonts, kit and frame CSS. Page slices: `src/styles/{inbox,session,spec,repos,prs,lists}.css`.
+- `public/theme.js` — sets `data-theme` before first paint from the saved Light/Dark choice (Auto = none).
+- `scripts/ui-demo.ts` — `bun run demo`: seeded in-memory Atlas with fake GitHub/OpenCode on port 4141, `/__demo` index of every screen and state flip.
 - `public/app.js` — client HTMX glue; preserves inbox poll focus, open `<details>`, and scroll position.
 - `src/recovery-status.ts` — read-only host status.
 - `src/activity-gate.ts` — shared balanced active-operation and pause-waiter accounting for preparation and handoff.
@@ -336,7 +345,7 @@ file and reports `published: false`.
 - **OpenCode credentials in the database.** Stable keeps provider keys and OAuth tokens in `opencode.db` (`credential` table); a legacy `auth.json` is imported and left on disk. Restored copies must go through `deploy/scrub-opencode-credentials.ts` and the `auth.json` removal in `deploy/restore-rehearsal.sh`.
 - **Verifier isolation.** A verifier that builds the app or handoff without first importing `scripts/isolate-opencode.ts` can discover and act on the operator's live OpenCode.
 - **No GitHub mutation from Atlas.** `GitHubClient` is read-only. Reservation release and target reconfirmation change SQLite only. Agent may publish via scoped git/gh; Atlas must not grow write APIs.
-- **Theme tokens.** Hex and radii live in `src/styles.css` / `DESIGN.md`. Rebuild with `bun run build:css`.
+- **Theme tokens.** Hex values live only in `src/styles.css` (light and dark blocks must stay in step) and are described in `DESIGN.md`. Rebuild with `bun run build:css` (`public/app.css` is generated, not committed).
 - **Two ports.** `ATLAS_WEBHOOK_PORT !== ATLAS_PORT`. Both `127.0.0.1`. Funnel webhook only.
 - **WAL SQLite.** Required except in-memory. One writer. `restoreStartup` reclaims unfinished ownership; do not skip health restore.
 - **One unfinished Session per Spec.** Unique index plus `queueSession` `unfinished` result. Do not add a second-start path that bypasses it.
@@ -393,7 +402,7 @@ file and reports `published: false`.
 | Command | Capability |
 |---|---|
 | `bun run check` | Typecheck (`tsc --noEmit`). |
-| `bun run build:css` | Tailwind/daisyUI asset. |
+| `bun run build:css` | Tailwind asset `public/app.css`. |
 | `bun run verify:issue31` | Webhook HMAC, GitHub rate-limit delay, refresh wake-during-backoff. |
 | `bun run verify:issue25` | PR list / stack projection views. |
 | `bun run verify:migrations` | Persistence migrations, session/reservation schema. |

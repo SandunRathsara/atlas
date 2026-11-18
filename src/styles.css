@@ -6,7 +6,7 @@
 @import "./styles/prs.css";
 @import "./styles/lists.css";
 
-/* daisyUI stays for legacy markup; its colour tokens are set below from the Look A tokens. */
+/* daisyUI is still loaded but no template uses its components; removing it is a follow-up. */
 @plugin "daisyui" {
   themes: false;
 }

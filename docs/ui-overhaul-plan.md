@@ -1,6 +1,6 @@
 # UI/UX overhaul plan
 
-Status: **Phases 1–5 done (all 8 screens picked 2026-11-18, recorded in `DESIGN.md` "Phase 5 screens"). Phase 6/7 next.** Picks are in `DESIGN.md`; shared partials and the shell are built during Phase 7 rollout. Owner reviews on a phone via the tailnet prototype server (`/tmp/atlas-ux/serve.ts`, port 8765). Phase 2 answers (black / round / bright blue / icon tiles / roomy) are in `DESIGN.md`; the stylesheet change is deferred to the Phase 7 rollout so the live UI isn't half-migrated. Owner approved starting the overhaul on 2026-11-18 and picked **A "Health"** the same day. Prototypes are in `prototypes/taste/`.
+Status: **Phases 6/7 rolled out on 2026-11-18, awaiting owner review on the phone; prototypes are deleted after the owner signs off.** Phases 1–5 picks are recorded in `DESIGN.md` (decision tables and "Phase 5 screens"). The shipped system is the kit in `src/views/kit.ts`, the frame in `src/views/frame.ts` / `src/views/shell.ts`, and the tokens in `src/styles.css`. Prototypes stay in `prototypes/taste/` until sign-off.
 
 ## How decisions get made
 
