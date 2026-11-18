@@ -1,40 +1,15 @@
-import type { PrStack, PullRequest, RefreshState, Repository, Session, SessionFilter, Spec } from "../persistence.ts";
+import type { PrStack, PullRequest, RefreshState, Repository, Session, Spec } from "../persistence.ts";
 import { escapeHtml, formatTime, renderDocument, safeExternalUrl, skipLink } from "./html.ts";
 import { icon } from "./icons.ts";
 import {
-  accessNotice,
-  alertSoft,
-  emptyState,
-  pageHeader,
-  publicationMarkup,
-  publicationRefreshMarkup,
-  publicationResultMarkup,
   publicationStatusLabel,
-  recordActions,
-  recordIdentity,
-  recordTable,
-  refreshLine,
-  refreshWarning,
-  renderRepositoryHeading,
-  repositoryLink,
-  sessionBadgeClass,
-  sessionFreshnessMarkup,
-  sessionsLink,
-  sessionStateLabel,
   sessionTargetLabel,
-  statusBadge,
 } from "./shared.ts";
 import { renderShell, type InboxContext, type PendingStartSession } from "./shell.ts";
 import { renderStartTargetOptions } from "./targets.ts";
 import { logo } from "./icons.ts";
 import { banner, button, group, prose, sectionHeader, sessionPill, settingsRow } from "./kit.ts";
 import { renderSpecMarkdown, specHref } from "./specs.ts";
-
-const sessionFilterLabel = (filter: SessionFilter) => {
-  if (filter === "active") return "Active";
-  if (filter === "all") return "All";
-  return sessionStateLabel(filter);
-};
 
 const errorBox = ({ id, title, bodyHtml, attrs = "" }: { id: string; title: string; bodyHtml: string; attrs?: string }) =>
   `<div id="${id}" class="sp-errbox" role="alert" tabindex="-1" data-focus-on-swap${attrs}>${icon("warn", 18)}<div><b>${escapeHtml(title)}</b>${bodyHtml}</div></div>`;
@@ -256,116 +231,6 @@ export const renderPendingStartSessionPage = ({
     </section>
   </main>`,
 );
-
-const sessionListRecord = (session: Session, pullRequestsRefresh?: RefreshState, repository?: Repository) => {
-  const href = `/sessions/${encodeURIComponent(session.atlasId)}`;
-  const identity = `<a class="text-brand-readable underline decoration-brand-readable/50 underline-offset-4" href="${href}">Spec #${escapeHtml(session.specIssueNumber)}: ${escapeHtml(session.specTitle)}</a>
-    ${repository ? `<p class="mt-1 text-sm text-muted">${escapeHtml(repository.fullName)}</p>` : ""}
-    <p class="mt-1 font-mono text-xs text-faint">Session ${escapeHtml(session.atlasId)}</p>`;
-  const badges = `<span class="flex flex-wrap items-center gap-1">${statusBadge(sessionBadgeClass(session.state), sessionStateLabel(session.state))}${sessionFreshnessMarkup(session)}</span>`;
-  const extra = `${session.stateReason ? `<p class="mt-2 max-w-prose text-sm leading-normal text-muted">${escapeHtml(session.stateReason)}</p>` : ""}
-    ${session.resultPullRequestId ? `<p class="mt-2 max-w-prose text-sm leading-normal">Publication: ${publicationResultMarkup(session)}</p>` : ""}
-    ${session.publicationReason ? `<p class="mt-2 max-w-prose text-sm leading-normal text-muted">Publication: ${escapeHtml(session.publicationReason)}</p>` : ""}
-    ${publicationRefreshMarkup(pullRequestsRefresh)}`;
-  return {
-    row: `<tr>
-      <td>${recordIdentity(icon("command-line", 20), `${identity}
-            <p class="mt-1 max-w-prose truncate text-sm text-muted">Prompt: ${escapeHtml(session.prompt)}</p>
-            ${extra}`)}</td>
-      <td class="whitespace-nowrap">${badges}</td>
-      <td class="whitespace-nowrap text-right tabular-nums">${session.submissionOrder}</td>
-      <td class="whitespace-nowrap tabular-nums text-muted">${escapeHtml(formatTime(session.submittedAt))}</td>
-      <td>${escapeHtml(sessionTargetLabel(session))}</td>
-      <td>
-        <p class="whitespace-nowrap text-sm">${session.executionSlotHeld ? "Held" : "Not held"}</p>
-        <p class="mt-1 text-sm text-muted">${escapeHtml(publicationStatusLabel(session.publicationStatus))}</p>
-        <p class="mt-1 text-sm text-muted">${session.reservationState === "held" ? "Held" : session.reservationState === "released" ? "Released" : "None"}</p>
-      </td>
-      <td>${recordActions(`<a class="btn btn-ghost btn-xs" href="${href}">View Session</a>`)}</td>
-    </tr>`,
-    stacked: `<li class="p-3">
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div class="min-w-0">${identity}</div>
-        ${badges}
-      </div>
-      <dl class="mt-3 grid gap-2 text-sm">
-        <div><dt class="font-medium text-muted">Submitted</dt><dd class="mt-1">${escapeHtml(formatTime(session.submittedAt))}</dd></div>
-        <div><dt class="font-medium text-muted">Queue order</dt><dd class="mt-1 tabular-nums">${session.submissionOrder}</dd></div>
-        <div><dt class="font-medium text-muted">Target</dt><dd class="mt-1">${escapeHtml(sessionTargetLabel(session))}</dd></div>
-        <div><dt class="font-medium text-muted">Execution slot</dt><dd class="mt-1">${session.executionSlotHeld ? "Held" : "Not held"}</dd></div>
-        <div><dt class="font-medium text-muted">Publication</dt><dd class="mt-1">${escapeHtml(publicationStatusLabel(session.publicationStatus))}</dd></div>
-        <div><dt class="font-medium text-muted">Stack reservation</dt><dd class="mt-1">${session.reservationState === "held" ? "Held" : session.reservationState === "released" ? "Released" : "None"}</dd></div>
-      </dl>
-      <p class="mt-3 max-w-prose truncate text-sm text-muted">Prompt: ${escapeHtml(session.prompt)}</p>
-      ${extra}
-      <a class="btn btn-ghost btn-xs mt-3" href="${href}">View Session</a>
-    </li>`,
-  };
-};
-
-export const renderSessionsPage = ({
-  csrfToken,
-  repository,
-  repositories = [],
-  sessions,
-  filter,
-  pullRequestsRefresh,
-  pullRequestsRefreshByRepository,
-  inbox,
-}: {
-  csrfToken: string;
-  repository?: Repository;
-  repositories?: readonly Repository[];
-  sessions: Session[];
-  filter: SessionFilter;
-  pullRequestsRefresh?: RefreshState;
-  pullRequestsRefreshByRepository?: ReadonlyMap<string, RefreshState | undefined>;
-  inbox?: InboxContext;
-}) => {
-  const filters: SessionFilter[] = ["active", "all", "queued", "preparing", "running", "waiting", "idle", "succeeded", "failed", "interrupted", "failed_setup"];
-  const global = !repository;
-  const repositoryById = new Map(repositories.map((item) => [item.githubId, item]));
-  const heading = filter === "active" ? "Active Sessions" : filter === "all" ? (global ? "All Sessions" : "Sessions") : `${sessionFilterLabel(filter)} Sessions`;
-  const emptyText = filter === "active"
-    ? `No unfinished Sessions are present in ${global ? "enrolled Repositories" : "this Repository"}.`
-    : filter === "all"
-      ? `No Atlas Sessions have been submitted for ${global ? "enrolled Repositories" : "this Repository"}.`
-      : `No Sessions currently have the ${sessionFilterLabel(filter)} state.`;
-  const description = global
-    ? "Atlas implementation attempts across all enrolled Repositories. Active includes every unfinished Session, including Queued."
-    : "Atlas implementation attempts for this Repository. Active includes every unfinished Session, including Queued.";
-  const headingMarkup = repository
-    ? renderRepositoryHeading(repository, heading, description, csrfToken)
-    : pageHeader({ eyebrow: "Sessions", title: escapeHtml(heading), description: escapeHtml(description) });
-  const records = sessions.map((session) => sessionListRecord(
-    session,
-    repository ? pullRequestsRefresh : pullRequestsRefreshByRepository?.get(session.repositoryId),
-    global ? repositoryById.get(session.repositoryId) : undefined,
-  ));
-  const sessionsBase = repository ? sessionsLink(repository) : "/sessions";
-
-  return renderShell({
-    title: repository ? `${repository.fullName} Sessions` : "All Sessions",
-    csrfToken,
-    inbox,
-    content: `${headingMarkup}
-      <nav class="mt-6 flex flex-wrap gap-2" aria-label="Session status filters">
-        ${filters.map((value) => `<a class="btn ${value === filter ? "btn-primary" : "btn-ghost"}" href="${value === "active" ? sessionsBase : `${sessionsBase}?status=${encodeURIComponent(value)}`}"${value === filter ? ' aria-current="page"' : ""}>${escapeHtml(sessionFilterLabel(value))}</a>`).join("")}
-      </nav>
-      ${sessions.length > 0
-        ? recordTable({
-          label: heading,
-          headers: ["Session", "State", "Queue", "Submitted", "Target", "Ownership", "Actions"],
-          aligns: ["left", "left", "right", "left", "left", "left", "left"],
-          rows: records.map((record) => record.row),
-          stacked: records.map((record) => record.stacked),
-        })
-        : emptyState(
-          filter === "active" ? "No active Sessions" : "No matching Sessions",
-          emptyText,
-        )}`,
-  });
-};
 
 const reservationLabel = (session: Session) =>
   session.reservationState === "held" ? "Held" : session.reservationState === "released" ? "Released" : "None";

@@ -324,7 +324,6 @@ const pullRequests: Record<string, GitHubPullRequest[]> = {
 };
 const missingHeadRefs = new Set(["perf/covering-index"]);
 
-const prByNumber = (repo: GitHubRepository, number: number) => pullRequests[repo.id]!.find((item) => item.number === String(number))!;
 const stacks: Record<string, GitHubStack[]> = {
   [R.payments.id]: [
     { id: "9001", nodeId: "STK_payments_state_machine", number: "1", trunkRef: "main", open: true, pullRequests: [
