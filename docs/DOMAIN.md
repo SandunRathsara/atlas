@@ -72,7 +72,7 @@ Atlas projects GitHub issues labelled exactly `spec` (open, not a pull request) 
 
 1. Queue: CSRF-protected form with required prompt (max 20,000 characters) and an observed target. Duplicate `submission_id` with the same content is idempotent. An unfinished Session on that Spec is rejected.
 2. Prepare: global execution-slot capacity (default one). Register the Session directory and helper references, request a Repository-scoped GitHub App token from the independently running supplier, and clone under `ATLAS_SESSION_ROOT` with a unique working branch. Pause when credential serving or Session storage is unavailable, below the free-space floor (default 10 GiB), or host space status says pause. Preparation never falls back to a weaker browse token.
-3. Handoff: discover the independently running OpenCode service without filtering by server version, validate its endpoint/health/event stream, create once, associate once, send one exact initial message, and reconcile HTTP state. Atlas does not store a transcript copy.
+3. Handoff: discover the independently running OpenCode service without filtering by server version, validate its endpoint/health/event stream, create once, associate once, send one exact initial message, and reconcile HTTP state. A create or prompt whose outcome is uncertain is reconciled, never blindly re-sent (a re-sent prompt can re-wake a finished Session for an empty round). Atlas does not store a transcript copy. A terminal outcome is confirmed only when the Agent's whole OpenCode session tree is quiet, because background subagent children can wake the parent again; until then the Session stays Running.
 
 ### Safe update pause
 
@@ -237,7 +237,7 @@ _Avoid_: moving build, source snapshot
 - Blockers do not gate Session starts. Atlas does not yet display Blockers.
 - Specs are open GitHub issues with the exact label `spec` and are not pull requests. Atlas does not create that label.
 - Atlas never creates, changes, or submits GitHub Pull requests or stacks. Locally prepared branches are not native stack members.
-- Atlas never starts, upgrades, or replaces OpenCode. Server version is diagnostic rather than a discovery gate; Atlas uses the client installed in its release and retains conservative not-ready/stale behavior when that client cannot use the service.
+- Atlas never starts, upgrades, or replaces OpenCode. Server version is diagnostic rather than a discovery gate; Atlas uses the client installed in its release and retains conservative not-ready/stale behavior when that client cannot use the service. When the server's major.minor differs from the installed client's, Session detail shows a non-blocking version-mismatch notice; it never pauses launches or affects Atlas updates.
 - Secrets and GitHub tokens never appear in HTML, URLs, arguments, prompts, or logs. Preparation never falls back to the browse installation token. If the App cannot grant requested writes, preparation stays queued instead of starting with a weaker token.
 - Stopping or restarting the Atlas UI does not stop credential serving, unlink its socket, remove its runtime directory, or discard registered Session scopes/helper references.
 - Surviving credential/updater code is selected as an immutable per-Release bundle only after candidate health succeeds; activation does not restart either running service.
@@ -279,16 +279,16 @@ _Avoid_: moving build, source snapshot
 
 - Not a public app. Shared-token private access only.
 - Does not enroll every GitHub App-visible Repository automatically.
-- Does not automatically provision the host, move OpenCode data, or change Tailscale/firewall. The operator-run bootstrap is limited to the independent credential/updater services and updated unit files.
-- Does not own OpenCode lifecycle, configuration, or transcripts.
+- Does not automatically provision the host, move OpenCode data, or change Tailscale/firewall. The operator-run bootstrap is limited to the independent credential/updater services, updated unit files, and installing Atlas's shipped headless OpenCode config; it never restarts OpenCode.
+- Does not own OpenCode lifecycle, runtime configuration, or transcripts. The shipped headless config (self-update disabled, `.env` reads allowed, `question` denied) is installed only by the operator; denying `question` keeps headless Agents from waiting on answers Atlas never gives.
 - Release discovery/staging alone does not invoke the safe update pause or
   activate a Release. Automatic policy applies only to newer builds of the
   installed SemVer; unattended SemVer changes remain out of scope.
-- Viewer does not reply to, cancel, or resume OpenCode permissions, forms, or inbox items.
+- Viewer does not reply to, cancel, or resume OpenCode permissions, forms, or inbox items. Known limits: the viewer can show a node's earlier succeeded outcome while the Session is Running a later round; a child Session waiting on a permission or form shows the Session as Running, not Waiting; and transcript text appears only when a block ends. An execution outcome appears as an `Execution <outcome>` entry in the transcript.
 - Does not create GitHub labels.
 - Design guidelines do not introduce features or change business rules.
 - Published release targets other than Linux x64, host-side dependency install,
   and automatic selection/upgrading of Bun, Git, gh, OS packages, or OpenCode.
 - Phase 1 has no off-site backup. Snapshots cannot undo GitHub effects. Shared host identity `omega` is not hostile-agent isolation.
 
-<!-- repo-map-synced: 61e7f5bd42b416930da76c6fa343cfc89628bdca -->
+<!-- repo-map-synced: 8b75ac8fb8e65e9ae6adcaeff65b3376c1b4605c -->

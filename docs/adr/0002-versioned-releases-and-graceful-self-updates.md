@@ -33,7 +33,7 @@ The developer explicitly replaced #49's original narrow fence, which excluded CI
 ### 2. Publishing and packaging
 
 - A tag such as `v1.1.1+build.42` triggers GitHub Actions to build the tagged commit and publish its GitHub Release. Installations consume published releases, not a moving branch.
-- Maintainers commit dependency changes before tagging. For a client-only release, update `@opencode-ai/client`, `bun.lock`, `deploy/pins.env`, and any documentation naming the changed pin as needed. The workflow uses the frozen lockfile; it does not select or modify dependencies or query an OpenCode server.
+- Maintainers commit dependency changes before tagging. For a client-only release, update `@opencode/client`, `bun.lock`, `deploy/pins.env`, and any documentation naming the changed pin as needed. The workflow uses the frozen lockfile; it does not select or modify dependencies or query an OpenCode server.
 - Publish a ready-to-run Linux x64 release-directory archive containing Atlas source, production dependencies, built CSS, helpers, required deployment assets, and release metadata.
 - Run the release using host-installed Bun. Installations extract/stage the archive in a new release directory without installing dependencies or building CSS during the update.
 - Self-update covers Atlas and its shipped components. Bun, Git, gh, OS packages, and OpenCode remain operator-managed. Explain unmet host-runtime requirements before activation; this is not an OpenCode compatibility check.

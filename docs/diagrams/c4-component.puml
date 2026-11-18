@@ -33,7 +33,7 @@ System_Boundary(updaterService, "Atlas updater service") {
 }
 
 System_Ext(github, "GitHub", "App, issues labelled spec, PRs, native stacks, webhooks, public Releases")
-System_Ext(opencode, "OpenCode V2", "Independent process; server version is not a discovery gate")
+System_Ext(opencode, "OpenCode 2.x", "Independent process with Atlas-shipped headless config; server version is diagnostic only, never a discovery gate")
 SystemDb_Ext(sqlite, "SQLite", "WAL file; Atlas-owned projections")
 Container_Ext(sessionDirs, "Session directories", "ATLAS_SESSION_ROOT clones")
 Container_Ext(releaseDirs, "Release trees and selection", "/opt/atlas/releases/atlas-<tag> and /opt/atlas/current")
@@ -44,6 +44,7 @@ Rel(team, ui, "HTTPS via Tailscale Serve")
 Rel(github, webhook, "Signed webhook to Funnel/webhook port")
 Rel(operator, credentials, "github.env, supplier key, registry")
 Rel(operator, updater, "bootstrap, updater key, host runtimes")
+Rel(operator, opencode, "select server binary; install headless config")
 
 Rel(server, persistence, "open database")
 Rel(server, githubClient, "construct")
@@ -77,7 +78,7 @@ Rel(preparation, githubClient, "refresh before clone")
 Rel(preparation, sessionDirs, "git clone")
 Rel(preparation, activityGate, "account and drain clone preparation")
 Rel(handoff, persistence, "handoff checkpoints")
-Rel(handoff, opencode, "discover, create, prompt, events")
+Rel(handoff, opencode, "discover (/api/info), create, prompt, events, tree-quiet reconcile")
 Rel(handoff, activityGate, "account and drain create/associate/prompt")
 Rel(updatePause, preparation, "pause / resume")
 Rel(updatePause, handoff, "pause / resume")
@@ -93,5 +94,5 @@ Rel(updater, supportBundles, "run selected updater source; install and atomicall
 Rel(updater, updateState, "atomic policy/staging/activation/recovery/cleanup writes")
 Rel(updater, server, "stop/restart Atlas only; validate authenticated Atlas-only health")
 
-' repo-map-synced: 61e7f5bd42b416930da76c6fa343cfc89628bdca
+' repo-map-synced: 8b75ac8fb8e65e9ae6adcaeff65b3376c1b4605c
 @enduml
