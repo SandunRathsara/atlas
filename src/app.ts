@@ -63,7 +63,7 @@ import {
   targetObservation,
   type PendingStartSession,
 } from "./views.ts";
-import { renderInboxList, renderInboxPage } from "./views/inbox.ts";
+import { renderInboxList, renderInboxScreen } from "./views/inbox.ts";
 import { renderMorePage, renderShell } from "./views/shell.ts";
 import { DEVELOPMENT_RELEASE_IDENTITY, parseReleaseTag, type ReleaseIdentity } from "./release.ts";
 import { createUnavailableUpdateService, type UpdateService } from "./update-discovery.ts";
@@ -703,7 +703,7 @@ export const createApp = (options: AppOptions) => {
       title: "Inbox",
       csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
       inbox,
-      content: renderInboxPage(inbox),
+      ...renderInboxScreen(inbox),
     }));
   });
 
@@ -718,7 +718,7 @@ export const createApp = (options: AppOptions) => {
         title: "Inbox",
         csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
         inbox,
-        content: renderInboxPage(inbox),
+        ...renderInboxScreen(inbox),
       }));
     }
     return c.html(renderInboxList(inbox));
