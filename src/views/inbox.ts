@@ -7,6 +7,7 @@ import { icon } from "./icons.ts";
 import { renderLiveList } from "./frame.ts";
 import {
   ageShort,
+  banner,
   button,
   emptyCard,
   group,
@@ -252,6 +253,11 @@ const pane = (item: InboxRow, inbox: InboxContext) => {
       ${paneSkeleton()}
       <p class="ix-pane-slow">Taking a while? <a href="${escapeHtml(href)}">Open the ${kind} page</a></p>
     </div>
+    <div class="ix-pane-error" hidden>${banner({
+      tone: "error",
+      title: `Couldn’t load this ${kind}`,
+      bodyHtml: `Atlas couldn’t show it here. <a class="ax-link" href="${escapeHtml(href)}">Open the ${kind} page</a>`,
+    })}</div>
     <div class="ix-nojs">${heroCard({
       status: statusForSession(item.session?.state),
       kicker: GROUP_LABEL[item.group],

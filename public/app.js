@@ -16,6 +16,16 @@
     }
     if (!event.detail.failed && event.detail.xhr?.status !== 0) return;
 
+    // Inbox desktop pane: swap the skeleton for the error banner with a link to the real page.
+    if (element instanceof Element && element.classList.contains("ix-pane-load")) {
+      const error = element.closest(".ix-pane")?.querySelector(".ix-pane-error");
+      if (error instanceof HTMLElement) {
+        element.remove();
+        error.hidden = false;
+      }
+      return;
+    }
+
     const form = element instanceof HTMLFormElement ? element : element.closest("form");
     const status = form?.querySelector("[data-form-status]");
     if (!status) return;
@@ -25,7 +35,43 @@
     status.textContent = requestMessage(event.detail.xhr?.status ?? 0);
   });
 
+  // The Inbox desktop pane shows another page's content inside this one. Keep one page heading
+  // (the Inbox h1): demote the pane's h1 to h2, drop its focus hooks and rename clashing ids.
+  const adoptPane = (pane) => {
+    const fresh = [...pane.querySelectorAll("[id]")];
+    const outside = new Set([...document.querySelectorAll("[id]")].filter((node) => !pane.contains(node)).map((node) => node.id));
+    const renamed = new Map();
+    fresh.forEach((node) => {
+      if (!outside.has(node.id)) return;
+      renamed.set(node.id, `pane-${node.id}`);
+      node.id = `pane-${node.id}`;
+    });
+    pane.querySelectorAll("[aria-labelledby], [aria-describedby], [aria-controls], label[for], a[href^='#']").forEach((node) => {
+      ["aria-labelledby", "aria-describedby", "aria-controls", "for"].forEach((name) => {
+        const value = node.getAttribute(name);
+        if (value) node.setAttribute(name, value.split(/\s+/).map((id) => renamed.get(id) ?? id).join(" "));
+      });
+      const href = node.getAttribute("href");
+      if (href?.startsWith("#") && renamed.has(href.slice(1))) node.setAttribute("href", `#${renamed.get(href.slice(1))}`);
+    });
+    pane.querySelectorAll("[data-focus-on-swap]").forEach((node) => node.removeAttribute("data-focus-on-swap"));
+    pane.querySelectorAll("h1").forEach((h1) => {
+      const h2 = document.createElement("h2");
+      [...h1.attributes].forEach((attribute) => {
+        if (attribute.name !== "data-page-heading" && attribute.name !== "tabindex") h2.setAttribute(attribute.name, attribute.value);
+      });
+      h2.append(...h1.childNodes);
+      h1.replaceWith(h2);
+    });
+  };
+
   document.body.addEventListener("htmx:afterSwap", (event) => {
+    // outerHTML swaps detach the requesting element, so look for a freshly loaded pane instead.
+    const pane = document.querySelector(".ix-pane:not([data-adopted])");
+    if (pane instanceof HTMLElement && !pane.querySelector(".ix-pane-load")) {
+      pane.dataset.adopted = "";
+      adoptPane(pane);
+    }
     if (inboxPollContext && event.detail.elt instanceof Element && event.detail.elt.id === "inbox-list") {
       const root = document.getElementById("inbox-list");
       if (root instanceof HTMLElement) {
