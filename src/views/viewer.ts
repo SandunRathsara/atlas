@@ -487,7 +487,7 @@ const renderNode = (node: ViewerSessionNode, root: ViewerSessionNode, endpoint: 
 
 const connectionMessage = (freshness: string, staleReason?: string) => {
   if (freshness === "stale") {
-    return `<div class="sv-conn" role="status" aria-live="polite" aria-atomic="true" data-viewer-connection-message data-viewer-state="stale" data-viewer-status data-viewer-stale>${escapeHtml(staleReason ?? "OpenCode transport or reconciliation is unavailable. Visible content is retained.")}</div>`;
+    return `<div class="sv-conn" role="status" aria-live="polite" aria-atomic="true" data-viewer-connection-message data-viewer-state="stale" data-viewer-status data-viewer-stale>${escapeHtml(staleReason ?? "Not live: Atlas can’t reach OpenCode right now. Showing what it last saw.")}</div>`;
   }
   if (freshness === "partial") {
     return `<div class="sv-conn" role="status" aria-live="polite" aria-atomic="true" data-viewer-connection-message data-viewer-state="partial" data-viewer-status>Partial Session view. Missing parts are shown as partial, not as empty history.</div>`;

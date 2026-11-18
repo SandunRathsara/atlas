@@ -316,7 +316,7 @@
     if (state === "fresh" || state === "stale" || state === "partial") root.dataset.viewerFreshness = state;
     const status = root.querySelector("[data-viewer-connection-message]");
     if (status) {
-      const text = state === "fresh" ? "" : state === "connecting" ? "Connecting to live updates…" : reason || (state === "auth" ? "Your sign-in expired. Sign in again before refreshing this Session view." : "Live Session data is stale; visible content is retained while Atlas reconciles.");
+      const text = state === "fresh" ? "" : state === "connecting" ? "Connecting to live updates…" : reason || (state === "auth" ? "Your sign-in expired. Sign in again before refreshing this Session view." : "Not live: the live connection dropped. Showing what Atlas last saw while it reconnects.");
       if (status.dataset.viewerState !== state || status.textContent !== text) {
         status.dataset.viewerState = state;
         status.textContent = text;
@@ -327,7 +327,7 @@
       notice.dataset.viewerConnectionMessage = "true";
       notice.className = "sv-conn";
       notice.setAttribute("role", "status");
-      notice.textContent = reason || (state === "auth" ? "Your sign-in expired. Sign in again before refreshing this Session view." : "Live Session data is stale; visible content is retained while Atlas reconciles.");
+      notice.textContent = reason || (state === "auth" ? "Your sign-in expired. Sign in again before refreshing this Session view." : "Not live: the live connection dropped. Showing what Atlas last saw while it reconnects.");
       root.querySelector("[data-viewer-content]")?.before(notice);
     }
   };
