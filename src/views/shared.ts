@@ -2,6 +2,10 @@ import type { RefreshState, Repository, Session, SessionState, Spec } from "../p
 import { escapeHtml, formatTime, safeExternalUrl } from "./html.ts";
 import { icon } from "./icons.ts";
 
+// New UI kit (Look A). Prefer these over the deprecated helpers below.
+export * from "./kit.ts";
+export { icon, logo, type IconName } from "./icons.ts";
+
 export const repositoryLink = (repository: Pick<Repository, "githubId">) =>
   `/repositories/${encodeURIComponent(repository.githubId)}/specs`;
 export const pullRequestsLink = (repository: Pick<Repository, "githubId">) =>
@@ -9,19 +13,23 @@ export const pullRequestsLink = (repository: Pick<Repository, "githubId">) =>
 export const sessionsLink = (repository: Pick<Repository, "githubId">) =>
   `/repositories/${encodeURIComponent(repository.githubId)}/sessions`;
 
+/** @deprecated Use `statusPill` / `sessionPill` / `prPill` from the kit. */
 export const statusBadge = (tone: string, label: string) =>
   `<span class="badge badge-sm shrink-0 whitespace-nowrap ${tone}">${escapeHtml(label)}</span>`;
 
+/** @deprecated Use `banner({ tone, title, body })` from the kit. Legacy alerts are restyled to match it. */
 export const alertSoft = (state: string, role: "alert" | "status", body: string, extra = "") =>
   `<div class="alert alert-${state} alert-soft mt-6 leading-normal" role="${role}"${extra}>${body}</div>`;
 
+/** @deprecated Use `emptyCard({ title, body, actionHtml })` from the kit. Arguments are trusted markup. */
 export const emptyState = (title: string, body: string, action = "") =>
-  `<div class="mt-6 rounded-box border border-edge bg-base-100 p-5">
-    <p class="text-base font-semibold">${title}</p>
-    <p class="mt-2 max-w-prose text-base leading-normal text-muted">${body}</p>
+  `<div class="ax-group mt-6"><div class="ax-empty">
+    <b class="ax-empty-t">${title}</b>
+    <p class="ax-empty-b">${body}</p>
     ${action}
-  </div>`;
+  </div></div>`;
 
+/** @deprecated Use `pageTitle(...)` from the kit (back link, actions, ⋯ menu, phone filter). Title is trusted markup. */
 export const pageHeader = ({
   eyebrow,
   title,
@@ -32,15 +40,15 @@ export const pageHeader = ({
   title: string;
   description?: string;
   actions?: string;
-}) => `<div class="flex flex-wrap items-start justify-between gap-4">
-  <div class="min-w-0">
-    ${eyebrow ? `<p class="text-xs font-medium uppercase tracking-wide text-accent">${escapeHtml(eyebrow)}</p>` : ""}
-    <h1 id="page-title" class="${eyebrow ? "mt-2" : ""} w-fit max-w-full break-words text-xl font-semibold leading-normal" tabindex="-1" data-page-heading>${title}</h1>
-    ${description ? `<p class="mt-2 max-w-prose text-base leading-normal text-muted">${description}</p>` : ""}
+}) => `${eyebrow ? `<p class="ax-eyebrow">${escapeHtml(eyebrow)}</p>` : ""}<div class="ax-head">
+  <div class="ax-head-main">
+    <h1 id="page-title" class="ax-title" tabindex="-1" data-page-heading>${title}</h1>
   </div>
-  ${actions ? `<div class="flex flex-wrap items-center gap-2">${actions}</div>` : ""}
+  ${actions ? `<div class="ax-head-actions">${actions}</div>` : ""}
+  ${description ? `<p class="ax-head-desc">${description}</p>` : ""}
 </div>`;
 
+/** @deprecated Use `group()` + `row()` from the kit (wide desktop tables stay acceptable for now). */
 export const recordTable = ({
   label,
   headers,
@@ -59,7 +67,7 @@ export const recordTable = ({
       `<th scope="col" class="font-medium text-muted ${aligns?.[index] === "right" ? "text-right" : "text-left"}">${header}</th>`,
     )
     .join("");
-  return `<div class="mt-6 overflow-hidden rounded-box border border-edge bg-base-100">
+  return `<div class="mt-6 overflow-hidden rounded-box bg-base-100">
     <div class="atlas-table hidden md:block" role="region" aria-label="${escapeHtml(label)}">
       <table class="table table-compact">
         <caption class="sr-only">${escapeHtml(label)}</caption>
@@ -67,7 +75,7 @@ export const recordTable = ({
         <tbody>${rows.join("")}</tbody>
       </table>
     </div>
-    <ul class="divide-y divide-edge md:hidden" aria-label="${escapeHtml(label)}">${stacked.join("")}</ul>
+    <ul class="divide-y divide-edge md:hidden [&>li]:px-4 [&>li]:py-3" aria-label="${escapeHtml(label)}">${stacked.join("")}</ul>
   </div>`;
 };
 
@@ -101,6 +109,7 @@ export const eligibilityNotice = (repository: Repository) => {
   return reasons.join(" ");
 };
 
+/** @deprecated Use `row({ tileHtml, title, sub })` from the kit. */
 export const recordIdentity = (mark: string, body: string) =>
   `<div class="flex items-start gap-2"><span class="mt-0.5 text-faint">${mark}</span><div class="min-w-0 max-w-md">${body}</div></div>`;
 
@@ -225,6 +234,7 @@ export const sessionStateLabel = (state: SessionState) => {
   return state.charAt(0).toUpperCase() + state.slice(1);
 };
 
+/** @deprecated Use `statusForSession` + `statusPill` / `sessionPill` from the kit. */
 export const sessionBadgeClass = (state: SessionState) => {
   if (state === "running") return "badge-info";
   if (state === "waiting") return "badge-warning";

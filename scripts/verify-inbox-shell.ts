@@ -147,12 +147,12 @@ const seed = (db: Persistence) => {
 };
 
 const assertShell = (body: string) => {
-  assert(body.includes("lg:w-72"));
+  assert(body.includes('<aside class="ax-side" aria-label="Primary navigation">'));
   assert(body.includes('name="repository"'));
   assert(body.includes('action="/inbox" method="get"'));
   assert(body.includes('id="inbox-repository"'));
-  assert(body.includes(">All Repositories</option>"));
-  assert(body.includes(">Manage Repositories…</option>"));
+  assert.match(body, /<button class="ax-menu-item" type="submit" name="repository" value=""[^>]*>[^<]*<span[^>]*>All Repositories<\/span>/);
+  assert.match(body, /<button class="ax-menu-item" type="submit" name="repository" value="manage">[\s\S]*?<span[^>]*>Manage Repositories…<\/span>/);
   assert(body.includes('aria-label="Add a Repository"'));
   assert(body.includes('id="inbox-list"'));
   assert(body.includes('hx-trigger="every 30s"'));
@@ -203,7 +203,8 @@ const assertShell = (body: string) => {
   const body = await page.text();
   assertShell(body);
   assert(!body.includes('hx-trigger="change"'));
-  assert(body.includes("uppercase tracking-wide text-faint"));
+  assert(body.includes('class="ax-live-h">Needs you</p>'));
+  assert(body.includes('class="ax-live-h">In progress</p>'));
   assert(body.includes("Needs you"));
   assert(body.includes("In progress"));
   assert(body.includes("Not started"));
@@ -211,10 +212,12 @@ const assertShell = (body: string) => {
   assert(body.includes("Waiting spec"));
   assert(body.includes("border-l-2 border-l-warning"));
   assert(body.includes(">Stale</span>"));
+  assert(body.includes('class="ax-notlive"'));
+  assert.match(body, /class="ax-live-item"[^>]*aria-label="[^"]*, not live/);
   assert(body.includes(">No Session</span>"));
   assert(body.includes(">alpha</p>"));
   assert(body.includes(">beta</p>"));
-  assert(body.includes(">All Repositories</p>"));
+  assert(body.includes('aria-label="Repository filter: All Repositories"'));
   assert(body.includes("View all Sessions"));
   assert(body.includes('id="inbox-view-all-sessions"'));
   assert(body.includes('href="/sessions?status=all"'));
@@ -234,11 +237,12 @@ const assertShell = (body: string) => {
   assert.equal(filtered.headers.get("Vary"), "HX-Request");
   assert.deepEqual(parsedCookies(filtered).atlas_inbox.value, { repositoryId: "1" });
   const body = await filtered.text();
-  assert(body.includes(">Org/alpha</p>"));
+  assert(body.includes('aria-label="Repository filter: Org/alpha"'));
   assert(body.includes("Waiting spec"));
   assert(!body.includes(">alpha</p>"));
   assert(!body.includes("Beta spec"));
-  assert.equal(body.split("Pull requests").length - 1, 2);
+  assert.equal(body.split('id="inbox-utility-pull-requests"').length - 1, 1);
+  assert.equal(body.split('id="inbox-page-utility-pull-requests"').length - 1, 1);
   assert(body.includes("All Sessions"));
   assert(body.includes("Open on GitHub"));
   assert(body.includes("View all Sessions"));
@@ -292,8 +296,8 @@ const assertShell = (body: string) => {
   });
   assert.equal(fallback.status, 200);
   const body = await fallback.text();
-  assert(body.includes(">All Repositories</p>"));
-  assert(!body.includes(">Org/alpha</p>"));
+  assert(body.includes('aria-label="Repository filter: All Repositories"'));
+  assert(!body.includes('aria-label="Repository filter: Org/alpha"'));
   db.close();
 }
 
@@ -330,8 +334,7 @@ const assertShell = (body: string) => {
   const selected = await request(app, `/sessions/${waitingId}`, auth);
   const body = await selected.text();
   assert(/id="inbox-1-1"[^>]*aria-current="page"/.test(body));
-  assert(body.includes("bg-brand-tint"));
-  assert(body.includes("border-l-brand-readable"));
+  assert(/id="inbox-1-1" class="ax-live-item"[^>]*aria-current="page"/.test(body));
   db.close();
 }
 
@@ -366,9 +369,8 @@ const assertShell = (body: string) => {
     Cookie: cookieJson("atlas_visit", { lastVisitAt: "2026-03-01T00:00:00.000Z" }),
   });
   const body = await visit.text();
-  assert(body.includes("Settled · 1 new"));
-  assert(body.includes("inline-block size-2"));
-  assert(body.includes("sr-only\">New</span>"));
+  assert(body.includes('Settled <span class="ax-live-new">· 1 new</span>'));
+  assert.match(body, /id="inbox-1-4" class="ax-live-item"[^>]*aria-label="[^"]*\. New"[^>]*>[\s\S]*?<span class="ax-unread"/);
   db.close();
 }
 
@@ -383,7 +385,7 @@ const assertShell = (body: string) => {
   const body = await specs.text();
   assertShell(body);
   assert(!body.includes('hx-trigger="change"'));
-  assert(body.includes(">Org/alpha</p>"));
+  assert(body.includes('aria-label="Repository filter: Org/alpha"'));
   assert(body.includes("Needs you"));
 
   const scopedQuery = await request(app, "/repositories/1/specs?repository=2", {
@@ -391,8 +393,8 @@ const assertShell = (body: string) => {
     Cookie: cookieJson("atlas_inbox", { repositoryId: "1" }),
   });
   const scopedBody = await scopedQuery.text();
-  assert(scopedBody.includes('<option value="1" selected>Org/alpha</option>'));
-  assert(!scopedBody.includes('<option value="2" selected>Org/beta</option>'));
+  assert(scopedBody.includes('name="repository" value="1" aria-current="true"'));
+  assert(!scopedBody.includes('name="repository" value="2" aria-current="true"'));
   db.close();
 }
 
@@ -435,7 +437,7 @@ const assertShell = (body: string) => {
   const body = await prs.text();
   assert(body.includes('aria-current="page"'));
   assert(body.includes("/repositories/1/pull-requests"));
-  assert(body.includes("bg-brand-tint"));
+  assert(/id="inbox-utility-pull-requests" href="\/repositories\/1\/pull-requests" aria-current="page"/.test(body));
   db.close();
 }
 

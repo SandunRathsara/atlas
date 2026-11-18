@@ -75,7 +75,95 @@
     navigation.querySelector("[data-mobile-navigation-trigger]")?.focus();
   });
 
+  // ── Frame: menus, confirms, theme, exact times ───────────────────────
+  const closeMenu = (menu, focusSummary) => {
+    menu.open = false;
+    if (focusSummary) menu.querySelector(":scope > summary")?.focus();
+  };
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const open = event.target instanceof Element ? event.target.closest("details[data-menu][open], details[data-confirm][open]") : null;
+    const menu = open || document.querySelector("details[data-menu][open], details[data-confirm][open]");
+    if (!(menu instanceof HTMLDetailsElement)) return;
+    event.preventDefault();
+    closeMenu(menu, true);
+  });
+
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const close = target?.closest("[data-menu-close], [data-confirm-cancel]");
+    if (close) {
+      const menu = close.closest("details");
+      if (menu) closeMenu(menu, true);
+      return;
+    }
+    // Outside click closes open menus. The phone sheet backdrop is summary::before, so a click on
+    // it lands on the summary and toggles the menu closed natively.
+    document.querySelectorAll("details[data-menu][open]").forEach((menu) => {
+      if (!target || !menu.contains(target)) menu.open = false;
+    });
+  });
+
+  // Opening one menu closes the others.
+  document.addEventListener("toggle", (event) => {
+    const menu = event.target;
+    if (!(menu instanceof HTMLDetailsElement) || !menu.open || !menu.hasAttribute("data-menu")) return;
+    document.querySelectorAll("details[data-menu][open]").forEach((other) => {
+      if (other !== menu && !other.contains(menu)) other.open = false;
+    });
+  }, true);
+
+  const themeKey = "atlas-theme";
+  const readTheme = () => {
+    try {
+      const mode = localStorage.getItem(themeKey);
+      return mode === "light" || mode === "dark" ? mode : "auto";
+    } catch {
+      return "auto";
+    }
+  };
+  const syncThemeControls = (mode) => {
+    document.querySelectorAll("[data-theme-control] input[type='radio']").forEach((input) => {
+      input.checked = input.value === mode;
+    });
+  };
+  const applyTheme = (mode) => {
+    try {
+      if (mode === "auto") localStorage.removeItem(themeKey);
+      else localStorage.setItem(themeKey, mode);
+    } catch {
+      // Storage unavailable: the choice still applies to this page.
+    }
+    if (mode === "auto") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = `atlas-${mode}`;
+    syncThemeControls(mode);
+  };
+  document.addEventListener("change", (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || !input.closest("[data-theme-control]")) return;
+    applyTheme(input.value);
+  });
+
+  const exactTimeFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+  const localizeTimes = (root) => {
+    root.querySelectorAll("[data-exact-time]").forEach((time) => {
+      const tip = time.querySelector(".ax-time-tip");
+      const value = time.getAttribute("datetime");
+      if (!tip || !value || time.dataset.exactTimeLocal) return;
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return;
+      tip.textContent = exactTimeFormat.format(date);
+      time.dataset.exactTimeLocal = "";
+    });
+  };
+  document.body.addEventListener("htmx:afterSettle", (event) => {
+    if (event.detail.elt instanceof Element) localizeTimes(event.detail.elt.parentElement ?? document);
+  });
+
   window.addEventListener("DOMContentLoaded", () => {
+    syncThemeControls(readTheme());
+    localizeTimes(document);
     const swap = document.querySelector("[data-focus-on-swap]");
     if (swap instanceof HTMLElement) {
       swap.removeAttribute("data-focus-on-swap");

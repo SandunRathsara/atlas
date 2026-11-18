@@ -1,10 +1,21 @@
-import { readRecoveryStatus, type RecoveryStatus } from "../recovery-status.ts";
-import { escapeHtml, formatTime, renderDocument, skipLink } from "./html.ts";
-import { icon } from "./icons.ts";
-import { renderInboxFilter, renderInboxList, type InboxContext } from "./inbox.ts";
-import { alertSoft } from "./shared.ts";
+import { readRecoveryStatus } from "../recovery-status.ts";
+import { escapeHtml, renderDocument, skipLink } from "./html.ts";
+import { icon, logo } from "./icons.ts";
+import { renderInboxList, type InboxContext } from "./inbox.ts";
+import {
+  renderAccountMenu,
+  renderLogoutForm,
+  renderSideNav,
+  renderTabBar,
+  renderWarningStrip,
+  repositoryFilter,
+  tabForPath,
+  themeControl,
+  type FrameTab,
+} from "./frame.ts";
+import { banner, group, pageTitle, plainTile, row, type PageTitleOptions } from "./kit.ts";
 
-export type { InboxContext };
+export type { InboxContext, FrameTab, PageTitleOptions };
 
 export type PendingStartSession = {
   action: string;
@@ -12,13 +23,6 @@ export type PendingStartSession = {
   prompt: string;
   target?: string;
 };
-
-const brandBand = (href?: string) =>
-  `<div class="flex h-12 items-center bg-brand px-4 text-sm font-semibold text-brand-content">${
-    href
-      ? `<a class="text-brand-content" href="${href}">Atlas</a>`
-      : "Atlas"
-  }</div>`;
 
 export const renderLoginForm = ({
   csrfToken,
@@ -32,7 +36,7 @@ export const renderLoginForm = ({
   pending?: PendingStartSession;
 }) => {
   const errorMarkup = error
-    ? `<p id="login-error" class="alert alert-error alert-soft mt-6 leading-normal" tabindex="-1" data-focus-on-swap>${escapeHtml(error)}</p>`
+    ? banner({ tone: "error", id: "login-error", attrs: 'tabindex="-1" data-focus-on-swap', body: error })
     : "";
   const errorAttribute = error ? ' aria-describedby="login-error" aria-invalid="true"' : "";
   const pendingMarkup = pending
@@ -40,23 +44,21 @@ export const renderLoginForm = ({
     <input type="hidden" name="pending_submission_id" value="${escapeHtml(pending.submissionId)}">
     <input type="hidden" name="pending_target" value="${escapeHtml(pending.target ?? "default")}">
     <textarea hidden name="pending_prompt">${escapeHtml(pending.prompt)}</textarea>
-    <div class="alert alert-info alert-soft mt-6 leading-normal" role="status">Sign in to review and retry the preserved Start Session form. Atlas will not resubmit it automatically.</div>`
+    ${banner({ tone: "info", title: "Your Start Session form is kept", body: "Sign in to review and retry it. Atlas won't send it on its own." })}`
     : "";
 
-  return `<form id="login-form" class="mt-6 max-w-2xl" action="/login" method="post" autocomplete="on" hx-post="/login" hx-target="#login-form" hx-swap="outerHTML" hx-indicator="#login-progress" hx-disabled-elt="button[type='submit']">
+  return `<form id="login-form" class="ax-login-form" action="/login" method="post" autocomplete="on" hx-post="/login" hx-target="#login-form" hx-swap="outerHTML" hx-indicator="#login-progress" hx-disabled-elt="button[type='submit']">
     <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
     <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}">
     ${pendingMarkup}
-    <div>
-      <label class="label mb-2 block p-0" for="shared-token">Shared access credential</label>
-      <input id="shared-token" class="input w-full" name="token" type="password" autocomplete="current-password" required${errorAttribute}>
-      <p class="mt-2 text-sm leading-normal text-faint">Use the credential provided by your Atlas operator.</p>
-    </div>
     ${errorMarkup}
-    <div class="mt-6 flex flex-wrap items-center gap-3">
-      <button class="btn btn-primary" type="submit">Sign in</button>
-      <span id="login-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Signing in...</span>
+    <div class="ax-field">
+      <label class="ax-label" for="shared-token">Shared access credential</label>
+      <input id="shared-token" class="ax-input" name="token" type="password" autocomplete="current-password" required${errorAttribute}>
+      <p class="ax-hint">Use the credential provided by your Atlas operator.</p>
     </div>
+    <button class="ax-btn ax-btn-block" type="submit">Sign in</button>
+    <p id="login-progress" class="htmx-indicator ax-login-progress" role="status" aria-live="polite">Signing in...</p>
     <p data-form-status class="sr-only" role="status" aria-live="polite"></p>
   </form>`;
 };
@@ -70,49 +72,15 @@ export const renderLoginPage = (options: {
   renderDocument(
     "Sign in",
     `${skipLink}
-    <header class="bg-brand text-brand-content">
-      <div class="mx-auto flex h-12 max-w-6xl items-center px-4 sm:px-6">
-        <p class="text-sm font-semibold">Atlas</p>
-      </div>
-    </header>
-    <main id="main-content" class="mx-auto max-w-6xl px-4 py-5 sm:px-6">
-      <section class="max-w-2xl">
-        <p class="text-xs font-medium uppercase tracking-wide text-accent">Private access</p>
-        <h1 class="mt-2 text-xl font-semibold leading-normal" tabindex="-1" data-page-heading>Sign in to Atlas</h1>
-        <p class="mt-2 max-w-prose text-base leading-normal text-muted">Use the shared team credential to open the private Atlas Repository view.</p>
+    <main id="main-content" class="ax-login" aria-labelledby="login-title">
+      <div class="ax-login-card">
+        ${logo(64, 18)}
+        <h1 id="login-title" class="ax-login-title" tabindex="-1" data-page-heading>Sign in to Atlas</h1>
+        <p class="ax-login-sub">Use the shared team credential.</p>
         ${renderLoginForm(options)}
-      </section>
+      </div>
     </main>`,
   );
-
-const renderLogoutForm = (csrfToken: string) => `<form id="logout-form" class="flex flex-wrap items-center gap-2" action="/logout" method="post" hx-post="/logout" hx-target="#logout-form" hx-swap="none" hx-indicator="#logout-progress" hx-disabled-elt="button[type='submit']">
-  <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
-  <span data-form-status class="sr-only" role="status" aria-live="polite"></span>
-  <button class="btn btn-ghost" type="submit" aria-label="Sign out">${icon("arrow-right-start-on-rectangle", 16)} <span class="hidden sm:inline">Sign out</span></button>
-  <span id="logout-progress" class="htmx-indicator text-sm text-muted" role="status" aria-live="polite">Signing out...</span>
-</form>`;
-
-const renderRecoveryNotices = (status: RecoveryStatus) => {
-  const backup = status.backup.state === "success"
-    ? alertSoft("success", "status", `<div><strong>Local recovery snapshot succeeded.</strong> Last success: ${escapeHtml(formatTime(status.backup.lastSuccessAt ?? null))}. This is a same-disk recovery point, not an off-site backup.</div>`)
-    : status.backup.state === "failure"
-      ? alertSoft("warning", "alert", `<div><strong>The latest local backup failed.</strong> Last success: ${escapeHtml(formatTime(status.backup.lastSuccessAt ?? null))}. Backup failure warns but does not by itself pause Session preparation.</div>`)
-      : alertSoft("warning", "status", `<div><strong>Backup status is unknown.</strong> No current, valid local recovery status is available.</div>`);
-  const free = status.space.availableBytes === undefined
-    ? ""
-    : ` ${escapeHtml((status.space.availableBytes / (1024 ** 3)).toFixed(1))} GiB is available.`;
-  const metadata = status.space.metadataPercent === undefined
-    ? ""
-    : ` Btrfs metadata is ${escapeHtml(String(status.space.metadataPercent))}% used.`;
-  const space = status.space.state === "warning"
-    ? alertSoft("warning", "alert", `<div><strong>Storage is under pressure.</strong>${free}${metadata} New preparation remains available, but running Agents and changed snapshot blocks can still exhaust storage.</div>`)
-    : status.space.state === "paused"
-      ? alertSoft("error", "alert", `<div><strong>New Session preparation is paused by storage pressure.</strong>${free}${metadata} Running Agents are not interrupted or deleted.</div>`)
-      : status.space.state === "unknown"
-        ? alertSoft("warning", "status", `<div><strong>Storage safety status is unknown.</strong> New preparation remains paused on deployments using the required status gate until a current check succeeds.</div>`)
-        : "";
-  return `<section class="mb-6 grid gap-3" aria-label="Recovery and storage status">${backup}${space}</section>`;
-};
 
 const emptyInbox = (): InboxContext => ({
   repositories: [],
@@ -121,57 +89,81 @@ const emptyInbox = (): InboxContext => ({
   specsRefresh: [],
 });
 
-const renderGlobalNavigation = (currentPath: string) => {
-  const current = currentPath === "/updates" || currentPath === "/updates/status";
-  return `<nav class="border-t border-edge p-2" aria-label="Atlas">
-    <a class="flex h-8 items-center gap-2 rounded-field border-l-2 ${current ? "border-l-brand-readable bg-brand-tint" : "border-transparent"} px-3 text-sm font-medium text-muted" href="/updates"${current ? ' aria-current="page"' : ""}>${icon("arrow-path", 20)}<span>Updates</span></a>
-  </nav>`;
+/** Phone top bar: brand (or back link) plus the Repository filter, so Repository context stays visible. */
+const phoneBar = (inbox: InboxContext, header?: PageTitleOptions) => {
+  const lead = header?.back
+    ? `<a class="ax-bar-back" href="${escapeHtml(header.back.href)}">${icon("back", 22)}${escapeHtml(header.back.label)}</a>`
+    : `<a class="ax-bar-brand" href="/inbox">${logo(26, 7)}<span>Atlas</span></a>`;
+  const filter = !header?.filterHtml ? `<span class="ax-bar-filter">${repositoryFilter(inbox, "head")}</span>` : "";
+  return `<div class="ax-bar-phone">${lead}<span class="ax-bar-spacer"></span>${filter}</div>`;
 };
 
+/**
+ * The app frame: desktop sidebar (≥1024px), sticky top bar, main content, phone tab bar and
+ * optional sticky Start bar. Every existing caller passes `{ title, csrfToken, content, inbox?,
+ * historyDisabled? }`; `tab`, `header`, `startBar` and `bodyClass` are optional extras.
+ * `header` renders the large `pageTitle` (h1#page-title); omit it when `content` has its own h1.
+ */
 export const renderShell = ({
   title,
   csrfToken,
   historyDisabled,
   content,
   inbox = emptyInbox(),
+  tab,
+  header,
+  startBar,
+  bodyClass = "",
 }: {
   title: string;
   csrfToken: string;
   historyDisabled?: boolean;
   content: string;
   inbox?: InboxContext;
+  tab?: FrameTab;
+  header?: PageTitleOptions;
+  /** Trusted markup for the phone Start bar (usually one or two `ax-btn` buttons). */
+  startBar?: string;
+  bodyClass?: string;
 }) => {
-  const headerName = inbox.filtered?.fullName ?? "All Repositories";
-  const updatesCurrent = inbox.currentPath === "/updates" || inbox.currentPath === "/updates/status";
-  const recoveryNotices = renderRecoveryNotices(readRecoveryStatus());
+  const current = tab ?? tabForPath(inbox.currentPath);
+  const classes = [bodyClass, startBar ? "ax-has-startbar" : ""].filter(Boolean).join(" ");
 
   return renderDocument(
     title,
     `${skipLink}
-    <div class="min-h-screen lg:flex">
-      <aside class="hidden bg-base-300 lg:flex lg:w-72 lg:shrink-0 lg:flex-col" aria-label="Primary navigation">
-        ${brandBand("/repositories")}
-        ${renderInboxFilter(inbox)}
+    <div class="ax-app">
+      <aside class="ax-side" aria-label="Primary navigation">
+        <a class="ax-side-brand" href="/inbox">${logo(28, 7)}<span>Atlas</span></a>
+        ${renderSideNav(current)}
         ${renderInboxList(inbox)}
-        ${renderGlobalNavigation(inbox.currentPath)}
+        ${renderAccountMenu(csrfToken, current)}
       </aside>
-      <div class="min-w-0 flex-1">
-        <header class="atlas-glass sticky top-0 z-20">
-          <div class="relative flex h-12 items-center justify-between gap-3 px-4 sm:px-6">
-            <p class="min-w-0 flex-1 truncate text-sm text-muted" title="${escapeHtml(headerName)}">${escapeHtml(headerName)}</p>
-            <div class="flex shrink-0 flex-wrap items-center gap-2">
-              <a class="btn btn-ghost lg:hidden" href="/inbox" aria-label="Inbox">${icon("rectangle-stack", 16)} <span class="hidden sm:inline">Inbox</span></a>
-              <a class="btn btn-ghost border-l-2 ${updatesCurrent ? "border-l-brand-readable bg-brand-tint" : "border-l-transparent"} lg:hidden" href="/updates" aria-label="Updates"${updatesCurrent ? ' aria-current="page"' : ""}>${icon("arrow-path", 16)} <span class="hidden sm:inline">Updates</span></a>
-              ${renderLogoutForm(csrfToken)}
-            </div>
-          </div>
+      <div class="ax-main">
+        <header class="ax-bar">
+          ${phoneBar(inbox, header)}
+          <div class="ax-bar-desk">${repositoryFilter(inbox, "bar")}</div>
         </header>
-        <main id="main-content" class="mx-auto max-w-6xl px-4 py-5 sm:px-6" aria-labelledby="page-title"${historyDisabled ? ' hx-history="false"' : ""}>
+        <main id="main-content" class="ax-content" aria-labelledby="page-title"${historyDisabled ? ' hx-history="false"' : ""}>
           <div id="global-status" class="sr-only" role="status" aria-atomic="true">Signed in to Atlas.</div>
-          ${recoveryNotices}
+          ${renderWarningStrip(readRecoveryStatus())}
+          ${header ? pageTitle(header) : ""}
           ${content}
         </main>
       </div>
-    </div>`,
+    </div>
+    ${renderTabBar(current)}
+    ${startBar ? `<div class="ax-startbar">${startBar}</div>` : ""}`,
+    classes,
   );
 };
+
+/** Phone "More" tab body: Updates, Appearance and Sign out (the sidebar account menu on desktop). */
+export const renderMorePage = (csrfToken: string) =>
+  `${pageTitle({ title: "More" })}
+  ${group([row({ title: "Updates", href: "/updates", tileHtml: plainTile("refresh"), sub: "Atlas releases and update status", chevron: true })])}
+  <div class="ax-needs-js ax-more-theme">
+    <h2 class="ax-group-label">Appearance</h2>
+    ${themeControl("more")}
+  </div>
+  ${group([renderLogoutForm(csrfToken, "more-logout-form")])}`;

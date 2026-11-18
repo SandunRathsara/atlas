@@ -1,6 +1,7 @@
 import type { Inbox, InboxRow, RefreshState, Repository } from "../persistence.ts";
 import { escapeHtml, safeExternalUrl } from "./html.ts";
 import { icon, type IconName } from "./icons.ts";
+import { renderLiveList } from "./frame.ts";
 import {
   emptyState,
   accessLabel,
@@ -220,11 +221,8 @@ export const renderInboxGroups = (inbox: InboxContext, layout: "sidebar" | "page
   return `${renderSpecsUnavailable(inbox, layout)}${groups}`;
 };
 
-export const renderInboxList = (inbox: InboxContext) =>
-  `<div id="inbox-list" tabindex="-1" class="flex min-h-0 flex-1 flex-col" hx-get="/inbox/list" hx-trigger="every 30s" hx-swap="outerHTML" hx-push-url="false">
-    <div data-inbox-scroll class="min-h-0 flex-1 overflow-y-auto p-2"><nav aria-label="Spec inbox">${renderInboxGroups(inbox)}</nav></div>
-    ${inbox.filtered ? renderInboxUtility(inbox.filtered, inbox.currentPath, inbox.currentSessionFilter) : ""}
-  </div>`;
+/** The sidebar live list (#inbox-list), polled by /inbox/list. */
+export const renderInboxList = (inbox: InboxContext) => renderLiveList(inbox);
 
 export const renderInboxPage = (inbox: InboxContext) =>
   `${pageHeader({ title: "Inbox" })}

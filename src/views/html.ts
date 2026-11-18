@@ -33,18 +33,25 @@ const htmxConfig =
 
 export const skipLink = `<a class="atlas-skip-link" href="#main-content">Skip to main content</a>`;
 
-export const renderDocument = (title: string, content: string) => `<!doctype html>
-<html lang="en" data-theme="atlas">
+/**
+ * Full HTML document. No `data-theme` is rendered: the theme follows the device unless
+ * `/assets/theme.js` (blocking, CSP-safe) applies the per-browser Light/Dark override first.
+ */
+export const renderDocument = (title: string, content: string, bodyClass = "") => `<!doctype html>
+<html lang="en">
   <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="color-scheme" content="light dark">
     <meta name="htmx-config" content='${htmxConfig}'>
     <title>${escapeHtml(title)} | Atlas</title>
+    <script src="/assets/theme.js"></script>
+    <link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/assets/app.css">
     <script src="/assets/htmx.min.js" defer></script>
     <script src="/assets/app.js" defer></script>
   </head>
-  <body class="min-h-screen bg-base-200 font-sans text-sm text-base-content">
+  <body class="ax-body${bodyClass ? ` ${escapeHtml(bodyClass)}` : ""}">
     ${content}
   </body>
 </html>`;

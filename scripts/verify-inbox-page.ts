@@ -97,8 +97,8 @@ const setState = (db: Persistence, atlasId: string, state: SessionState, updated
 const assertInboxPageChrome = (body: string) => {
   assert(body.includes('id="page-title"'));
   assert(body.includes("data-page-heading>Inbox</h1>"));
-  assert(body.includes('class="btn btn-ghost lg:hidden" href="/inbox"'));
-  assert(body.includes("Inbox</a>"));
+  // Phone tab bar keeps a labelled, current Inbox link.
+  assert.match(body, /<nav class="ax-tabbar" aria-label="Atlas"><a href="\/inbox" aria-current="page">[\s\S]*?<span>Inbox<\/span><\/a>/);
   assert(body.includes("Sign out"));
   assert(!body.includes("data-mobile-navigation"));
   assert(body.includes('id="inbox-page-repository"'));

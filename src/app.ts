@@ -64,7 +64,7 @@ import {
   type PendingStartSession,
 } from "./views.ts";
 import { renderInboxList, renderInboxPage } from "./views/inbox.ts";
-import { renderShell } from "./views/shell.ts";
+import { renderMorePage, renderShell } from "./views/shell.ts";
 import { DEVELOPMENT_RELEASE_IDENTITY, parseReleaseTag, type ReleaseIdentity } from "./release.ts";
 import { createUnavailableUpdateService, type UpdateService } from "./update-discovery.ts";
 
@@ -564,6 +564,26 @@ export const createApp = (options: AppOptions) => {
     }),
   );
 
+  app.get("/assets/theme.js", () =>
+    new Response(Bun.file(new URL("../public/theme.js", import.meta.url)), {
+      headers: {
+        "Cache-Control": "public, max-age=3600",
+        "Content-Type": "text/javascript; charset=UTF-8",
+      },
+    }),
+  );
+
+  for (const font of ["inter", "geist-mono"]) {
+    app.get(`/assets/fonts/${font}.woff2`, () =>
+      new Response(Bun.file(new URL(`../public/fonts/${font}.woff2`, import.meta.url)), {
+        headers: {
+          "Cache-Control": "public, max-age=604800",
+          "Content-Type": "font/woff2",
+        },
+      }),
+    );
+  }
+
   app.get("/assets/htmx.min.js", () =>
     new Response(Bun.file(new URL("../node_modules/htmx.org/dist/htmx.min.js", import.meta.url)), {
       headers: {
@@ -702,6 +722,18 @@ export const createApp = (options: AppOptions) => {
       }));
     }
     return c.html(renderInboxList(inbox));
+  });
+
+  app.get("/more", privateHeaders, auth.middleware, (c) => {
+    const identity = c.get("auth");
+    const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
+    return c.html(renderShell({
+      title: "More",
+      csrfToken,
+      inbox: inboxFromRequest(c),
+      tab: "more",
+      content: renderMorePage(csrfToken),
+    }));
   });
 
   app.get("/login", (c) => {

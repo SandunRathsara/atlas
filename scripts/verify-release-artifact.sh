@@ -45,6 +45,9 @@ release_root=${roots[0]}
 
 cmp "$output/atlas-release.json" "$release_root/RELEASE_METADATA.json"
 test -s "$release_root/public/app.css"
+test -s "$release_root/public/theme.js"
+test -s "$release_root/public/fonts/inter.woff2"
+test -s "$release_root/public/fonts/geist-mono.woff2"
 test -d "$release_root/node_modules/hono"
 test -d "$release_root/node_modules/@opencode/client"
 test ! -e "$release_root/node_modules/@opencode-ai"
