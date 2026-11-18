@@ -21,27 +21,33 @@ is not used.
 
 ## Maintainer publishing procedure
 
-1. Commit the complete release tree. Never let release CI choose a newer
-   dependency. For an OpenCode client bump, update `package.json` and
+Full steps: `.github/release/README.md`.
+
+1. Land the complete release content on `main`. Never let release CI choose a
+   newer dependency. For an OpenCode client bump, update `package.json` and
    `bun.lock`; `scripts/build-release.ts` refuses to build when they and the
    installed package disagree. The client version is compiled into the binary
    and reported as `openCodeClient`; it never selects or gates the
    independently managed OpenCode server.
-2. Run `bun install --frozen-lockfile`, `bun run check`,
-   `bun run verify:issue57`, and the affected checks. Confirm the proposed
-   build exceeds every published build and the SemVer content rule above.
-3. Create and push the tag for that reviewed commit. For example, the first
-   approved release is tagged `v0.1.0+build.1`. Pushing the tag starts
-   `.github/workflows/release.yml`; no second version file is edited.
-4. Keep the tag and release immutable. Never rerun by replacing release assets
-   or moving a published tag. Correct any problem in a new commit with a new,
-   globally higher build.
+2. Run the release: **Actions → Release → Run workflow** on `main`, or
+   `gh workflow run release.yml --ref main -f bump=minor` (add
+   `-f dry_run=true` to try it without publishing). Pick `patch`, `minor`,
+   `major`, or `build` by the SemVer content rule above. Only logins in
+   `RELEASERS` (top of `.github/workflows/release.yml`) may run it. Do not
+   push tags by hand; the workflow computes the next tag and no version file is
+   edited.
+3. Keep the tag and release immutable. Never re-upload assets or move a
+   published tag. Correct any problem in a new commit with a new, globally
+   higher build.
 
-The workflow serializes all release publication, validates against existing
-GitHub Releases, installs the frozen lockfile, typechecks, builds and smokes the
-exact tagged tree, then creates the release without overwrite flags. A rerun of
-an already published identity fails. Verification uses local synthetic
-artifacts and never creates a disposable GitHub Release.
+The workflow has four jobs. `plan` checks the allowlist and `main`, validates
+against existing GitHub Releases, computes the tag, and pins the `main` SHA.
+`gate` runs the full `check.yml` tier on that SHA. `build` builds and
+smoke-tests the four files. `publish`, the only job with write access, runs no
+repo code, re-checks the digest and checksum, then creates the tag and Release
+together without overwrite flags. If anything fails before publish, nothing is
+tagged. Runs never overlap. Verification uses local synthetic artifacts and
+never creates a disposable GitHub Release.
 
 `bun run build:release -- <tag> <sha> <out>` (`scripts/build-release.ts`) is
 the only producer. It refuses a dirty checkout or a SHA other than `HEAD`,

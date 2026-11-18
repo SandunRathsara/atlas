@@ -53,8 +53,12 @@ A freshness warning that Atlas's live connection is disconnected or reconciliati
 _Avoid_: Stall, timeout, hang
 
 **Release**:
-An immutable Atlas source/dependency/deployment tree published from an authoritative SemVer-plus-global-build tag and exact Git SHA.
+An immutable published Atlas version: one compiled binary plus its metadata, identified by a SemVer-plus-global-build tag and exact Git SHA.
 _Avoid_: moving build, source snapshot
+
+**Release folder**:
+The read-only folder on the host for one Release (`/opt/atlas/releases/atlas-<tag>`): the binary, its metadata, and helper shims.
+_Avoid_: release tree
 
 ## UI wording
 

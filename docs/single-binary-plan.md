@@ -1,6 +1,6 @@
 # Single-binary Atlas plan
 
-Status: **Approved for implementation, 2026-11-18.** The owner directed the full build and the first Release `v0.1.0+build.1`. The "Build contract" section below is binding for every phase.
+Status: **Implemented on the `single-binary` branch; first Release `v0.1.0+build.1` pending.** Approved 2026-11-18 (owner directed the full build and the first Release); recorded as [ADR-0003](adr/0003-single-binary-and-installer.md). The "Build contract" section below is binding for every phase.
 
 ## Goal
 

@@ -4,6 +4,8 @@
 
 Accepted on 2026-09-11 after the developer explicitly expanded [#49](https://github.com/SandunRathsara/atlas/issues/49), answered the grilling rounds, and confirmed the final agreement.
 
+Partially superseded on 2026-11-18 by [ADR-0003](0003-single-binary-and-installer.md): Releases are one compiled binary (no host Bun, no archive, no `deploy/pins.env`), published by a manual allowlisted workflow instead of a tag push, and installed by `install.sh` + `atlas setup` instead of the bootstrap in §6. Identity, ordering, discovery, policy, safe pause, activation, rollback, and retention decisions stay accepted.
+
 ## Context
 
 Atlas currently identifies staged releases by Git SHA and an operator-selected release directory. A client dependency bump already fits that mechanism, but the developer requires SemVer plus build numbers and graceful self-updates performed by Atlas installations. The same intended Atlas behavior must be releasable with a newer OpenCode client without inventing a new product version.
@@ -94,4 +96,4 @@ This ADR supersedes the original SHA-only recommendation and narrow scope fence 
 
 It partially supersedes [ADR-0001](0001-discover-opencode-without-version-gating.md), specifically the deployment-health requirement in Decision 4 and the startup/deployment OpenCode inspection in Decision 6 **where they would gate Atlas startup or self-update activation**. This path uses the Atlas-only health contract above and does not query OpenCode to approve activation. ADR-0001's normal Session discovery/readiness handling, observation semantics, independently managed OpenCode service, and explicit operator-run OpenCode staging/diagnostics remain in force.
 
-No superseding ADR exists.
+Partially superseded by [ADR-0003](0003-single-binary-and-installer.md): §2's tag-push trigger, `deploy/pins.env` step, release-directory archive, and host-installed Bun, and all of §6 Bootstrap.
