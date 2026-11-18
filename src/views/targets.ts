@@ -1,6 +1,7 @@
 import type { PrStack, PullRequest, RefreshState, Repository, TargetKind } from "../persistence.ts";
 import { escapeHtml } from "./html.ts";
 import { statusBadge } from "./shared.ts";
+import { icon } from "./icons.ts";
 
 export type TargetStatus = {
   kind: "eligible" | "warning" | "disabled";
@@ -185,6 +186,10 @@ type StartTargetOption = {
   reason: string;
   status: TargetStatus;
   observation: string;
+  /** Short picker title, e.g. "Default branch · main", "PR stack #3", "On top of PR #42". */
+  title: string;
+  /** One plain line under the title when the option is usable. */
+  context: string;
 };
 
 export const targetObservation = (
@@ -268,6 +273,8 @@ export const startTargetOptions = (
     reason: defaultStatus.reason,
     status: defaultStatus,
     observation: targetObservation(repository, pullRequests, stacks, { kind: "default" }),
+    title: `Default branch · ${repository.defaultBranch ?? "unknown"}`,
+    context: repository.defaultBranch ? `Start fresh from the latest ${repository.defaultBranch}` : "Start fresh from the default branch",
   });
 
   const pullRequestMap = new Map(pullRequests.map((pullRequest) => [pullRequest.githubId, pullRequest]));
@@ -284,6 +291,8 @@ export const startTargetOptions = (
       reason: status.reason,
       status,
       observation: targetObservation(repository, pullRequests, stacks, { kind: "native_stack", stackId: stack.githubId }),
+      title: `PR stack #${stack.number}`,
+      context: topPullRequest ? `Adds a layer on top of PR #${topPullRequest.number} · ${topPullRequest.title}` : "Adds a layer on top of the stack",
     });
   }
 
@@ -296,6 +305,8 @@ export const startTargetOptions = (
       reason: status.reason,
       status,
       observation: targetObservation(repository, pullRequests, stacks, { kind: "standalone_parent", parentPullRequestId: pullRequest.githubId }),
+      title: `On top of PR #${pullRequest.number}`,
+      context: pullRequest.title,
     });
   }
   return options;
@@ -313,19 +324,29 @@ export const renderStartTargetOptions = (
 ) => {
   const options = startTargetOptions(repository, pullRequests, stacks, accessRefresh, pullRequestsRefresh);
   const observations = Object.fromEntries(options.map((option) => [option.value, option.observation]));
-  const targetHelp = options.length === 1
-    ? `<p class="mt-2 text-sm leading-normal text-faint">Native stack and standalone parent choices appear after a complete Pull request/stack read.</p>`
+  const gate = targetVerificationStatus(repository, accessRefresh, pullRequestsRefresh);
+  const unchecked = gate?.kind === "warning" && options[0]?.status.kind === "eligible"
+    ? `<div class="ax-banner sp-pick-note" role="status">${icon("warn", 18)}<div><b class="ax-banner-title">Couldn’t check GitHub just now</b>Pull requests and stacks can’t be used until Atlas finishes a current check. The default branch still works.</div></div>`
     : "";
-  return `<fieldset class="mt-8 max-w-3xl" aria-describedby="${targetInvalid ? `target-help ${targetErrorId}` : "target-help"}">
-    <legend class="label mb-2 block p-0">Starting target</legend>
+  const rows = options.map((option, index) => {
+    const id = `start-target-${index}`;
+    const usable = option.status.kind === "eligible";
+    const sub = usable
+      ? option.context
+      : `${option.status.kind === "warning" ? "Not checked yet" : "Can’t use"}: ${option.reason}`;
+    return `<label class="ax-setrow ax-pick${usable ? "" : " ax-off"}" for="${id}">
+        <input type="radio" id="${id}" name="target" value="${escapeHtml(option.value)}"${option.value === selected ? " checked" : ""}${usable ? "" : " disabled"}${targetInvalid ? ' aria-invalid="true"' : ""}>
+        <span class="ax-setrow-main"><b>${escapeHtml(option.title)}</b><span class="${usable ? "" : `sp-pick-why sp-pick-${option.status.kind}`}">${escapeHtml(sub)}</span></span>${icon("check", 20, "ax-tick")}
+      </label>`;
+  }).join("");
+  const targetHelp = options.length === 1
+    ? " Pull requests and stacks show up here after a complete Pull request read."
+    : "";
+  return `<fieldset class="sp-pick" aria-describedby="${targetInvalid ? `target-help ${targetErrorId}` : "target-help"}">
+    <legend class="ax-group-label">Start from</legend>
     <input type="hidden" name="target_observations" value="${escapeHtml(JSON.stringify(observations))}">
-    <div class="grid gap-3">
-      ${options.map((option) => `<label class="flex items-start gap-3 rounded-field border border-control-border bg-base-100 p-3 ${option.status.kind === "eligible" ? "cursor-pointer" : "opacity-90"}">
-        <input class="radio radio-primary mt-1" type="radio" name="target" value="${escapeHtml(option.value)}"${option.value === selected ? " checked" : ""}${option.status.kind === "eligible" ? "" : " disabled"}${targetInvalid ? ' aria-invalid="true"' : ""}>
-        <span class="min-w-0"><span class="block break-words font-medium">${escapeHtml(option.label)}</span><span class="mt-1 block text-sm leading-normal ${option.status.kind === "eligible" ? "text-muted" : option.status.kind === "warning" ? "text-warning" : "text-error"}">${escapeHtml(option.status.label)} · ${escapeHtml(option.reason)}</span></span>
-      </label>`).join("")}
-    </div>
-    <p id="target-help" class="mt-2 text-sm leading-normal text-faint">Atlas prepares a local child only. It never pushes, creates a Pull request, or registers native membership.</p>
-    ${targetHelp}
+    ${unchecked}
+    <div class="ax-group">${rows}</div>
+    <p id="target-help" class="ax-group-foot">Atlas works on a local copy only. It never pushes, opens a Pull request or changes a stack.${targetHelp}</p>
   </fieldset>`;
 };
