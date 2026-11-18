@@ -1,14 +1,16 @@
 # Installing Atlas
 
-One command installs Atlas on a private Linux server. It downloads the `atlas`
-binary, checks its SHA-256, and runs `sudo atlas setup`.
+One command installs Atlas on a private Linux server. As root, it downloads the
+`atlas` binary into a new root-only folder, checks its SHA-256, and runs
+`atlas setup` from there.
 
 ## What the server needs
 
 - Linux x86_64 with glibc (Debian, Ubuntu, Fedora, ...). Not Alpine/musl, not arm64.
-- systemd, `curl` (or `wget`), `sha256sum`, and root or `sudo`.
-- git 2.36.0 or newer and gh 2.3.0 or newer. Stock Debian 12 and Ubuntu 24.04
-  packages are fine: `sudo apt install git gh`.
+- systemd, `curl` (or `wget`), `sha256sum`, and root (`sudo`).
+- git 2.36.0 or newer and gh 2.3.0 or newer, installed system-wide: owned by
+  root, not writable by anyone else, not under `/home` or `/root`. Stock
+  Debian 12 and Ubuntu 24.04 packages are fine: `sudo apt install git gh`.
 - OpenCode is optional at install time. Without it, setup warns and Atlas
   starts, but Sessions cannot run until OpenCode is installed.
 - A GitHub App for your organization: App ID, installation ID, and its private
@@ -19,31 +21,59 @@ systemd are missing or too old.
 
 ## Install
 
-Interactive (asks questions on your terminal, even through `| sh`):
+Interactive (asks questions on your terminal, even through `| sudo sh`):
 
 ```sh
-curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sudo sh
 ```
 
 With an answers file (no questions):
 
 ```sh
-curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sh -s -- --answers /root/atlas-answers.json
+curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sudo sh -s -- --answers /root/atlas-answers.json --create-user
 ```
 
 A pinned Release (`ATLAS_VERSION=v1.2.0+build.7` works too):
 
 ```sh
-curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sh -s -- --version v1.2.0+build.7
+curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sudo sh -s -- --version v1.2.0+build.7
 ```
 
-Every option other than `--version` goes to `atlas setup`. With no terminal
-and no options, the installer keeps the verified files in
-`~/.cache/atlas-install` and prints the `sudo … setup --source-dir …` command
-to run.
+Every option other than `--version` goes to `atlas setup`. Without root the
+installer stops before downloading and prints the `sudo sh` command. With no
+terminal and no options, it keeps the verified files in its root-only folder
+under `/var/tmp` and prints the `… setup --source-dir …` command to run as
+root.
 
-At the end setup prints the URL and the sign-in token. **The token is shown
-once.** Save it.
+`atlas setup` refuses a `--source-dir` that is not root's: the folder, its
+files, and every folder above must be owned by root and not writable by group
+or others. It copies the Release to its own root-only folder and checks it
+again before installing.
+
+At the end setup prints the URL, the account Atlas runs as, and the sign-in
+token. **The token is shown once.** Save it.
+
+## Service account
+
+Atlas runs as a dedicated system account, `atlas` by default: own group, no
+login shell, home `<data>/home`. If it is missing, setup asks before creating
+it; without a terminal pass `--create-user` (`--yes` is not enough).
+
+Setup will not quietly use an account that can become root (member of sudo,
+wheel, admin, adm, docker, lxd, incus, libvirt, disk, or with sudo rights).
+Atlas runs AI coding Sessions as this account, so anything that takes over a
+Session could take over the whole machine. On a terminal it says so and asks
+y/n; without one it stops unless `--allow-privileged-user` is given. root is
+always refused. A re-run or adopt keeps the account already in the units and
+warns once if it is privileged.
+
+Sign OpenCode in as that account (setup prints this after a fresh install):
+
+```sh
+sudo -u atlas env HOME=/var/lib/atlas/home XDG_CONFIG_HOME=/var/lib/atlas/opencode-config \
+  XDG_DATA_HOME=/var/lib/atlas/opencode-data XDG_STATE_HOME=/var/lib/atlas/opencode-state \
+  XDG_CACHE_HOME=/var/lib/atlas/opencode-cache opencode auth login
+```
 
 ## Answers file
 
@@ -51,12 +81,14 @@ JSON. Every key is optional; anything missing is asked for (or defaulted).
 
 | Key | Meaning | Default |
 |---|---|---|
-| `user` | Existing service account, not root (`useradd -m atlas`) | asked |
+| `user` | Service account, not root (see Service account) | `atlas` |
+| `createUser` | Create `user` if missing (`--create-user`) | asked; `false` without a terminal |
+| `allowPrivilegedUser` | Allow an account that can become root (`--allow-privileged-user`) | `false` |
 | `group` | Service group | group named like `user` |
 | `organization` | GitHub organization login | asked |
 | `appId` | GitHub App ID | asked |
 | `installationId` | GitHub App installation ID | asked |
-| `privateKeyPath` | App private key; copied to `/etc/atlas` | asked |
+| `privateKeyPath` | App private key; copied to `/etc/atlas/github-app.pem` | asked |
 | `origin` | Browser URL of Atlas (`https://…`) | the Tailscale URL |
 | `port` | UI port on 127.0.0.1 | `3000` |
 | `webhookPort` | Webhook port on 127.0.0.1 | `3001` |
@@ -65,11 +97,11 @@ JSON. Every key is optional; anything missing is asked for (or defaulted).
 | `tailscale` | `yes`, `no`, or `ask` | `ask` |
 
 ```json
-{ "user": "atlas", "organization": "acme", "appId": "12345", "installationId": "67890",
+{ "createUser": true, "organization": "acme", "appId": "12345", "installationId": "67890",
   "privateKeyPath": "/root/acme-atlas.pem", "tailscale": "yes" }
 ```
 
-Each key also has a flag (`--user`, `--group`, `--org`, `--app-id`,
+Each key also has a flag (`--user`, `--group`, `--create-user`, `--allow-privileged-user`, `--org`, `--app-id`,
 `--installation-id`, `--private-key`, `--origin`, `--port`, `--webhook-port`,
 `--git`, `--gh`, `--opencode`, `--data-dir`, `--tailscale`). Flags win over
 the file. Other flags: `--rotate-token`, `--rotate-webhook-secret`, `--adopt`,
@@ -84,8 +116,9 @@ Setup can share the UI on your tailnet with `tailscale serve` (never Funnel).
   given either, setup warns that `ATLAS_ORIGIN` is unset.
 - `ask` (default): asks y/n. With no terminal it skips and prints the command.
 - `yes`: serves without asking.
-- Something else already serves port 443: setup asks before replacing it, and
-  leaves it alone without a terminal.
+- Something else already serves port 443, or the current serve config cannot
+  be read: setup asks before replacing it, and leaves it alone without a
+  terminal.
 - Serve or HTTPS not enabled on the tailnet: setup prints the admin link and
   offers retry/skip.
 - When served, `ATLAS_ORIGIN` becomes `https://<machine>.<tailnet>.ts.net`
@@ -99,7 +132,8 @@ the GitHub App webhook at `https://<machine>.<tailnet>.ts.net:8443/webhooks/gith
 
 Safe to re-run (for example with a newer `--version`). Existing settings and
 secrets are kept; secrets change only with `--rotate-token` or
-`--rotate-webhook-secret`. It never moves `current` to an older Release.
+`--rotate-webhook-secret`. A config file that is not root-only is rebuilt:
+its values are kept, its file paths are reset to the fixed ones. It never moves `current` to an older Release.
 Changed files are backed up to `/var/backups/atlas/setup-<time>/` first, and
 services restart only when something changed. OpenCode is never restarted.
 
@@ -107,7 +141,9 @@ services restart only when something changed. OpenCode is never restarted.
 
 The older layout runs Atlas from a source tree with Bun. Setup detects it and
 moves it to the binary, keeping `/var/lib/atlas`, `/etc/atlas` secrets, the
-service user, ports and origin.
+service user, ports and origin. Secrets the service user owned become
+`root:<group> 0640`; a key outside `/etc/atlas` is read as the service user
+and copied to `/etc/atlas/github-app.pem`.
 
 1. Check no Session is preparing: open Atlas, or `systemctl status atlas`.
 2. Preview: run the installer with `--adopt --dry-run`. Nothing changes.
@@ -161,8 +197,15 @@ Check `rollback.codeOnlyCompatible` in that Release's metadata first
 | `/opt/atlas`, `/opt/atlas/releases/atlas-<tag>` | root, 0755 / 0555 |
 | `/etc/atlas` | root:group, 0750 |
 | `/etc/atlas/atlas.env` | root, 0600 |
-| `/etc/atlas/github.env`, App key, `supplier.key` | service user, 0600 |
-| `/etc/atlas/updater.key` | root:group, 0640 |
-| `/var/lib/atlas` | service user, 0700 |
+| `/etc/atlas/github.env`, `github-app.pem`, `supplier.key`, `updater.key` | root:group, 0640 |
+| `/var/lib/atlas` and its folders | service user, 0700 (created by that account) |
+| `/var/lib/atlas-updater` (updater state) | root:group, 0700 |
+| `/var/backups/atlas` | root, 0700 |
 | `/etc/systemd/system/atlas*.service`, `opencode.service` | root, 0644 |
 | `/usr/local/bin/atlas` | symlink to `/opt/atlas/current/atlas` |
+
+Root never follows a path the service account can change: setup refuses
+symlinks and unsafe parent folders, replaces files instead of changing them in
+place, and does everything inside the data folder as the service account.
+Limit: Sessions run as the same account as the credentials service, so a
+Session can read the App key and `supplier.key`.
