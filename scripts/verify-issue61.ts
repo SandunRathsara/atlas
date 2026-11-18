@@ -42,7 +42,8 @@ const token = "release-retention-fixture-token";
 const releaseTree = (tag: string, character: string) => fixtureReleaseFolder(releasesRoot, tag, character.repeat(40));
 
 const waitFor = async (predicate: () => boolean | Promise<boolean>, message: string) => {
-  for (let attempt = 0; attempt < 500; attempt += 1) {
+  // A wall-clock deadline, not a try count: a loaded CI machine can be slow.
+  for (const deadline = Date.now() + 15_000; Date.now() < deadline;) {
     if (await predicate()) return;
     await Bun.sleep(2);
   }
@@ -112,7 +113,9 @@ try {
     releasesRoot,
     currentPath,
     ...fixtureReleaseServer(releasesRoot),
-    activationTimeoutMs: 80,
+    // Long enough for the test's own work while a candidate validates (it
+    // builds a Release folder, then marks it healthy); 80 ms flaked under load.
+    activationTimeoutMs: 3_000,
     activationPollMs: 2,
     hostRuntime: () => ({ git: "2.55.0", gh: "2.100.0" }),
     listHelperReferences: () => readSessionHelperReferences({ registryPath, expectedOwnerUid: registryOwnerUid }),
