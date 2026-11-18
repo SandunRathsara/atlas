@@ -155,7 +155,7 @@ const specsUnavailable = (inbox: InboxContext) => {
     .map((state) => state?.failureReason?.trim() || "Specs have not synchronized yet.")
     .filter((reason, index, values) => values.indexOf(reason) === index);
   if (reasons.length === 0) return "";
-  return `<div class="ix-banner">${banner({ title: "Specs unavailable", body: `${reasons.join(" ")} Atlas keeps showing what it last saw.`, role: "alert" })}</div>`;
+  return `<div class="ix-banner">${banner({ title: "Specs unavailable", body: `${reasons.join(" ")} Atlas keeps showing what it last saw.` })}</div>`;
 };
 
 /** The empty state for this Inbox, or "" when there is something to list (or Specs could not load). */

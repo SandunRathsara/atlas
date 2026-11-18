@@ -155,6 +155,11 @@
       display: none;
     }
 
+    /* The sidebar already says "Specs unavailable" on desktop; say it once. */
+    .ix-banner {
+      display: none;
+    }
+
     .ix-desk {
       display: block;
     }
