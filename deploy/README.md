@@ -3,17 +3,16 @@
 This directory is the deployment seam for the private host. Nothing changes the
 host until an operator runs it. Atlas is one compiled binary per Release; the
 host needs no Bun. Installing and enabling the services is the job of
-`atlas setup` (Phase 4, not yet implemented); it renders the four units from
-`src/units.ts#renderUnits` and builds Release folders with
-`src/release-layout.ts#buildReleaseFolder`.
+`atlas setup` (see [`docs/INSTALL.md`](../docs/INSTALL.md)); it renders the
+units from `src/units.ts` and builds Release folders with
+`src/release-layout.ts#buildReleaseFolder`. The recovery tools here run through
+the binary as `atlas ops <tool>` and need no Bun or source tree.
 
-## Pins
+## Host tools
 
 Atlas's host-tool requirements are numeric minimums in `src/host-tools.ts`
-(Git `2.55.0`, gh `2.100.0`) and are published in each Release's metadata.
-`pins.env` remains only for the operator recovery tools here (snapshot capture,
-restore rehearsal, SQLite WAL probe), which still use a pinned host Bun. OpenCode is
-different: `ATLAS_OPENCODE_BINARY` follows the operator-controlled
+(Git `2.36.0`, gh `2.3.0`) and are published in each Release's metadata.
+There is no pins file. OpenCode is different: `ATLAS_OPENCODE_BINARY` follows the operator-controlled
 `/opt/atlas/tools/opencode/current` selection. Its server version is not an
 Atlas release pin. The Atlas release still installs the exact
 `@opencode/client` dependency (`2.3.2`) in `package.json`; staging a server
@@ -23,7 +22,8 @@ Published releases are produced from authoritative
 `vMAJOR.MINOR.PATCH+build.BUILD` tags by `.github/workflows/release.yml`. See
 [`docs/RELEASES.md`](../docs/RELEASES.md) for the immutable archive/metadata
 single-binary contract and maintainer procedure. `bun run build:release`
-produces the three Release assets from a clean checkout.
+produces the four Release assets (binary, `.sha256`, `atlas-release.json`,
+`install.sh`) from a clean checkout.
 
 `stage-opencode.sh <exact-server-version> <directory>` queries npm registry
 metadata for that exact `@opencode/cli-linux-x64` version, requires its
@@ -145,7 +145,7 @@ Limits (Waiting is still possible):
 | `/opt/atlas/services/releases/atlas-<tag>` | Immutable credential/updater support bundle (same folder shape), independent of Atlas release selection |
 | `/opt/atlas/services/current` | Atomically selected support-bundle symlink used when either surviving service next starts |
 | `<release>/RELEASE_METADATA.json` | Schema-2 metadata: identity, binary SHA-256/size, host-tool minimums, OpenCode client, rollback contract |
-| `/opt/atlas/tools/<tool>/<version>` | Operator-installed Git and GitHub CLI (and Bun for recovery tools); installed OpenCode server versions |
+| `/opt/atlas/tools/<tool>/<version>` | Optional operator-installed Git and GitHub CLI; installed OpenCode server versions |
 | `/opt/atlas/tools/opencode/current` | Operator-selected OpenCode server symlink used by the independent service |
 | `/var/lib/atlas` | One ordinary-directory Btrfs subvolume |
 | `/var/lib/atlas/atlas.sqlite` | Atlas SQLite database and matching WAL/journal |
@@ -336,7 +336,7 @@ build, fails closed and cannot be verified this way.
 runtime endpoints and saved credentials without starting a service, then
 re-installs only the credential-free headless OpenCode configuration.
 OpenCode 2.x keeps saved provider keys and OAuth tokens (including MCP OAuth)
-in `opencode.db`, so `scrub-opencode-credentials.ts` deletes those database
+in `opencode.db`, so `atlas ops scrub-opencode-credentials` deletes those database
 rows (`credential`, `account`, `control_account`, well-known `kv` entries),
 then `VACUUM`s and checkpoints the database so no copy survives in free pages
 or the WAL. That needs time and up to twice the database size in free space.
@@ -352,8 +352,7 @@ The following is a handoff, not an instruction for an agent to execute:
    `/etc/atlas`, `/var/backups/atlas`, and `/run/atlas` do not conflict. Leave
    the exFAT disk untouched. Record current OpenCode/agent PIDs and do not
    start the new unit while the existing live server remains active.
-2. Install Git and gh meeting the published minimums (and the pinned Bun for
-   the recovery tools). Run
+2. Install Git and gh meeting the published minimums. Run
    `stage-opencode.sh` with an explicitly chosen exact server version in a
    disposable isolated directory. Verify its registry integrity manifest,
    server-only immutable tree, reported version, and absence of service
@@ -368,10 +367,11 @@ The following is a handoff, not an instruction for an agent to execute:
    XDG locations, including database WAL/journal sidecars. Keep originals
    until validation succeeds. Do not trust/copy the old live service endpoint;
    let the new service register a fresh endpoint.
-4. Install a published Release with Phase 4 `atlas setup` (verifies the
-   binary against `atlas-release.json`, builds the Release folder, selects it,
-   installs the services and the headless OpenCode configuration without
-   restarting OpenCode). Separately install the staged OpenCode version,
+4. Install a published Release with `install.sh` / `atlas setup`
+   ([`docs/INSTALL.md`](../docs/INSTALL.md); use `--adopt` on a host with the
+   older layout). It verifies the binary against `atlas-release.json`, builds
+   the Release folder, selects it, and installs the services and the headless
+   OpenCode configuration without restarting a running OpenCode. Separately install the staged OpenCode version,
    atomically switch `/opt/atlas/tools/opencode/current`, and run its
    `--version`. Install the remaining units, run `systemctl daemon-reload`,
    then explicitly enable/start the independent units in that order. Atlas must

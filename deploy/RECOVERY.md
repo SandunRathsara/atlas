@@ -32,8 +32,8 @@ release automatically.
    `/var/backups/atlas` is a restricted ordinary directory on the same Btrfs
    filesystem. Leave unrelated disks and data untouched.
 2. Install `deploy/atlas-snapshot.marker` as
-   `/var/lib/atlas/.atlas-snapshot-v1`, owned by root and mode `0444`. Install
-   the four recovery service/timer units and `deploy/journald/atlas.conf` as
+   `/var/lib/atlas/.atlas-snapshot-v1`, owned by root and mode `0444`. `atlas setup`
+   installs the four recovery service/timer units on Btrfs; install `deploy/journald/atlas.conf` as
    `/etc/systemd/journald@atlas.conf`. Do not put secrets in unit arguments or
    logs. Verify the dedicated Atlas journal namespace is capped at 256 MiB/14
    days and the separate OpenCode file-log rotation is installed.
@@ -41,10 +41,10 @@ release automatically.
    capture `recovery-config/current`, then run:
 
    ```bash
-   sudo ATLAS_WRITERS_STOPPED=YES /opt/atlas/current/deploy/verify-sqlite-wal.sh
+   sudo ATLAS_WRITERS_STOPPED=YES atlas ops verify-sqlite-wal
    ```
 
-   This records the actual SQLite versions embedded in pinned Bun and the
+   This records the actual SQLite versions embedded in Atlas's own runtime and the
    currently selected OpenCode executable, plus that executable's observed
    version, only if they include SQLite's accepted WAL-reset fix. Host
    `sqlite3`, WAL mode, and FULL/NORMAL synchronous settings are not substitutes.
@@ -79,14 +79,15 @@ two private manifests without prompts, file contents, tokens, or keys:
   before the snapshot so the restore is compared with known state.
 
 For example, while writers are stopped, choose at least one known saved file
-and capture all associations with the pinned Bun runtime (redirect both outputs
-to private mode-`0600` files):
+and capture all associations with the `sqlite3` command-line shell (for
+example `apt install sqlite3`; redirect both outputs to private mode-`0600`
+files):
 
 ```bash
 cd /var/lib/atlas
 sha256sum -- sessions/SESSION_ID/PATH_TO_KNOWN_FILE > /root/atlas-recovery/files.sha256
-/opt/atlas/tools/bun/1.3.14/bin/bun --eval \
-  'import { Database } from "bun:sqlite"; const d=new Database("/var/lib/atlas/atlas.sqlite",{readonly:true}); for(const r of d.query("SELECT atlas_id,opencode_session_id,COALESCE(initial_message_id,char(45)) AS message_id FROM sessions WHERE opencode_session_id IS NOT NULL ORDER BY atlas_id").all()) console.log(`${r.atlas_id}\t${r.opencode_session_id}\t${r.message_id}`); d.close()' \
+sqlite3 -readonly -separator "$(printf '\t')" /var/lib/atlas/atlas.sqlite \
+  "SELECT atlas_id, opencode_session_id, COALESCE(initial_message_id, '-') FROM sessions WHERE opencode_session_id IS NOT NULL ORDER BY atlas_id" \
   > /root/atlas-recovery/history.tsv
 chmod 0600 /root/atlas-recovery/files.sha256 /root/atlas-recovery/history.tsv
 ```
@@ -94,14 +95,14 @@ chmod 0600 /root/atlas-recovery/files.sha256 /root/atlas-recovery/history.tsv
 Then stop Atlas/OpenCode and all Agent writers, set `ATLAS_ADMISSION_PAUSED=1`
 in the live Atlas environment, and restart Atlas only if a private read-only UI
 is needed to confirm the pause. Do not restart OpenCode. Confirm encryption and
-recovery-key access, the selected release, pinned tools, and the selected
+recovery-key access, the selected release, host tools, and the selected
 OpenCode server. Run against an
 empty direct child of a dedicated same-filesystem rehearsal root:
 
 ```bash
 sudo install -d -m 0700 /var/lib/atlas-restore-rehearsals
 sudo ATLAS_WRITERS_STOPPED=YES ATLAS_ADMISSION_DISABLED=YES \
-  /opt/atlas/current/deploy/restore-rehearsal.sh \
+  atlas ops restore-rehearsal \
   /var/backups/atlas/atlas-v1-YYYYMMDDTHHMMSSZ \
   /var/lib/atlas-restore-rehearsals/rehearsal-YYYYMMDD \
   /root/atlas-recovery/files.sha256 \
@@ -173,7 +174,7 @@ maintenance required or for recovery outside the normal web contract.
    release and tools** to a staged writable target before selection. Preserve
    damaged/current data when feasible. Recreate OpenCode discovery; do not
    trust restored service registration. Before starting OpenCode, run
-   `sudo /opt/atlas/current/deploy/install-opencode-config.sh /var/lib/atlas/opencode-config`
+   `sudo atlas ops install-opencode-config /var/lib/atlas/opencode-config`
    so the headless configuration matches the selected release. The OpenCode
    unit refuses to start without it. Reconcile GitHub and OpenCode with
    admission closed because snapshots cannot undo external GitHub effects.

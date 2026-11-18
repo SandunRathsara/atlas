@@ -20,6 +20,15 @@ The command downloads one `atlas` binary, checks it, and runs `sudo atlas setup`
 | Install script scope | Binary plus setup wizard. The wizard checks git, gh and OpenCode and says what is missing. It does not install them. |
 | Owner's existing server | Reinstall by hand with the new script, keeping `/var/lib/atlas`. No bridge release. |
 
+### Owner changes during Phase 4 (2026-11-18)
+
+These override the matching lines further down.
+
+1. **Tailscale is in scope.** `atlas setup --tailscale=yes|no|ask` may run `tailscale serve` for the UI (never Funnel; it only prints the Funnel hint for webhooks). It asks an explicit y/n first and never replaces an existing serve config without asking.
+2. **Missing OpenCode is a warning,** not a stop. Missing or too-old systemd, git or gh still stop setup before any change.
+3. **Tree-release code and `deploy/bootstrap.sh` were deleted in Phase 3,** not Phase 5. Phase 4 also removed `deploy/pins.env` and the checked-in maintenance units.
+4. **Tool minimums lowered** to git 2.36.0 and gh 2.3.0 (evidence in `src/host-tools.ts`), so stock Debian 12 and Ubuntu 24.04 packages work.
+
 ## What stays the same
 
 - Release identity: `vX.Y.Z+build.N`, global build numbers, immutable Releases.
@@ -80,15 +89,16 @@ The GitHub Release ships:
    - refuses anything other than Linux x64 with glibc
    - downloads the latest stable `atlas-linux-x64`, or a version passed as an argument
    - verifies the SHA-256 and stops on mismatch
-   - creates the release folder and the symlinks
-   - runs `sudo atlas setup` when there is a terminal; otherwise prints that command
+   - runs `sudo atlas setup --source-dir <download>`; with no terminal and no answers it keeps the files and prints that command
+   - never creates the release folder itself (setup does)
 2. `atlas setup` (root):
-   - **Checks:** systemd, git, gh and OpenCode are present at the expected versions. Anything missing is listed with a fix-it hint, and setup stops before changing anything.
+   - **Checks:** systemd, git and gh are present at the minimum versions. Anything missing is listed with a fix-it hint, and setup stops before changing anything. A missing OpenCode is a warning.
    - **Asks:** service user, GitHub org, GitHub App ID, installation ID and private-key path, public origin URL, ports.
    - **Generates:** shared token and webhook secret.
    - **Writes:** `/etc/atlas/atlas.env` and `/etc/atlas/github.env` (`0600`), data folders, systemd units (embedded in the binary), and the headless OpenCode config.
    - **Starts and checks:** starts the services, then checks `/health`.
-   - **Prints:** the URL, the token, and the Tailscale Serve/Funnel commands. It never changes Tailscale itself.
+   - **Tailscale (optional):** after a y/n, `tailscale serve` for the UI and `ATLAS_ORIGIN` from the tailnet name.
+   - **Prints:** the URL, the token (once), and the Funnel hint for webhooks.
 3. **Adopt mode:** if `/etc/atlas` and `/var/lib/atlas` already exist, setup keeps them. It only replaces the units and the release layout, keeps a backup of the old units, and stops the old services first. This is how the owner's server moves over.
 
 ## Phases
@@ -98,14 +108,14 @@ Each phase ends green on its checks and is shippable on its own.
 1. **Compile.** Add `src/cli.ts` and fix items 1–6. `bun build --compile` produces a binary that runs `atlas serve` locally from any folder. Existing tree releases keep working.
 2. **Publish.** Change `release.yml` and `scripts/build-release.sh` to build and smoke-test the binary and publish the 4 files above. Move release metadata to schema 2.
 3. **Self-update on the binary.** Fix items 7–9. Staging downloads the binary, verifies it, and creates the release folder with shims. Update the units. Port the verify scripts (`verify:issue55`, `57`, `58`, `59`, `61`).
-4. **Installer.** Add `install.sh` and `atlas setup` with fresh and adopt modes. Test on a clean VM and on a copy of the owner's server.
-5. **Move the owner's server, then clean up.** Run adopt mode on the owner's server. After it is healthy, delete the tree-release code, `deploy/bootstrap.sh`, `deploy/stage-release.sh` and the Bun pins. Update the docs.
+4. **Installer.** Add `install.sh` and `atlas setup` with fresh and adopt modes. Tested in Docker systemd containers (Ubuntu 24.04, Debian 12) and on a modelled copy of the owner's old layout (`scripts/e2e-install-docker.sh`). Done.
+5. **Move the owner's server.** Run adopt mode on the owner's server (`docs/INSTALL.md`). After it is healthy, remove the old Release trees and Bun tools by hand.
 
 ## Decisions to record (ADR-0003, needs approval)
 
 - **Supersedes ADR-0002 §2 (packaging):** a compiled binary replaces the source tree, and the host no longer needs Bun.
 - **Supersedes ADR-0002 §6 (bootstrap):** `install.sh` and `atlas setup` replace `deploy/bootstrap.sh`.
-- **DOMAIN.md non-goal "Does not automatically provision the host":** narrowed. Setup writes Atlas's own config, units and folders. It still does not install git, gh, OpenCode or OS packages, and does not change Tailscale or the firewall.
+- **DOMAIN.md non-goal "Does not automatically provision the host":** narrowed. Setup writes Atlas's own config, units and folders, and (after asking) Tailscale Serve. It still does not install git, gh, OpenCode or OS packages, and does not change the firewall or Funnel.
 - **Service user is configurable** instead of `omega`.
 
 ## Build contract (binding)
@@ -120,11 +130,11 @@ Decided on 2026-11-18. Every phase follows this so the parts fit together.
 - **One implementation of the release folder.** A single TypeScript function builds `/opt/atlas/releases/atlas-<tag>/` (binary, metadata, `bin/` shims). Updater staging and `atlas setup` both call it. `install.sh` never lays out folders.
 - **`install.sh` is thin:** platform check, download, SHA-256 check, then hand off to `atlas setup`. POSIX `sh`, no bashisms.
 - **`atlas setup` is testable:** every answer can come from flags or an answers file (no TTY needed), and a root-prefix option lets checks run it in a temp folder without root and with `systemctl` faked.
-- **Tool versions:** minimum versions for git and gh (today's pins become the minimums). No Bun on the host. OpenCode stays diagnostic-only.
+- **Tool versions:** minimum versions for git (2.36.0) and gh (2.3.0). No Bun on the host. OpenCode stays diagnostic-only.
 - **Service user:** chosen in setup, never hard-coded. systemd units are generated from templates embedded in the binary.
 - **Root updater rule:** never execute a binary before its SHA-256 matches the published checksum. Run candidates as the service user, never as root.
 - **Release pipeline:** manual `workflow_dispatch` with a `patch`/`minor`/`major` bump, an allowlist of releasers (`SandunRathsara`), the full check gate first, a build job with a read-only token, and a separate publish job that re-checks the SHA-256 and runs no repo code. Every Action is pinned to a commit SHA. `check.yml` runs fast checks on PRs and full checks plus a throwaway packaging check on `main`.
-- **Out of scope:** musl/Alpine, arm64, installing git/gh/OpenCode, touching Tailscale or the firewall, moving the owner's server (the owner runs adopt mode by hand).
+- **Out of scope:** musl/Alpine, arm64, installing git/gh/OpenCode, Tailscale Funnel or the firewall, moving the owner's server (the owner runs adopt mode by hand).
 
 ## Risks
 

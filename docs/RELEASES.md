@@ -45,7 +45,7 @@ artifacts and never creates a disposable GitHub Release.
 
 `bun run build:release -- <tag> <sha> <out>` (`scripts/build-release.ts`) is
 the only producer. It refuses a dirty checkout or a SHA other than `HEAD`,
-needs no secrets, and writes exactly the three assets below.
+needs no secrets, and writes exactly the four assets below.
 `scripts/verify-release-artifact.sh <tag> <sha> <out>` builds them, checks the
 sidecar, runs the binary with no Bun on `PATH`, and checks its `/health`
 identity.
@@ -58,6 +58,9 @@ Every GitHub Release contains these public assets:
 - `atlas-linux-x64` — the compiled Atlas binary (all subcommands, CSS, and
   helpers embedded).
 - `atlas-linux-x64.sha256` — one line: `<sha256-hex>  atlas-linux-x64`.
+- `install.sh` — the installer, a byte copy of the repo's `install.sh`. It
+  downloads the three files above, checks the SHA-256, and runs `atlas setup`.
+  Install and adopt steps: [`INSTALL.md`](INSTALL.md).
 
 A consumer reads metadata first and requires `schemaVersion: 2`. Schema 1
 (tarball Releases) and unknown schemas are refused with a clear message. The
@@ -82,7 +85,7 @@ the file is ever executed. Example (real build output, fixture SHA):
     "os": "linux",
     "architecture": "x64"
   },
-  "minimumHostTools": { "git": "2.55.0", "gh": "2.100.0" },
+  "minimumHostTools": { "git": "2.36.0", "gh": "2.3.0" },
   "openCodeClient": "2.3.2",
   "rollback": {
     "codeOnlyCompatible": true,
