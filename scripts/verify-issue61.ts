@@ -261,7 +261,8 @@ try {
     const invalid = structuredClone(validState);
     corrupt(invalid);
     const invalidStatePath = join(root, `invalid-update-state-${index}.json`);
-    writeFileSync(invalidStatePath, JSON.stringify(invalid));
+    // 0600 explicitly: a group-writable state file is (rightly) ignored, not parsed.
+    writeFileSync(invalidStatePath, JSON.stringify(invalid), { mode: 0o600 });
     assert.throws(() => createUpdaterService({ statePath: invalidStatePath }), /Updater .*state is invalid/, "all persisted updater result, suppression, and cleanup tags must cross the validated ReleaseTag boundary");
   }
 

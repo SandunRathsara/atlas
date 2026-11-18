@@ -29,6 +29,11 @@ import type { RunAs, RunResult, SetupHost } from "../src/setup/host.ts";
 import { runSetup } from "../src/setup/run.ts";
 const clientManifest = clientManifestJson as { version: string };
 
+// The fake root models a host where root (umask 022) made every folder and
+// file. Fixtures here use default modes, so pin the umask: under 002 they come
+// out group-writable and setup (rightly) refuses them. Setup itself always
+// asks for explicit modes, which a umask can only narrow.
+process.umask(0o022);
 const base = join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "atlas-verify-setup");
 const removeBase = () => {
   // Release folders are read-only; make them writable before removing.

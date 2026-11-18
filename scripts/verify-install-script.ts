@@ -43,11 +43,14 @@ const docker = which("docker");
 syntax("sh -n", ["sh", "-n", script]);
 syntax("dash -n", which("dash") ? ["dash", "-n", script]
   : docker ? [docker, "run", "--rm", "-v", `${script}:/install.sh:ro`, "debian:12", "dash", "-n", "/install.sh"] : null);
+// Bun.spawnSync throws on a missing program, so look each one up first; a
+// missing shellcheck is a failed check, not a crash.
 const shellcheck = (() => {
-  const plain = Bun.spawnSync(["shellcheck", "--version"], { stdout: "ignore", stderr: "ignore" });
-  if (plain.exitCode === 0) return ["shellcheck"];
-  const mise = Bun.spawnSync(["mise", "x", "aqua:koalaman/shellcheck@0.11.0", "--", "shellcheck", "--version"], { stdout: "ignore", stderr: "ignore" });
-  if (mise.exitCode === 0) return ["mise", "x", "aqua:koalaman/shellcheck@0.11.0", "--", "shellcheck"];
+  const plain = Bun.which("shellcheck");
+  if (plain && Bun.spawnSync([plain, "--version"], { stdout: "ignore", stderr: "ignore" }).exitCode === 0) return [plain];
+  const miseBinary = Bun.which("mise");
+  const mise = miseBinary ? [miseBinary, "x", "aqua:koalaman/shellcheck@0.11.0", "--", "shellcheck"] : null;
+  if (mise && Bun.spawnSync([...mise, "--version"], { stdout: "ignore", stderr: "ignore" }).exitCode === 0) return mise;
   return docker ? [docker, "run", "--rm", "-v", `${script}:/install.sh:ro`, "koalaman/shellcheck:stable"] : null;
 })();
 syntax("shellcheck -s sh", shellcheck && (shellcheck[0] === docker ? [...shellcheck, "-s", "sh", "/install.sh"] : [...shellcheck, "-s", "sh", script]));
