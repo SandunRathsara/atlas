@@ -260,6 +260,9 @@
     background: var(--a-btn);
     color: var(--a-btn-text);
     padding: 0.5rem 0.75rem;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
     font-weight: 600;
   }
 
@@ -805,10 +808,10 @@
     font-size: 14px;
   }
 
-  @media (pointer: coarse) {
+  @media (pointer: coarse), (max-width: 759.98px) {
     .ax-seg > a,
     .ax-seg > label {
-      min-height: 40px;
+      min-height: 44px;
     }
   }
 
@@ -992,6 +995,21 @@
       content: "";
       position: absolute;
       inset: -5px 0;
+    }
+  }
+
+  /* Small text links keep their look but get a 44px hit area on touch screens. */
+  @media (pointer: coarse), (max-width: 759.98px) {
+    .ax-section-more,
+    .ls-more {
+      position: relative;
+    }
+
+    .ax-section-more::after,
+    .ls-more::after {
+      content: "";
+      position: absolute;
+      inset: -13px -6px;
     }
   }
 

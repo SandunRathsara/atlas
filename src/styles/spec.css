@@ -269,6 +269,8 @@
 
   .sp-sheetbar-go {
     justify-self: end;
+    justify-content: flex-end;
+    min-width: 44px;
     font-weight: 650;
   }
 
@@ -297,6 +299,11 @@
 
   @media (max-width: 759.98px) {
     .sp-start-page .ax-bar {
+      display: none;
+    }
+
+    /* The sheet bar's Cancel replaces the modal close button on phones. */
+    .sp-start-page .sp-modal-close {
       display: none;
     }
 
