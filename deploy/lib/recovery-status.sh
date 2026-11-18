@@ -60,16 +60,44 @@ atlas_status_load() {
   (( count == 11 )) || atlas_status_defaults
 }
 
+# Root runs this from the Btrfs timers, but the status file lives in the
+# service user's data folder. Only the folder is resolved (a symlink at the
+# status path is never followed), and when the folder is not root's, the read
+# and write run as its owner, so root never acts on a path that account can
+# swap.
 atlas_status_write() {
-  atlas_status_path=$(realpath -m "${ATLAS_RECOVERY_STATUS_PATH:-/var/lib/atlas/recovery-status}")
-  [[ "$atlas_status_path" == /* && "$atlas_status_path" != / ]] || return 1
-  local directory lock temporary pair
-  directory=$(dirname "$atlas_status_path")
-  [[ -d "$directory" && ! -L "$directory" && ! -L "$atlas_status_path" ]] || return 1
+  local requested name directory lock owner group mode
+  requested=${ATLAS_RECOVERY_STATUS_PATH:-/var/lib/atlas/recovery-status}
+  name=$(basename -- "$requested")
+  [[ "$requested" == /* && "$name" != . && "$name" != .. && "$name" != / ]] || return 1
+  directory=$(realpath -e -- "$(dirname -- "$requested")") || return 1
+  [[ -d "$directory" && "$directory" != / ]] || return 1
   lock=$(realpath -m "${ATLAS_RECOVERY_STATUS_LOCK_PATH:-/run/lock/atlas-recovery-status.lock}")
   [[ "$lock" == /* && "$lock" != / && -d "$(dirname "$lock")" && ! -L "$lock" ]] || return 1
   exec 9>"$lock"
   flock -x 9
+  if (( EUID == 0 )); then
+    owner=$(stat -c %u -- "$directory")
+    group=$(stat -c %g -- "$directory")
+    if [[ "$owner" != 0 ]]; then
+      setpriv --reuid="$owner" --regid="$group" --clear-groups --inh-caps=-all -- \
+        /usr/bin/env -i PATH=/usr/bin:/bin LANG=C \
+        bash -c "set -euo pipefail; $(declare -f atlas_status_defaults atlas_status_valid_value atlas_status_load atlas_status_write_locked)"'
+atlas_status_write_locked "$@"' atlas-status "$directory/$name" "$@"
+      return
+    fi
+    mode=$(stat -c %a -- "$directory")
+    (( (8#$mode & 8#022) == 0 )) || return 1
+  fi
+  atlas_status_write_locked "$directory/$name" "$@"
+}
+
+# Caller holds the lock and has checked the folder. Args: <status path> <kind> <values...>
+atlas_status_write_locked() {
+  atlas_status_path=$1
+  shift
+  local directory temporary pair
+  directory=$(dirname -- "$atlas_status_path")
   atlas_status_load
 
   case "$1" in
@@ -122,5 +150,5 @@ atlas_status_write() {
   } > "$temporary"
   chmod 0640 "$temporary"
   if (( EUID == 0 )); then chown "root:${ATLAS_RECOVERY_STATUS_GROUP:-omega}" "$temporary"; fi
-  mv -f -- "$temporary" "$atlas_status_path"
+  mv -f -T -- "$temporary" "$atlas_status_path"
 }
