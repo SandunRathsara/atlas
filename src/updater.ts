@@ -1101,9 +1101,11 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
           if (newline < 0) return;
           handled = true;
           const respond = async (): Promise<UpdaterResponse> => {
+            let operation: unknown;
             try {
               const request = JSON.parse(buffer.slice(0, newline)) as UpdaterRequest;
               if (!request || typeof request !== "object" || typeof request.key !== "string" || !keysMatch(request.key, key)) throw new Error();
+              operation = request.operation;
               switch (request.operation) {
                 case "status": return { ok: true, status };
                 case "set_policy": return { ok: true, status: setPolicy(request.policy) };
@@ -1113,7 +1115,13 @@ export const createUpdaterService = (options: UpdaterServiceOptions = {}) => {
                 case "abandon_activation": return { ok: true, status: abandonActivation(request.tag, request.message) };
                 default: return { ok: false, error: "Updater request was rejected." };
               }
-            } catch {
+            } catch (error) {
+              // The reply stays opaque, but an operator needs the reason (not
+              // newer, GitHub unreachable, bad metadata…): log it for requests
+              // that carried the right key, so strangers cannot fill the journal.
+              if (operation !== undefined) {
+                console.error(`Atlas updater refused ${JSON.stringify(String(operation)).slice(0, 40)}: ${error instanceof Error ? error.message : String(error)}`);
+              }
               return { ok: false, error: "Updater request was rejected." };
             }
           };
