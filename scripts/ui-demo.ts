@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app.ts";
-import { GitHubError, type GitHubClient, type GitHubIssue, type GitHubPullRequest, type GitHubRepository, type GitHubStack } from "../src/github.ts";
+import { type GitHubClient, type GitHubIssue, type GitHubPullRequest, type GitHubRepository, type GitHubStack } from "../src/github.ts";
 import { visitCookie } from "../src/inbox-state.ts";
 import { createPersistence, type RefreshView, type SessionTarget } from "../src/persistence.ts";
 import { parseReleaseTag, type PublishedReleaseIdentity, type ReleaseMetadata } from "../src/release.ts";
@@ -339,8 +339,10 @@ const github: GitHubClient = {
   listInstallationRepositories: async () => inventory.map((item) => ({ ...item })),
   hasLabel: async (repository) => repository.id !== R.risk.id,
   listIssues: async (repository) => (issues[repository.id] ?? []).map((item) => ({ ...item })),
+  // PR failures are applied by `refreshFor` (failViews), not thrown here: a thrown error would put the real
+  // coordinator into its retry backoff, and during backoff the Start page honestly answers 503 (issue #32),
+  // which made "PR check failed" flip between 200 and 503 depending on timing.
   listPullRequests: async (repository) => {
-    if (prFailures.has(repository.id)) throw new GitHubError("GitHub returned 502", { kind: "temporary", status: 502 });
     return (pullRequests[repository.id] ?? []).map((item) => ({ ...item }));
   },
   listStacks: async (repository) => (stacks[repository.id] ?? []).map((item) => ({ ...item })),
@@ -1063,8 +1065,8 @@ const groups = (): Array<[string, DemoLink[]]> => [
     ["Start Session (standalone PR choices)", `${specUrl(R.ledger, 13)}/sessions/new`],
     ["Start Session (PR check failed)", `${specUrl(R.dashboard, 32)}/sessions/new`],
     ["Duplicate start (409)", "/__demo/act/duplicate-start", "real POST for a Spec that already has a Running Session"],
-    ["Start blocked: archived Repository", `${specUrl(R.infra, 4)}/sessions/new`],
-    ["Start blocked: access unknown", `${specUrl(R.fraud, 3)}/sessions/new`],
+    ["Start blocked: archived Repository (409)", `${specUrl(R.infra, 4)}/sessions/new`, "returns 409 by design: archived Repositories can't start Sessions"],
+    ["Start blocked: access unknown (503)", `${specUrl(R.fraud, 3)}/sessions/new`, "returns 503 by design while fraud-rules access is unknown: the live GitHub check fails; 200 after \"make it OK\""],
     ["Spec in archived Repository", specUrl(R.infra, 4)],
   ]],
   ["Repositories", [
