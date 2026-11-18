@@ -47,8 +47,8 @@
   --a-side: #E9E9EE;
   --a-bar: rgb(242 242 247 / 0.78);
   --a-text: #0B0B0D;
-  --a-sec: #6C6C70;
-  --a-ter: #737378;
+  --a-sec: #636366;
+  --a-ter: #67676C;
   --a-sep: #E2E2E7;
   --a-ring: #8E8E93;
   --a-fill: #E6E6EB;
@@ -61,13 +61,13 @@
   --a-mono: #3C3C43;
   --a-focus: #0A63D8;
   --a-shadow: 0 12px 40px rgb(0 0 0 / 0.18);
-  --t-running: #0B7FB0;
-  --t-waiting: #B35600;
-  --t-succeeded: #248A3D;
-  --t-failed: #D70015;
-  --t-idle: #6C6C70;
-  --t-queued: #6C6C70;
-  --t-none: #6C6C70;
+  --t-running: #086C96;
+  --t-waiting: #9A4A00;
+  --t-succeeded: #1E7A34;
+  --t-failed: #C20012;
+  --t-idle: #636366;
+  --t-queued: #636366;
+  --t-none: #636366;
   --t-merged: #8944AB;
   --f-running: #32ADE6;
   --f-waiting: #FF9500;
@@ -78,6 +78,7 @@
   --f-none: #012B68;
   --f-merged: #AF52DE;
   --a-hero: linear-gradient(180deg, #FFF4E5, #FFFFFF 70%);
+  --a-danger: #C20012;
 }
 
 [data-theme="atlas-dark"] {
@@ -88,7 +89,7 @@
   --a-bar: rgb(0 0 0 / 0.72);
   --a-text: #FFFFFF;
   --a-sec: #98989F;
-  --a-ter: #86868B;
+  --a-ter: #8E8E93;
   --a-sep: #2E2E31;
   --a-ring: #6E6E73;
   --a-fill: #2C2C2E;
@@ -118,6 +119,7 @@
   --f-none: #2D63C0;
   --f-merged: #BF5AF2;
   --a-hero: linear-gradient(180deg, #2A1D0B, #1C1C1E 70%);
+  --a-danger: #D70015;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -129,7 +131,7 @@
     --a-bar: rgb(0 0 0 / 0.72);
     --a-text: #FFFFFF;
     --a-sec: #98989F;
-    --a-ter: #86868B;
+    --a-ter: #8E8E93;
     --a-sep: #2E2E31;
     --a-ring: #6E6E73;
     --a-fill: #2C2C2E;
@@ -159,6 +161,7 @@
     --f-none: #2D63C0;
     --f-merged: #BF5AF2;
     --a-hero: linear-gradient(180deg, #2A1D0B, #1C1C1E 70%);
+  --a-danger: #D70015;
   }
 }
 
@@ -556,6 +559,11 @@
 
   .ax-live-item[aria-current] {
     background: var(--a-sel);
+  }
+
+  /* Time and "Not live" on the selection tint need the stronger grey for AA. */
+  .ax-live-item[aria-current] .ax-live-w {
+    color: var(--a-sec);
   }
 
   .ax-live-t {
@@ -1261,7 +1269,7 @@
   }
 
   .ax-btn-danger-fill {
-    background: var(--f-failed);
+    background: var(--a-danger);
     color: #FFFFFF;
   }
 
