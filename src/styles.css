@@ -45,7 +45,7 @@
   --a-bg: #F2F2F7;
   --a-card: #FFFFFF;
   --a-side: #E9E9EE;
-  --a-bar: rgb(242 242 247 / 0.78);
+  --a-bar: rgb(242 242 247 / 0.9);
   --a-text: #0B0B0D;
   --a-sec: #636366;
   --a-ter: #67676C;
@@ -86,7 +86,7 @@
   --a-bg: #000000;
   --a-card: #1C1C1E;
   --a-side: #121214;
-  --a-bar: rgb(0 0 0 / 0.72);
+  --a-bar: rgb(0 0 0 / 0.86);
   --a-text: #FFFFFF;
   --a-sec: #98989F;
   --a-ter: #8E8E93;
@@ -128,7 +128,7 @@
     --a-bg: #000000;
     --a-card: #1C1C1E;
     --a-side: #121214;
-    --a-bar: rgb(0 0 0 / 0.72);
+    --a-bar: rgb(0 0 0 / 0.86);
     --a-text: #FFFFFF;
     --a-sec: #98989F;
     --a-ter: #8E8E93;
@@ -1361,9 +1361,10 @@
     color: var(--a-text);
   }
 
+  /* Same 2px focus outline as every other control. */
   .ax-input:focus-visible {
-    outline: none;
-    box-shadow: inset 0 0 0 2px var(--a-btn);
+    outline: 2px solid var(--a-focus);
+    outline-offset: 2px;
   }
 
   .ax-input[aria-invalid="true"] {
