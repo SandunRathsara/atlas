@@ -66,6 +66,7 @@ import {
 import { renderAllPullRequestsPage } from "./views/pull-requests.ts";
 import { renderInboxList, renderInboxScreen } from "./views/inbox.ts";
 import { renderMorePage, renderShell } from "./views/shell.ts";
+import { logo } from "./views/icons.ts";
 import { DEVELOPMENT_RELEASE_IDENTITY, parseReleaseTag, type ReleaseIdentity } from "./release.ts";
 import { createUnavailableUpdateService, type UpdateService } from "./update-discovery.ts";
 
@@ -570,6 +571,17 @@ export const createApp = (options: AppOptions) => {
       headers: {
         "Cache-Control": "public, max-age=3600",
         "Content-Type": "text/javascript; charset=UTF-8",
+      },
+    }),
+  );
+
+  // Tab icon: the Atlas mark (no favicon.ico request, so no console 404).
+  const tabIcon = logo(32, 7).replace("<svg ", '<svg xmlns="http://www.w3.org/2000/svg" ');
+  app.get("/assets/icon.svg", () =>
+    new Response(tabIcon, {
+      headers: {
+        "Cache-Control": "public, max-age=604800",
+        "Content-Type": "image/svg+xml",
       },
     }),
   );
