@@ -1,4 +1,10 @@
 @import "tailwindcss";
+@import "./styles/inbox.css";
+@import "./styles/session.css";
+@import "./styles/spec.css";
+@import "./styles/repos.css";
+@import "./styles/prs.css";
+@import "./styles/lists.css";
 
 /* daisyUI stays for legacy markup; its colour tokens are set below from the Look A tokens. */
 @plugin "daisyui" {
