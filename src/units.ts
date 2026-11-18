@@ -166,7 +166,8 @@ export const renderUnits = (options: UnitOptions): Record<UnitName, string> => {
       "User=root",
       `Group=${group}`,
       `WorkingDirectory=${services}`,
-      `Environment=ATLAS_UPDATE_STATE_PATH=${data}/update-state.json`,
+      // Root-owned state; the service user cannot write it (systemd StateDirectory).
+      "Environment=ATLAS_UPDATE_STATE_PATH=/var/lib/atlas-updater/update-state.json",
       "Environment=ATLAS_UPDATER_SOCKET=/run/atlas-updater/updater.sock",
       `Environment=ATLAS_UPDATER_KEY_PATH=${configDir}/updater.key`,
       `Environment=ATLAS_RELEASES_ROOT=${prefix}/releases`,
@@ -184,13 +185,16 @@ export const renderUnits = (options: UnitOptions): Record<UnitName, string> => {
       "UMask=0007",
       "RuntimeDirectory=atlas-updater",
       "RuntimeDirectoryMode=0750",
+      "StateDirectory=atlas-updater",
+      "StateDirectoryMode=0700",
       "NoNewPrivileges=true",
       "PrivateTmp=true",
       "ProtectHome=true",
       "ProtectSystem=strict",
       // The prefix itself must be writable: `current` is swapped by renaming a
-      // temporary symlink inside it. OpenCode tools stay read-only.
-      `ReadWritePaths=${prefix} ${data} /run/atlas-updater`,
+      // temporary symlink inside it. OpenCode tools stay read-only, and the
+      // service-owned data folder is read-only (only the scope registry is read).
+      `ReadWritePaths=${prefix} /run/atlas-updater`,
       `ReadOnlyPaths=-${prefix}/tools`,
       "LimitNOFILE=65536",
       "",

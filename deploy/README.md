@@ -149,7 +149,7 @@ Limits (Waiting is still possible):
 | `/opt/atlas/tools/opencode/current` | Operator-selected OpenCode server symlink used by the independent service |
 | `/var/lib/atlas` | One ordinary-directory Btrfs subvolume |
 | `/var/lib/atlas/atlas.sqlite` | Atlas SQLite database and matching WAL/journal |
-| `/var/lib/atlas/update-state.json` | Durable installation policy, staging/activation/cleanup target, progress, result, previous release, and failed-tag suppression |
+| `/var/lib/atlas-updater/update-state.json` (root-only, 0700 dir; an old `/var/lib/atlas/update-state.json` is ignored) | Durable installation policy, staging/activation/cleanup target, progress, result, previous release, and failed-tag suppression |
 | `/var/lib/atlas/sessions/<atlas-id>` | Full private clone per Session |
 | `/var/lib/atlas/opencode-data/opencode` | OpenCode data, database, logs, shells, snapshots, tool output |
 | `/var/lib/atlas/opencode-data/opencode/log` | OpenCode file logs; human-installed size/retention bound |
@@ -277,7 +277,7 @@ without deleting live files:
 ```bash
 sudo readlink -f /opt/atlas/current
 sudo find /opt/atlas/releases -mindepth 1 -maxdepth 1 -type d -print | sort
-sudo jq '{activation, cleanup}' /var/lib/atlas/update-state.json
+sudo jq '{activation, cleanup}' /var/lib/atlas-updater/update-state.json
 sudo jq -r '.scopes[].helperPaths[]?' /var/lib/atlas/session-scopes.json | sort -u
 ```
 

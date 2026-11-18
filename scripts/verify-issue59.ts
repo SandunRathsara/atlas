@@ -28,7 +28,7 @@ import {
   type UpdaterClient,
 } from "../src/updater.ts";
 import { checkActivationHealth } from "../src/updater-server.ts";
-import { fixtureMetadata, fixtureReleaseFolder, verifyBinary, verifyMetadata } from "./verify-binaries.ts";
+import { fixtureMetadata, fixtureReleaseFolder, fixtureReleaseServer, verifyBinary, verifyMetadata } from "./verify-binaries.ts";
 
 // One real compiled Release (~100 MB) lives here, so stay off the small /tmp.
 const cacheRoot = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
@@ -87,6 +87,7 @@ const createHost = async (name: string, candidate: ReleaseMetadata, options: Hos
     keyPath,
     releasesRoot,
     currentPath,
+    ...fixtureReleaseServer(releasesRoot),
     activationTimeoutMs: options.timeoutMs ?? 25,
     activationPollMs: 2,
     hostRuntime: options.hostRuntime ?? (() => ({ git: "2.55.0", gh: "2.100.0" })),
@@ -415,6 +416,17 @@ try {
   assert.equal(rollbackFailure.state, "rollback_failed");
   assert.match(rollbackFailure.message, /did not report its expected identity and healthy storage/);
   rollbackFailureHost.service().close();
+
+  // Automatic rollback goes only to the recorded previous folder while it is intact.
+  const tamperedCandidate = metadata("v0.4.1+build.13", "d");
+  const tamperedHost = await createHost("tampered-previous", tamperedCandidate, { candidateHealthy: () => false, previousHealthy: () => true });
+  chmodSync(tamperedHost.previousPath, 0o755);
+  const tamperedRollback = await approveAndActivate(tamperedHost.client(), tamperedCandidate);
+  assert.equal(tamperedRollback.state, "rollback_failed", "a changed previous folder must not be selected again");
+  assert.match(tamperedRollback.message, /rollback was refused/);
+  assert.equal(realpathSync(tamperedHost.currentPath), tamperedHost.candidatePath, "a refused rollback leaves the selection alone");
+  chmodSync(tamperedHost.previousPath, 0o555);
+  tamperedHost.service().close();
 
   const interruptedCandidate = metadata("v0.5.0+build.11", "b");
   let interruptedHealthy = false;

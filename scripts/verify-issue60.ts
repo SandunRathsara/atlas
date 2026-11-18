@@ -8,7 +8,7 @@ import { createPersistence, type Persistence } from "../src/persistence.ts";
 import type { ReleaseMetadata } from "../src/release.ts";
 import { createUpdateService, UPDATE_CHECK_INTERVAL_MS } from "../src/update-discovery.ts";
 import { createUpdaterClient, createUpdaterService } from "../src/updater.ts";
-import { fixtureMetadata, fixtureReleaseFolder } from "./verify-binaries.ts";
+import { fixtureMetadata, fixtureReleaseFolder, fixtureReleaseServer } from "./verify-binaries.ts";
 
 const cacheRoot = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
 mkdirSync(cacheRoot, { recursive: true });
@@ -55,6 +55,7 @@ const createHost = async (name: string, candidates: ReleaseMetadata[], activatio
     keyPath,
     releasesRoot,
     currentPath,
+    ...fixtureReleaseServer(releasesRoot),
     now: () => clock++,
     activationTimeoutMs,
     activationPollMs: 2,

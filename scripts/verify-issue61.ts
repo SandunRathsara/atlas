@@ -19,7 +19,7 @@ import { buildReleaseFolder } from "../src/release-layout.ts";
 import type { ReleaseMetadata } from "../src/release.ts";
 import { createUpdaterClient, createUpdaterService } from "../src/updater.ts";
 import { renderUpdatesStatus } from "../src/views/updates.ts";
-import { fixtureReleaseFolder, verifyBinary, verifyMetadata } from "./verify-binaries.ts";
+import { fixtureReleaseFolder, fixtureReleaseServer, verifyBinary, verifyMetadata } from "./verify-binaries.ts";
 
 // One real compiled Release (~100 MB) lives here, so stay off the small /tmp.
 const cacheRoot = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
@@ -111,6 +111,7 @@ try {
     keyPath: updaterKey,
     releasesRoot,
     currentPath,
+    ...fixtureReleaseServer(releasesRoot),
     activationTimeoutMs: 80,
     activationPollMs: 2,
     hostRuntime: () => ({ git: "2.55.0", gh: "2.100.0" }),

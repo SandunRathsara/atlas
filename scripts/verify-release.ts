@@ -137,16 +137,18 @@ const updaterUnit = units["atlas-updater.service"];
 assert.match(updaterUnit, /^User=root\nGroup=omega$/mu);
 assert.match(updaterUnit, /^ExecStart=\/opt\/atlas\/services\/current\/atlas updater$/mu);
 for (const directive of ["NoNewPrivileges=true", "PrivateTmp=true", "ProtectHome=true", "ProtectSystem=strict", "UMask=0007", "RuntimeDirectory=atlas-updater", "RuntimeDirectoryMode=0750",
-  "ReadWritePaths=/opt/atlas /var/lib/atlas /run/atlas-updater", "ReadOnlyPaths=-/opt/atlas/tools", "Environment=ATLAS_SERVICE_USER=omega", "Environment=ATLAS_SERVICE_GROUP=omega"]) {
+  "StateDirectory=atlas-updater", "StateDirectoryMode=0700", "Environment=ATLAS_UPDATE_STATE_PATH=/var/lib/atlas-updater/update-state.json",
+  "ReadWritePaths=/opt/atlas /run/atlas-updater", "ReadOnlyPaths=-/opt/atlas/tools", "Environment=ATLAS_SERVICE_USER=omega", "Environment=ATLAS_SERVICE_GROUP=omega"]) {
   assert.ok(updaterUnit.includes(`${directive}\n`), `updater keeps ${directive}`);
 }
+assert.doesNotMatch(updaterUnit, /ReadWritePaths=.*\/var\/lib\/atlas(\s|$)/mu, "the root updater must not write the service-owned data folder");
 assert.doesNotMatch(updaterUnit, /EnvironmentFile|opencode/iu, "the updater reads only the health token and port from atlas.env and never selects OpenCode");
 assert.match(units["opencode.service"], /^ExecStartPre=\/opt\/atlas\/tools\/opencode\/current\/bin\/opencode --version$/mu);
 assert.match(units["opencode.service"], /^Environment=GIT_SSH_COMMAND=\/bin\/false$/mu);
 const custom = renderUnits({ user: "atlas", group: "atlas", home: "/var/lib/atlas-home", prefix: "/srv/atlas", dataDir: "/srv/data", configDir: "/srv/etc", realGit: "/usr/local/bin/git" });
 assert.match(custom["atlas.service"], /^ExecStart=\/srv\/atlas\/current\/atlas serve$/mu);
 assert.match(custom["atlas.service"], /^EnvironmentFile=\/srv\/etc\/atlas.env$/mu);
-assert.match(custom["atlas-updater.service"], /^Environment=ATLAS_UPDATE_STATE_PATH=\/srv\/data\/update-state.json$/mu);
+assert.match(custom["atlas-updater.service"], /^Environment=ATLAS_UPDATE_STATE_PATH=\/var\/lib\/atlas-updater\/update-state.json$/mu);
 assert.match(custom["opencode.service"], /^Environment=ATLAS_REAL_GIT=\/usr\/local\/bin\/git$/mu);
 assert.throws(() => renderUnits({ user: "root", group: "omega", home: "/root" }), /must not run as root/);
 assert.throws(() => renderUnits({ user: "omega", group: "omega", home: "/home/omega", prefix: "/opt/atlas dir" }), /plain absolute path/);

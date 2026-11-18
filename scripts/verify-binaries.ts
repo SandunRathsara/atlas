@@ -102,3 +102,20 @@ export const fixtureReleaseFolder = async (releasesRoot: string, tag: string, sh
     rmSync(script, { force: true });
   }
 };
+
+/**
+ * A fake HTTPS download server for updater checks. It publishes each fixture
+ * Release folder's own metadata as `<tag>/atlas-release.json`, which is all the
+ * updater fetches when the folder is already staged.
+ */
+export const fixtureReleaseServer = (releasesRoot: string) => ({
+  downloadBaseUrl: "https://downloads.test/releases",
+  fetcher: (async (input: URL | RequestInfo) => {
+    const url = new URL(String(input));
+    const match = /^\/releases\/([^/]+)\/atlas-release\.json$/u.exec(url.pathname);
+    const file = match ? join(releasesRoot, `atlas-${decodeURIComponent(match[1]!)}`, "RELEASE_METADATA.json") : "";
+    return url.protocol === "https:" && match && existsSync(file)
+      ? new Response(readFileSync(file))
+      : new Response("not found", { status: 404 });
+  }) as typeof fetch,
+});
