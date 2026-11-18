@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds one Atlas Release and proves its three files work on their own.
+# Builds one Atlas Release and proves its four files work on their own.
 #
 # Usage:
 #   bash scripts/verify-release-artifact.sh                     # v0.1.0+build.1 at HEAD, scratch output
@@ -7,14 +7,14 @@
 #
 # Steps:
 #   1. bun scripts/build-release.ts <tag> <sha> <output>  (clean checkout required)
-#   2. the output holds exactly atlas-linux-x64, atlas-linux-x64.sha256 and
-#      atlas-release.json (plus install.sh once Phase 4 adds it);
+#   2. the output holds exactly atlas-linux-x64, atlas-linux-x64.sha256,
+#      atlas-release.json and install.sh (identical to the repo's, executable);
 #   3. sha256sum --check passes and the metadata agrees with the binary
 #      (schema 2, tag, commit, SHA-256, size, OpenCode client);
 #   4. the binary runs with a PATH that has no Bun and reports its identity;
 #   5. `atlas serve` from a copy of only the binary answers /health and
 #      /health?activation=1 with the expected identity, OpenCode not ready.
-# Outputs: the three files stay in <output-directory> when given; the default
+# Outputs: the four files stay in <output-directory> when given; the default
 # scratch output (under ~/.cache, not the small /tmp) is removed.
 set -euo pipefail
 
@@ -49,10 +49,10 @@ cleanup() {
 trap cleanup EXIT
 
 bun "$root/scripts/build-release.ts" "$tag" "$commit" "$output" >/dev/null
-# Phase 4: add install.sh to this list once build-release.ts copies it.
-expected_files=$'atlas-linux-x64\natlas-linux-x64.sha256\natlas-release.json'
+expected_files=$'atlas-linux-x64\natlas-linux-x64.sha256\natlas-release.json\ninstall.sh'
 actual_files=$(find "$output" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
 [[ "$actual_files" == "$expected_files" ]] || { printf 'unexpected release files:\n%s\n' "$actual_files" >&2; exit 1; }
+cmp -s "$root/install.sh" "$output/install.sh" && [[ -x "$output/install.sh" ]] || { echo "install.sh differs from the repo's or is not executable" >&2; exit 1; }
 (cd "$output" && sha256sum --quiet --check atlas-linux-x64.sha256)
 [[ $(wc -l <"$output/atlas-linux-x64.sha256") -eq 1 ]]
 

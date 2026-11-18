@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Builds the three files of one Atlas Release.
+// Builds the four files of one Atlas Release.
 //
 // Usage:
 //   bun scripts/build-release.ts <vX.Y.Z+build.N> <40-hex commit> <output-dir>
@@ -10,7 +10,7 @@
 //            `bun scripts/release.ts validate`).
 //   commit   Must equal the checked-out HEAD. The checkout must be clean
 //            (no staged, unstaged, or untracked files).
-//   output   Created if missing. None of the three outputs may already exist.
+//   output   Created if missing. None of the four outputs may already exist.
 //   Runs on Linux x64 under the Bun pinned in package.json `engines.bun`. Needs
 //   no secrets: it reads only the checkout and installs from the frozen lockfile.
 //
@@ -18,10 +18,8 @@
 //   atlas-linux-x64         compiled binary (scripts/build-binary.ts), mode 0755
 //   atlas-linux-x64.sha256  one line: `<sha256-hex>  atlas-linux-x64`
 //   atlas-release.json      schema-2 metadata (src/release.ts#createReleaseMetadata)
+//   install.sh              the installer (repo root), mode 0755
 // The last stdout line is the absolute output directory.
-//
-// Phase 4 hook: `install.sh` will be copied into <output-dir> here (see the
-// marked line below) so it ships as a fourth asset of the same Release.
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -55,7 +53,7 @@ if (run(["git", "status", "--porcelain", "--untracked-files=all"]).trim()) fail(
 if (run(["git", "rev-parse", "--verify", "HEAD"]).trim() !== commit) fail("the requested release SHA is not the checked-out commit");
 
 const output = resolve(outputArgument!);
-const outputs = [RELEASE_ASSET_NAME, RELEASE_CHECKSUM_NAME, "atlas-release.json"].map((name) => join(output, name));
+const outputs = [RELEASE_ASSET_NAME, RELEASE_CHECKSUM_NAME, "atlas-release.json", "install.sh"].map((name) => join(output, name));
 for (const path of outputs) if (lstatSync(path, { throwIfNoEntry: false })) fail(`release output already exists: ${path}`);
 mkdirSync(output, { recursive: true });
 
@@ -86,7 +84,8 @@ try {
   chmodSync(join(output, RELEASE_ASSET_NAME), 0o755);
   writeFileSync(join(output, RELEASE_CHECKSUM_NAME), `${sha256}  ${RELEASE_ASSET_NAME}\n`, { flag: "wx" });
   writeFileSync(join(output, "atlas-release.json"), `${JSON.stringify(metadata, null, 2)}\n`, { flag: "wx" });
-  // Phase 4: copy install.sh into `output` here.
+  writeFileSync(join(output, "install.sh"), readFileSync(join(repositoryRoot, "install.sh")), { flag: "wx", mode: 0o755 });
+  chmodSync(join(output, "install.sh"), 0o755);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
