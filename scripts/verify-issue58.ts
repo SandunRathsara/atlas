@@ -463,7 +463,20 @@ try {
   assert.equal(readlinkSync(activeRelease), oldRelease);
 
   // Forward-only: a Release that is not newer than the active one is refused outright.
-  await assert.rejects(reopenedClient.stage(metadata("v0.1.0+build.1", "1")), /rejected/, "staging the active build (a downgrade) must be refused");
+  // The reply stays opaque; the reason goes to the updater's journal.
+  const wrongKey = join(hostRoot, "config", "wrong.key");
+  writeFileSync(wrongKey, `${"b".repeat(64)}\n`, { mode: 0o600 });
+  const logged: string[] = [];
+  const consoleError = console.error;
+  console.error = (...items: unknown[]) => logged.push(items.join(" "));
+  try {
+    await assert.rejects(reopenedClient.stage(metadata("v0.1.0+build.1", "1")), /rejected/, "staging the active build (a downgrade) must be refused");
+    await assert.rejects(createUpdaterClient({ socketPath, keyPath: wrongKey }).stage(metadata("v0.1.0+build.1", "1")), /rejected/);
+  } finally {
+    console.error = consoleError;
+  }
+  assert.deepEqual(logged.filter((line) => line.startsWith("Atlas updater refused")).length, 1, "only the keyed request is logged");
+  assert.match(logged.join("\n"), /Atlas updater refused "stage": Atlas v0\.1\.0\+build\.1 is not newer than the active/, "the refusal reason is logged");
   assert.equal((await reopenedClient.status()).metadata?.identity.tag, failedDownload.identity.tag, "a refused downgrade changes nothing");
 
   // Caller metadata is ignored: a raw request with forged metadata stages only what the updater fetched.
