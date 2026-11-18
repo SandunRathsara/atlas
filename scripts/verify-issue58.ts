@@ -193,7 +193,9 @@ try {
   assert.doesNotMatch(html, /No newer release found/, "initial state must not claim a successful no-update check");
   assert.match(html, /id="update-check-form"[^>]*hx-post="\/updates\/check"[^>]*hx-indicator="#update-check-progress"[^>]*hx-disabled-elt=/, "Check now must expose labelled pending and repeat prevention");
   assert.match(html, /Checking releases…/);
-  assert.match(html, /<div class="ax-bar-phone">[\s\S]*?id="inbox-head-repository"[\s\S]*?aria-label="Repository filter: All Repositories"/, "Repository context must remain visible in the mobile header");
+  // Updates lives under More: the phone bar leads back there; the Repository filter stays in the desktop bar.
+  assert.match(html, /<div class="ax-bar-phone"><a class="ax-bar-back" href="\/more">/, "the mobile header must lead back to More");
+  assert.match(html, /<div class="ax-bar-desk">[\s\S]*?aria-label="Repository filter: All Repositories"/, "Repository context must remain visible in the desktop header");
   assert.match(html, /<nav class="ax-tabbar"[^>]*>[\s\S]*?<a href="\/more" aria-current="page">/, "the mobile More tab, which holds Updates, must be current on Updates");
   assert.match(html, /class="ax-menu-item" href="\/updates" aria-current="page"/, "the desktop Updates link must use the shared selected-navigation contract");
 
