@@ -2,6 +2,7 @@ import type { PrStack, PullRequest, RefreshState, Repository, TargetKind } from 
 import { escapeHtml } from "./html.ts";
 import { statusBadge } from "./shared.ts";
 import { icon } from "./icons.ts";
+import { banner } from "./kit.ts";
 
 export type TargetStatus = {
   kind: "eligible" | "warning" | "disabled";
@@ -326,7 +327,7 @@ export const renderStartTargetOptions = (
   const observations = Object.fromEntries(options.map((option) => [option.value, option.observation]));
   const gate = targetVerificationStatus(repository, accessRefresh, pullRequestsRefresh);
   const unchecked = gate?.kind === "warning" && options[0]?.status.kind === "eligible"
-    ? `<div class="ax-banner sp-pick-note" role="status">${icon("warn", 18)}<div><b class="ax-banner-title">Couldn’t check GitHub just now</b>Pull requests and stacks can’t be used until Atlas finishes a current check. The default branch still works.</div></div>`
+    ? banner({ title: "Couldn’t check GitHub just now", body: "Pull requests and stacks can’t be used until Atlas finishes a current check. The default branch still works.", className: "sp-pick-note" })
     : "";
   const rows = options.map((option, index) => {
     const id = `start-target-${index}`;

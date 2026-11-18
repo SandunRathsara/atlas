@@ -156,12 +156,8 @@ const specsUnavailable = (inbox: InboxContext) => {
     .map((state) => state?.failureReason?.trim() || "Specs have not synchronized yet.")
     .filter((reason, index, values) => values.indexOf(reason) === index);
   if (reasons.length === 0) return "";
-  return `<div class="ix-banner">${bannerHtml("Specs unavailable", `${reasons.map(escapeHtml).join(" ")} Atlas keeps showing what it last saw.`)}</div>`;
+  return `<div class="ix-banner">${banner({ title: "Specs unavailable", body: `${reasons.join(" ")} Atlas keeps showing what it last saw.`, role: "alert" })}</div>`;
 };
-
-// Local banner markup (kit `banner` escapes its body; the reasons above are already escaped).
-const bannerHtml = (title: string, bodyHtml: string) =>
-  `<div class="ax-banner" role="alert">${icon("warn", 18)}<div><b class="ax-banner-title">${escapeHtml(title)}</b>${bodyHtml}</div></div>`;
 
 /** The empty state for this Inbox, or "" when there is something to list (or Specs could not load). */
 const emptyState = (inbox: InboxContext) => {

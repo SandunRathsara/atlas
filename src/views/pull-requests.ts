@@ -1,7 +1,7 @@
 import type { PrStack, PullRequest, RefreshState, Repository } from "../persistence.ts";
 import { escapeHtml, safeExternalUrl } from "./html.ts";
 import { icon } from "./icons.ts";
-import { ageShort, button, emptyCard, prPill, prTile, relativeTime, sectionHeader, type PrState } from "./kit.ts";
+import { ageShort, banner, button, emptyCard, prPill, prTile, relativeTime, sectionHeader, type PrState } from "./kit.ts";
 import { repositoryPage } from "./shared.ts";
 import { renderShell, type InboxContext } from "./shell.ts";
 import { pullRequestLifecycle, stackStatus, standaloneStatus, type TargetStatus, targetVerificationStatus } from "./targets.ts";
@@ -9,9 +9,6 @@ import { pullRequestLifecycle, stackStatus, standaloneStatus, type TargetStatus,
 /** Kit PR state for a Pull request (Merged › Draft › Open › Closed). */
 const prState = (pullRequest: PullRequest): PrState =>
   pullRequestLifecycle(pullRequest).toLowerCase() as PrState;
-
-// Local stack glyph (no "stack" icon in the kit yet; see kit requests).
-const stackIcon = `<svg class="ax-ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6.878V6a2.25 2.25 0 0 1 2.25-2.25h7.5A2.25 2.25 0 0 1 18 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 0 0 4.5 9v.878m13.5-3A2.25 2.25 0 0 1 19.5 9v.878m0 0a2.246 2.246 0 0 0-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0 1 21 12v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6c0-.98.626-1.813 1.5-2.122"/></svg>`;
 
 const pullRequestsPath = (repository: Pick<Repository, "githubId">) =>
   `/repositories/${encodeURIComponent(repository.githubId)}/pull-requests`;
@@ -60,7 +57,7 @@ const stackCard = (repository: Repository, stack: PrStack, pullRequests: Map<str
   }).join("");
   const count = members.length === 1 ? "1 layer" : `${members.length} layers`;
   return `<article class="pr-stack" aria-label="Stack #${escapeHtml(stack.number)}">
-    <h3 class="pr-stack-head">${stackIcon}<span>Stack #${escapeHtml(stack.number)}</span><span class="pr-stack-n">${count}</span></h3>
+    <h3 class="pr-stack-head">${icon("stack", 18)}<span>Stack #${escapeHtml(stack.number)}</span><span class="pr-stack-n">${count}</span></h3>
     ${members.length > 0
       ? `<ol class="pr-layers" aria-label="Stack #${escapeHtml(stack.number)} layers, base first">${layers}</ol>`
       : `<p class="pr-layer-sub pr-stack-none">GitHub hasn’t reported any layers for this stack.</p>`}
@@ -90,7 +87,7 @@ const unverifiedBanner = (refresh: RefreshState | undefined, hasData: boolean, c
     ? "Atlas hasn’t read this Repository’s pull requests yet, so nothing is shown. Starting on a pull request waits until GitHub can be checked."
     : `${hasData ? "Showing what Atlas last saw." : "Atlas last saw no open pull requests."} Starting on these waits until GitHub can be checked.`;
   const reason = refresh?.failureReason && !pending ? ` <span class="pr-reason">GitHub said: ${escapeHtml(refresh.failureReason)}</span>` : "";
-  return `<div class="ax-banner pr-banner${compact ? " pr-banner-compact" : ""}" role="status">${icon("warn", 18)}<div><b class="ax-banner-title">${title}</b>${escapeHtml(body)}${reason}</div></div>`;
+  return banner({ title, bodyHtml: `${escapeHtml(body)}${reason}`, className: `pr-banner${compact ? " pr-banner-compact" : ""}` });
 };
 
 const freshnessLine = (refresh: RefreshState | undefined) => {

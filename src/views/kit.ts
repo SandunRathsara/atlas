@@ -299,10 +299,10 @@ const TONE_ICON: Record<Tone, IconName> = { warning: "warn", info: "info", error
  * Banner: amber note (warning), blue info, red error, green success.
  * role defaults to "alert" for errors and "status" otherwise.
  */
-export const banner = ({ tone = "warning", title, body, bodyHtml, role, attrs = "", id }: { tone?: Tone; title?: string; body?: string; bodyHtml?: string; role?: "alert" | "status" | "none"; attrs?: string; id?: string }) => {
+export const banner = ({ tone = "warning", title, body, bodyHtml, role, attrs = "", id, className = "" }: { tone?: Tone; title?: string; body?: string; bodyHtml?: string; role?: "alert" | "status" | "none"; attrs?: string; id?: string; className?: string }) => {
   const r = role ?? (tone === "error" ? "alert" : "status");
   const text = bodyHtml ?? (body ? escapeHtml(body) : "");
-  return `<div class="ax-banner${tone === "warning" ? "" : ` ax-${tone}`}"${id ? ` id="${escapeHtml(id)}"` : ""}${r === "none" ? "" : ` role="${r}"`}${attrs ? ` ${attrs}` : ""}>${icon(TONE_ICON[tone], 18)}<div>${title ? `<b class="ax-banner-title">${escapeHtml(title)}</b>` : ""}${text}</div></div>`;
+  return `<div class="ax-banner${tone === "warning" ? "" : ` ax-${tone}`}${className ? ` ${className}` : ""}"${id ? ` id="${escapeHtml(id)}"` : ""}${r === "none" ? "" : ` role="${r}"`}${attrs ? ` ${attrs}` : ""}>${icon(TONE_ICON[tone], 18)}<div>${title ? `<b class="ax-banner-title">${escapeHtml(title)}</b>` : ""}${text}</div></div>`;
 };
 
 /** Hero / status card: large tile, kicker, title, sub line and one action. */
