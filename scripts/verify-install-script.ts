@@ -1,16 +1,18 @@
 #!/usr/bin/env bun
 // Proves the real install.sh against a local HTTP fixture (no GitHub, no root).
 // install.sh runs under `setsid` (no terminal) with a PATH of real tools plus
-// fakes: `sudo` just runs its arguments; the "binary" records how it was run.
+// fakes: `id -u` says 0 (root); the "binary" records how it was run.
 //
-// Covers: latest URL, pinned version (`+` sent as %2B, missing `v` added), bad
-// version, SHA mismatch, metadata mismatch, aarch64, musl, no sudo, exit code
-// passed through, no terminal and no answers (files kept, next command
+// Covers: not root (refused before any download, sudo command printed),
+// latest URL, pinned version (`+` sent as %2B, missing `v` added), bad
+// version, SHA mismatch, metadata mismatch, aarch64, musl, exit code passed
+// through, root-only download folder under ATLAS_INSTALL_TMP_PARENT (TMPDIR
+// ignored), no terminal and no answers (root-only folder kept, next command
 // printed), temp folder removed; plus `sh -n`, `dash -n`, `shellcheck -s sh`.
 //
 // Usage: bun scripts/verify-install-script.ts
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -53,7 +55,7 @@ syntax("shellcheck -s sh", shellcheck && (shellcheck[0] === docker ? [...shellch
 const TAG = "v1.4.0+build.12";
 const log = join(base, "binary.log");
 const binaryText = `#!/bin/sh
-{ printf 'args:'; for a in "$@"; do printf ' %s' "$a"; done; printf '\\n'; printf 'files:'; ls "$3" | tr '\\n' ' '; printf '\\n'; } >>"${log}"
+{ printf 'args:'; for a in "$@"; do printf ' %s' "$a"; done; printf '\\n'; printf 'files:'; ls "$3" | tr '\\n' ' '; printf '\\n'; printf 'modes: %s %s\\n' "$(stat -c %a "$3")" "$(stat -c %a "$0")"; } >>"${log}"
 exit "\${FAKE_EXIT:-0}"
 `;
 const fixture = (corrupt: "none" | "sha" | "metadata") => {
@@ -85,8 +87,8 @@ const releases = `http://127.0.0.1:${server.port}/releases`;
 const makeBin = (name: string, fakes: Record<string, string>, omit: string[] = []) => {
   const bin = join(base, `bin-${name}`);
   mkdirSync(bin, { recursive: true });
-  for (const tool of ["sh", "uname", "id", "mktemp", "chmod", "mkdir", "rm", "mv", "cut", "tr", "sed", "grep", "sha256sum",
-    "curl", "getconf", "ldd", "ls", "cat", "printf", "bash"]) {
+  for (const tool of ["sh", "uname", "id", "mktemp", "chmod", "rm", "cut", "tr", "sed", "grep", "sha256sum",
+    "curl", "getconf", "ldd", "ls", "cat", "printf", "bash", "stat"]) {
     if (omit.includes(tool) || fakes[tool]) continue;
     const real = which(tool);
     if (real) symlinkSync(real, join(bin, tool));
@@ -94,17 +96,20 @@ const makeBin = (name: string, fakes: Record<string, string>, omit: string[] = [
   for (const [tool, text] of Object.entries(fakes)) writeFileSync(join(bin, tool), `#!/bin/sh\n${text}\n`, { mode: 0o755 });
   return bin;
 };
-const sudo = 'echo "sudo:$*" >>"' + log + '"; exec "$@"';
-const normalBin = makeBin("normal", { sudo });
+// Pretend to be root: install.sh only asks `id -u`.
+const id = `[ "$1" = -u ] && { echo 0; exit 0; }; exec ${which("id")} "$@"`;
+const normalBin = makeBin("normal", { id });
 
-type Run = { code: number; out: string; log: string; requests: string[]; tmpLeft: string[] };
+type Run = { code: number; out: string; log: string; requests: string[]; tmpLeft: string[]; tmpdirLeft: string[]; tmp: string };
 let runCounter = 0;
 // Async spawn: the fixture server runs in this same process.
 const install = async (args: string[], options: { bin?: string; env?: Record<string, string> } = {}): Promise<Run> => {
   const home = join(base, `home-${++runCounter}`);
   const tmp = join(base, `tmp-${runCounter}`);
+  const tmpdir = join(base, `tmpdir-${runCounter}`);
   mkdirSync(home, { recursive: true });
   mkdirSync(tmp, { recursive: true });
+  mkdirSync(tmpdir, { recursive: true });
   rmSync(log, { force: true });
   requests.length = 0;
   // `curl … | sh -s -- args`, with the script piped from a file.
@@ -112,7 +117,7 @@ const install = async (args: string[], options: { bin?: string; env?: Record<str
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
-    env: { PATH: options.bin ?? normalBin, HOME: home, TMPDIR: tmp, ATLAS_INSTALL_BASE_URL: releases, ...options.env },
+    env: { PATH: options.bin ?? normalBin, HOME: home, TMPDIR: tmpdir, ATLAS_INSTALL_TMP_PARENT: tmp, ATLAS_INSTALL_BASE_URL: releases, ...options.env },
   });
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return {
@@ -121,8 +126,17 @@ const install = async (args: string[], options: { bin?: string; env?: Record<str
     log: existsSync(log) ? readFileSync(log, "utf8") : "",
     requests: [...requests],
     tmpLeft: readdirSync(tmp),
+    tmpdirLeft: readdirSync(tmpdir),
+    tmp,
   };
 };
+
+// ---------- 0. not root ----------
+{
+  const run = await install(["--answers", "/root/it's.json"], { bin: makeBin("user", {}) });
+  check("not root: refused before any download", run.code === 1 && run.requests.length === 0 && run.log === "" && run.tmpLeft.length === 0, run.out);
+  check("not root: sudo command printed", run.out.includes(`curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sudo sh -s -- '--answers' '/root/it'\\''s.json'`), run.out);
+}
 
 // ---------- 1. good path, latest ----------
 {
@@ -131,9 +145,10 @@ const install = async (args: string[], options: { bin?: string; env?: Record<str
   check("latest: URLs", JSON.stringify(run.requests) === JSON.stringify(
     ["atlas-linux-x64", "atlas-linux-x64.sha256", "atlas-release.json"].map((name) => `/releases/latest/download/${name}`)), JSON.stringify(run.requests));
   check("latest: verified line", run.out.includes("Downloaded and verified atlas-linux-x64"), run.out);
-  check("latest: setup via sudo with source dir and passed-through args",
-    /^sudo:\S+\/atlas-install\.\w+\/atlas-linux-x64 setup --source-dir \S+\/atlas-install\.\w+ /mu.test(run.log) &&
-    /^args: setup --source-dir \S+\/atlas-install\.\w+ --answers \/root\/answers\.json$/mu.test(run.log), run.log);
+  check("latest: setup run directly with source dir and passed-through args",
+    new RegExp(`^args: setup --source-dir ${run.tmp}/atlas-install\\.\\w+ --answers /root/answers\\.json$`, "mu").test(run.log) && !run.log.includes("sudo"), run.log);
+  check("latest: root-only folder, binary 0500", run.log.includes("modes: 700 500"), run.log);
+  check("latest: TMPDIR not used", run.tmpdirLeft.length === 0);
   check("latest: setup saw all three files", run.log.includes("files:atlas-linux-x64 atlas-linux-x64.sha256 atlas-release.json "), run.log);
   check("latest: temp folder removed", run.tmpLeft.length === 0, run.tmpLeft.join(","));
 }
@@ -163,18 +178,16 @@ files = fixture("none");
 
 // ---------- 4. platform ----------
 {
-  const arm = await install(["--answers", "a.json"], { bin: makeBin("arm", { sudo, uname: '[ "$1" = -m ] && echo aarch64 || echo Linux' }) });
+  const arm = await install(["--answers", "a.json"], { bin: makeBin("arm", { id, uname: '[ "$1" = -m ] && echo aarch64 || echo Linux' }) });
   check("aarch64 refused", arm.code === 1 && arm.out.includes("only on x86_64 (this is aarch64)") && arm.requests.length === 0, arm.out);
-  const musl = await install(["--answers", "a.json"], { bin: makeBin("musl", { sudo, ldd: "echo 'musl libc (x86_64)' >&2; exit 1", getconf: "exit 1" }) });
+  const musl = await install(["--answers", "a.json"], { bin: makeBin("musl", { id, ldd: "echo 'musl libc (x86_64)' >&2; exit 1", getconf: "exit 1" }) });
   check("musl refused", musl.code === 1 && musl.out.includes("musl libc") && musl.requests.length === 0, musl.out);
-  const noLibc = await install(["--answers", "a.json"], { bin: makeBin("nolibc", { sudo, getconf: "exit 1" }) });
+  const noLibc = await install(["--answers", "a.json"], { bin: makeBin("nolibc", { id, getconf: "exit 1" }) });
   check("no glibc refused", noLibc.code === 1 && noLibc.out.includes("glibc was not found"), noLibc.out);
-  const noSha = await install(["--answers", "a.json"], { bin: makeBin("nosha", { sudo }, ["sha256sum"]) });
+  const noSha = await install(["--answers", "a.json"], { bin: makeBin("nosha", { id }, ["sha256sum"]) });
   check("sha256sum missing refused", noSha.code === 1 && noSha.out.includes("sha256sum is missing"), noSha.out);
-  const noCurl = await install(["--answers", "a.json"], { bin: makeBin("nocurl", { sudo }, ["curl"]) });
+  const noCurl = await install(["--answers", "a.json"], { bin: makeBin("nocurl", { id }, ["curl"]) });
   check("no curl/wget refused", noCurl.code === 1 && noCurl.out.includes("curl or wget is needed"), noCurl.out);
-  const noSudo = await install(["--answers", "a.json"], { bin: makeBin("nosudo", {}) });
-  check("no sudo refused", noSudo.code === 1 && noSudo.out.includes("sudo is missing") && noSudo.log === "", noSudo.out);
 }
 
 // ---------- 5. setup exit code is passed through ----------
@@ -186,11 +199,13 @@ files = fixture("none");
 // ---------- 6. no terminal, no answers ----------
 {
   const run = await install([]);
-  const keep = join(base, `home-${runCounter}`, ".cache", "atlas-install");
   check("no tty: exit 0 without running setup", run.code === 0 && !run.log.includes("args:"), run.out + run.log);
-  check("no tty: files kept", ["atlas-linux-x64", "atlas-linux-x64.sha256", "atlas-release.json"].every((name) => existsSync(join(keep, name))), run.out);
-  check("no tty: next command printed", run.out.includes(`sudo ${keep}/atlas-linux-x64 setup --source-dir ${keep}`), run.out);
-  check("no tty: temp folder removed", run.tmpLeft.length === 0);
+  check("no tty: one root-only folder kept", run.tmpLeft.length === 1 && run.tmpLeft[0]!.startsWith("atlas-install."), run.tmpLeft.join(","));
+  const keep = join(run.tmp, run.tmpLeft[0] ?? "missing");
+  check("no tty: files kept, folder 0700", ["atlas-linux-x64", "atlas-linux-x64.sha256", "atlas-release.json"].every((name) => existsSync(join(keep, name))) &&
+    (statSync(keep).mode & 0o777) === 0o700, run.out);
+  check("no tty: next command printed (no sudo)", run.out.includes(`  ${keep}/atlas-linux-x64 setup --source-dir ${keep}`) && !run.out.includes("sudo"), run.out);
+  check("no tty: nothing in HOME", !existsSync(join(base, `home-${runCounter}`, ".cache")));
 }
 
 server.stop(true);

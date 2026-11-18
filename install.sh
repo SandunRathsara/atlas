@@ -1,19 +1,24 @@
 #!/bin/sh
-# Atlas installer: downloads one Atlas Release, checks its SHA-256, and runs
-# `atlas setup` from it. It never lays out /opt/atlas itself; setup does.
+# Atlas installer: downloads one Atlas Release into a new root-only folder,
+# checks its SHA-256, and runs `atlas setup` from it. It never lays out
+# /opt/atlas itself; setup does. Runs as root only, so nothing another account
+# can change is ever run or read by root.
 #
-#   curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sh
-#   curl -fsSL .../install.sh | sh -s -- --answers /root/atlas-answers.json
-#   curl -fsSL .../install.sh | sh -s -- --version v1.2.0+build.7
+#   curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sudo sh
+#   curl -fsSL .../install.sh | sudo sh -s -- --answers /root/atlas-answers.json
+#   curl -fsSL .../install.sh | sudo sh -s -- --version v1.2.0+build.7
 #
 # Options: --version <vX.Y.Z+build.N> (or ATLAS_VERSION) pins a Release; every
 # other argument is passed to `atlas setup` (see docs/INSTALL.md).
-# Needs: Linux x86_64 with glibc, curl or wget, sha256sum, coreutils, and root
-# (it uses sudo when not root). Prompts read /dev/tty, so `curl | sh` works.
-# Test hook: ATLAS_INSTALL_BASE_URL replaces https://github.com/SandunRathsara/atlas/releases.
+# Needs: root, Linux x86_64 with glibc, curl or wget, sha256sum, coreutils.
+# Prompts read /dev/tty, so `curl | sudo sh` works. The whole script is one
+# function called on the last line, so a cut-off download runs nothing.
+# Test hooks: ATLAS_INSTALL_BASE_URL replaces https://github.com/SandunRathsara/atlas/releases;
+# ATLAS_INSTALL_TMP_PARENT replaces /var/tmp (TMPDIR is ignored).
 
 atlas_install() {
   set -eu
+  umask 077
   repo_releases=https://github.com/SandunRathsara/atlas/releases
   base=${ATLAS_INSTALL_BASE_URL:-$repo_releases}
   version=${ATLAS_VERSION:-}
@@ -37,9 +42,21 @@ atlas_install() {
   done
 
   # 1. this host
-  for tool in uname id mktemp chmod mkdir rm mv cut tr sed grep sha256sum; do
+  for tool in uname id mktemp chmod rm cut tr sed grep sha256sum; do
     have "$tool" || die "$tool is missing. Install coreutils/grep/sed first (apt install coreutils grep sed)."
   done
+  if [ "$(id -u)" -ne 0 ]; then
+    printf 'atlas install: run this as root. Nothing was downloaded. For example:\n' >&2
+    printf '  curl -fsSL %s/latest/download/install.sh | sudo sh -s --' "$repo_releases" >&2
+    for arg in "$@"; do printf " '%s'" "$(printf '%s' "$arg" | sed "s/'/'\\\\''/g")" >&2; done
+    printf '\n' >&2
+    exit 1
+  fi
+  if ( : </dev/tty ) 2>/dev/null; then
+    tty=yes
+  else
+    tty=no
+  fi
   [ "$(uname -s)" = Linux ] || die "Atlas runs only on Linux (this is $(uname -s))."
   [ "$(uname -m)" = x86_64 ] || die "Atlas runs only on x86_64 (this is $(uname -m))."
   if { have ldd && ldd --version 2>&1 | grep -qi musl; } || ls /lib/ld-musl-* >/dev/null 2>&1; then
@@ -70,10 +87,12 @@ atlas_install() {
     say "Atlas installer: latest Release"
   fi
 
-  # 3. download and check
-  tmp=$(mktemp -d "${TMPDIR:-/tmp}/atlas-install.XXXXXX") || die "could not make a temporary folder."
+  # 3. download and check, in a new root-only folder on disk (not TMPDIR)
+  tmp_parent=${ATLAS_INSTALL_TMP_PARENT:-/var/tmp}
+  tmp=$(mktemp -d "$tmp_parent/atlas-install.XXXXXX") || die "could not make a folder in $tmp_parent."
   chmod 0700 "$tmp"
-  trap 'rm -rf -- "$tmp"' EXIT
+  keep_tmp=no
+  trap '[ "$keep_tmp" = yes ] || rm -rf -- "$tmp"' EXIT
   trap 'exit 130' INT TERM
   for name in "$asset" "$asset.sha256" atlas-release.json; do
     fetch "$url/$name" "$tmp/$name" || die "download failed: $url/$name"
@@ -83,40 +102,24 @@ atlas_install() {
   actual=$(sha256sum "$tmp/$asset" | cut -d' ' -f1)
   [ "$actual" = "$expected" ] || die "SHA-256 mismatch for $asset (expected $expected, got $actual). Nothing was installed."
   grep -q "\"$expected\"" "$tmp/atlas-release.json" || die "atlas-release.json does not describe this binary. Nothing was installed."
-  chmod 0755 "$tmp/$asset"
+  chmod 0500 "$tmp/$asset"
   say "Downloaded and verified $asset ($actual)."
 
-  # 4. run setup as root
-  if [ "$(id -u)" -eq 0 ]; then
-    as_root=
-  elif have sudo; then
-    as_root=sudo
-  else
-    die "setup needs root and sudo is missing. Run this again as root (su -), or install sudo."
-  fi
-  if ( : </dev/tty ) 2>/dev/null; then
-    tty=yes
-  else
-    tty=no
-  fi
+  # 4. run setup (it copies the Release again and re-checks it before installing)
   if [ "$tty" = no ] && [ $# -eq 0 ]; then
-    # Nothing to answer the questions with: keep the files and say what to run.
-    keep=${XDG_CACHE_HOME:-${HOME:-/root}/.cache}/atlas-install
-    mkdir -p "$keep"
-    chmod 0700 "$keep"
-    for name in "$asset" "$asset.sha256" atlas-release.json; do mv -f -- "$tmp/$name" "$keep/$name"; done
+    # Nothing to answer the questions with: keep the root-only folder and say what to run.
+    keep_tmp=yes
     say "No terminal to ask the setup questions on, and no answers were given."
-    say "The verified files are in $keep. Next, run:"
-    say "  ${as_root:+$as_root }$keep/$asset setup --source-dir $keep"
-    say "or pass answers: ${as_root:+$as_root }$keep/$asset setup --source-dir $keep --answers <file.json>"
+    say "The verified files are in $tmp (root only). Next, run as root:"
+    say "  $tmp/$asset setup --source-dir $tmp"
+    say "or pass answers: $tmp/$asset setup --source-dir $tmp --answers <file.json>"
     exit 0
   fi
-  [ -z "$as_root" ] || say "Setup needs root; running it with sudo."
   status=0
   if [ "$tty" = yes ]; then
-    $as_root "$tmp/$asset" setup --source-dir "$tmp" "$@" </dev/tty || status=$?
+    "$tmp/$asset" setup --source-dir "$tmp" "$@" </dev/tty || status=$?
   else
-    $as_root "$tmp/$asset" setup --source-dir "$tmp" "$@" </dev/null || status=$?
+    "$tmp/$asset" setup --source-dir "$tmp" "$@" </dev/null || status=$?
   fi
   exit "$status"
 }

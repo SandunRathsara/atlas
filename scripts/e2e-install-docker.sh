@@ -5,15 +5,21 @@
 #        KEEP=1 keeps the containers and images for debugging.
 #
 # Per distro (systemd as PID 1, stock apt git/gh, no Bun, non-root sudo user):
-#   1. fresh: the real `curl … install.sh | sh -s -- --answers …` (served from
-#      file://, so curl decodes %2B like a web server) with a throwaway PEM;
-#      asserts units active, /health identity, /login page, `atlas version` on
-#      PATH, root-owned read-only Release folders, secret file modes;
+#   0. install.sh without root is refused before any download; `atlas setup`
+#      run as root from a folder the sudo user owns is refused;
+#   1. fresh: the real `curl … install.sh | sudo sh -s -- --answers …
+#      --create-user` (served from file://, so curl decodes %2B like a web
+#      server) with a throwaway PEM; asserts the dedicated `atlas` account,
+#      units active, /health identity, /login page, `atlas version` on PATH,
+#      root-owned read-only Release folders, config/secret owners and modes, the
+#      root-only download folder removed; the root recovery-status writer does
+#      not follow a link the service user planted;
 #   2. update: install.sh --version <build.2> (re-run of setup) moves current to
 #      build.2, keeps the token, and /health reports build.2;
 #   3. adopt: a fresh container with the older layout (Bun units from commit
 #      432fe69, a stand-in Bun that only sleeps, old env and data) is adopted;
-#      data and secrets stay byte-identical, the backup holds the old units.
+#      data and secrets stay byte-identical (github.env by value), secrets
+#      move to root:<group> 0640, the backup holds the old units.
 # Not covered: the updater's own GitHub download (needs github.com), Tailscale.
 # Changes nothing on this host besides Docker; release files go to ~/.cache.
 # shellcheck disable=SC2016 # single-quoted commands expand inside the container
@@ -66,7 +72,7 @@ rm -rf -- "$work/build"
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$work/app.pem" 2>/dev/null
 chmod 0644 "$work/app.pem"
 cat >"$work/answers.json" <<'EOF'
-{ "user": "alice", "organization": "acme-e2e", "appId": "12345", "installationId": "67890",
+{ "organization": "acme-e2e", "appId": "12345", "installationId": "67890",
   "privateKeyPath": "/srv/fixture/app.pem", "origin": "https://atlas.e2e.test", "tailscale": "ask" }
 EOF
 
@@ -100,7 +106,8 @@ start() {
 }
 in_root() { docker exec "$container" bash -c "$1"; }
 as_alice() { docker exec -u alice -w /home/alice "$container" bash -c "$1"; }
-install_cmd='curl -fsSL file:///srv/releases/latest/download/install.sh | ATLAS_INSTALL_BASE_URL=file:///srv/releases sh -s --'
+install_cmd='curl -fsSL file:///srv/releases/latest/download/install.sh | sudo ATLAS_INSTALL_BASE_URL=file:///srv/releases sh -s --'
+user_install_cmd='curl -fsSL file:///srv/releases/latest/download/install.sh | ATLAS_INSTALL_BASE_URL=file:///srv/releases sh -s --'
 health_tag() { in_root '. /etc/atlas/atlas.env; curl -fsS -H "Authorization: Bearer $ATLAS_SHARED_TOKEN" http://127.0.0.1:3000/health' | grep -o '"tag":"[^"]*"' | head -1; }
 assert_running() {
   local tag=$1
@@ -125,21 +132,54 @@ for distro in "${distros[@]}"; do
   images+=("$image")
   in_root_versions() { in_root 'echo "git $(git --version | cut -d" " -f3), gh $(gh --version | head -1 | cut -d" " -f3), systemd $(systemctl --version | head -1 | cut -d" " -f2)"'; }
 
-  # 1. fresh install
   container="atlas-e2e-fresh-${distro//[:.]/-}"
   start "$image" "$container"
   echo "  $(in_root_versions); bun: $(in_root 'command -v bun || echo none')"
-  as_alice "$install_cmd --answers /srv/fixture/answers.json" >"$work/fresh.log" 2>&1 || { cat "$work/fresh.log"; fail "fresh install failed"; }
+
+  # 0. refusals
+  if as_alice "$user_install_cmd --answers /srv/fixture/answers.json" >"$work/user.log" 2>&1; then cat "$work/user.log"; fail "install.sh ran without root"; fi
+  { grep -q 'run this as root. Nothing was downloaded' "$work/user.log" && grep -q '| sudo sh -s --' "$work/user.log"; } || { cat "$work/user.log"; fail "non-root refusal text"; }
+  in_root 'ls /var/tmp | grep -q atlas-install' && fail "non-root run left a download folder"
+  pass "install.sh without root refused before download"
+  as_alice 'mkdir -p ~/rel && cp /srv/releases/latest/download/atlas-* ~/rel/'
+  if as_alice "sudo ~/rel/atlas-linux-x64 setup --source-dir ~/rel --answers /srv/fixture/answers.json --create-user" >"$work/source.log" 2>&1; then
+    cat "$work/source.log"; fail "setup accepted a source folder alice owns"
+  fi
+  grep -q 'must be owned by root' "$work/source.log" || { cat "$work/source.log"; fail "unsafe source refusal text"; }
+  in_root 'test ! -e /etc/atlas && test ! -e /opt/atlas && ! id atlas >/dev/null 2>&1' || fail "refused setup changed the host"
+  pass "setup refuses a source folder the sudo user owns"
+
+  # 1. fresh install
+  as_alice "$install_cmd --answers /srv/fixture/answers.json --create-user" >"$work/fresh.log" 2>&1 || { cat "$work/fresh.log"; fail "fresh install failed"; }
   grep -q 'Downloaded and verified' "$work/fresh.log" || fail "install.sh did not verify the download"
   grep -q 'Tailscale is not installed; skipping' "$work/fresh.log" || fail "Tailscale skip line missing"
   grep -q 'OpenCode not found' "$work/fresh.log" || fail "missing-OpenCode warning missing"
   grep -q 'Sign-in token (shown once):' "$work/fresh.log" || fail "token not shown"
-  pass "fresh install via curl | sh"
+  grep -q 'Runs as:  atlas (new system account)' "$work/fresh.log" || fail "service user not reported"
+  pass "fresh install via curl | sudo sh"
+  [[ $(in_root 'getent passwd atlas | cut -d: -f3,6,7') =~ ^[0-9]+:/var/lib/atlas/home:/(usr/)?s?bin/nologin$ ]] || fail "atlas account: $(in_root 'getent passwd atlas')"
+  (( $(in_root 'id -u atlas') < 1000 )) && [[ $(in_root 'id -nG atlas') == atlas ]] || fail "atlas is not a plain system account: $(in_root 'id atlas')"
+  in_root 'grep -qx User=atlas /etc/systemd/system/atlas.service' || fail "units do not run as atlas"
+  pass "dedicated system account atlas (nologin, own group)"
   assert_running "$tag1"
-  [[ $(in_root "stat -c '%U:%G %a' /etc/atlas /etc/atlas/atlas.env /etc/atlas/github.env /etc/atlas/github-app.pem /var/lib/atlas" | tr '\n' ' ') == \
-    "root:alice 750 root:root 600 alice:alice 600 alice:alice 600 alice:alice 700 " ]] || fail "config modes: $(in_root "stat -c '%n %U:%G %a' /etc/atlas /etc/atlas/* /var/lib/atlas")"
-  pass "config and data modes"
-  in_root 'ls /tmp | grep -q atlas-install' && fail "install.sh left its temp folder"
+  modes=(/etc/atlas /etc/atlas/atlas.env /etc/atlas/github.env /etc/atlas/github-app.pem /etc/atlas/supplier.key /etc/atlas/updater.key
+    /opt/atlas /var/lib/atlas /var/lib/atlas/home /var/lib/atlas/sessions /var/lib/atlas-updater)
+  [[ $(in_root "stat -c '%U:%G %a' ${modes[*]}" | tr '\n' ' ') == \
+    "root:atlas 750 root:root 600 root:atlas 640 root:atlas 640 root:atlas 640 root:atlas 640 root:root 755 atlas:atlas 700 atlas:atlas 700 atlas:atlas 700 root:atlas 700 " ]] ||
+    fail "config modes: $(in_root "stat -c '%n %U:%G %a' ${modes[*]}")"
+  pass "config, data, and updater-state owners and modes"
+  in_root 'ls /var/tmp /tmp | grep -q atlas-install' && fail "install.sh left its download folder"
+  # Root recovery-status writer vs. a link planted by the service user.
+  docker cp "$root/deploy/lib/recovery-status.sh" "$container:/root/recovery-status.sh"
+  in_root 'set -e; cp /etc/shadow /root/shadow.before
+    sudo -u atlas ln -s /etc/shadow /var/lib/atlas/recovery-status
+    ATLAS_RECOVERY_STATUS_PATH=/var/lib/atlas/recovery-status ATLAS_RECOVERY_STATUS_LOCK_PATH=/run/lock/atlas-e2e.lock \
+      bash -c "set -euo pipefail; source /root/recovery-status.sh; atlas_status_write space 2026-11-18T10:00:00Z healthy 123 5 none"
+    cmp -s /etc/shadow /root/shadow.before
+    test -f /var/lib/atlas/recovery-status && test ! -L /var/lib/atlas/recovery-status
+    test "$(stat -c %U /var/lib/atlas/recovery-status)" = atlas
+    grep -qx space_state=healthy /var/lib/atlas/recovery-status' || fail "root status write followed a planted link"
+  pass "root status write runs as the folder owner, ignores planted link"
   token=$(in_root 'grep ^ATLAS_SHARED_TOKEN= /etc/atlas/atlas.env')
 
   # 2. update to build.2 by pinned install (setup re-run)
@@ -158,6 +198,7 @@ for distro in "${distros[@]}"; do
     for kind in service timer; do
       git -C "$root" show "432fe69:deploy/systemd/$unit.$kind" >"$work/old-$unit.$kind" 2>/dev/null || { rm -f "$work/old-$unit.$kind"; continue; }
       docker cp "$work/old-$unit.$kind" "$container:/etc/systemd/system/$unit.$kind"
+      in_root "chown root:root /etc/systemd/system/$unit.$kind && chmod 0644 /etc/systemd/system/$unit.$kind"
     done
   done
   git -C "$root" show 432fe69:deploy/atlas.env.example | sed \
@@ -193,7 +234,7 @@ for distro in "${distros[@]}"; do
     systemctl is-active --quiet atlas.service atlas-credentials.service atlas-updater.service
   ' || fail "could not model the older layout"
   pass "older layout running (stand-in Bun)"
-  fingerprint='cd / && sha256sum etc/atlas/github.env etc/atlas/github-app.pem etc/atlas/supplier.key etc/atlas/updater.key var/lib/atlas/sessions/s1/notes.txt var/lib/atlas/session-scopes.json && grep -E "^ATLAS_(SHARED_TOKEN|GITHUB_WEBHOOK_SECRET|ORIGIN)=" etc/atlas/atlas.env'
+  fingerprint='cd / && sha256sum etc/atlas/github-app.pem etc/atlas/supplier.key etc/atlas/updater.key var/lib/atlas/sessions/s1/notes.txt var/lib/atlas/session-scopes.json && grep -E "^ATLAS_(SHARED_TOKEN|GITHUB_WEBHOOK_SECRET|ORIGIN)=" etc/atlas/atlas.env && grep -E "^ATLAS_GITHUB_(ORGANIZATION|APP_ID|INSTALLATION_ID)=" etc/atlas/github.env'
   before=$(in_root "$fingerprint")
   as_alice "$install_cmd --adopt --tailscale no" >"$work/adopt.log" 2>&1 || { cat "$work/adopt.log"; fail "adopt failed"; }
   grep -q 'adopting the older install' "$work/adopt.log" || fail "setup did not detect the older install"
@@ -201,6 +242,8 @@ for distro in "${distros[@]}"; do
   [[ $(in_root "$fingerprint") == "$before" ]] || fail "adopt changed data or secrets"
   pass "data and secrets byte-identical"
   in_root 'grep -qx "User=omega" /etc/systemd/system/atlas.service' || fail "service user not taken from the old units"
+  [[ $(in_root "stat -c '%U:%G %a' /etc/atlas/github.env /etc/atlas/github-app.pem /etc/atlas/supplier.key" | tr '\n' ' ') == "root:omega 640 root:omega 640 root:omega 640 " ]] ||
+    fail "adopted secrets not root:omega 0640: $(in_root "stat -c '%n %U:%G %a' /etc/atlas/*")"
   backup=$(in_root 'ls -d /var/backups/atlas/2*' | head -1)
   in_root "grep -q bun $backup/etc/systemd/system/atlas.service && test -f $backup/ROLLBACK.txt && test -f $backup/etc/atlas/atlas.env" || fail "backup incomplete"
   in_root 'test ! -e /etc/systemd/system/atlas-snapshot.timer' || fail "old snapshot timer kept off Btrfs"
