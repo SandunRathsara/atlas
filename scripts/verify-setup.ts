@@ -42,6 +42,16 @@ const removeBase = () => {
 };
 removeBase();
 mkdirSync(base, { recursive: true });
+// Setup refuses a source folder with a group/other-writable folder above it.
+// Those folders are outside this script's control, so say so up front.
+for (let folder = dirname(base); ; folder = dirname(folder)) {
+  const stat = lstatSync(folder);
+  if ((stat.mode & 0o022) !== 0 && (stat.mode & 0o1000) === 0) {
+    console.error(`verify-setup: ${folder} is writable by group or others, so setup would refuse every fixture under it. Fix its mode or set XDG_CACHE_HOME elsewhere.`);
+    process.exit(1);
+  }
+  if (folder === "/") break;
+}
 const stagesBefore = readdirSync("/var/tmp").filter((name) => name.startsWith("atlas-setup-")).sort();
 let failures = 0;
 let checks = 0;
