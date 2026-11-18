@@ -1,6 +1,5 @@
 import type { PrStack, PullRequest, RefreshState, Repository, TargetKind } from "../persistence.ts";
 import { escapeHtml } from "./html.ts";
-import { statusBadge } from "./shared.ts";
 import { icon } from "./icons.ts";
 import { banner } from "./kit.ts";
 
@@ -60,22 +59,10 @@ export const targetVerificationStatus = (
   return undefined;
 };
 
-export const targetBadgeClass = (kind: TargetStatus["kind"]) =>
-  kind === "eligible" ? "badge-success" : kind === "warning" ? "badge-warning" : "badge-error";
-
 export const pullRequestLifecycle = (pullRequest: PullRequest) => {
   if (pullRequest.mergedAt) return "Merged";
   if (pullRequest.state === "open") return pullRequest.draft ? "Draft" : "Open";
   return "Closed";
-};
-
-export const pullRequestStateBadge = (pullRequest: PullRequest) => {
-  const className = pullRequest.mergedAt
-    ? "badge-success"
-    : pullRequest.state === "open"
-      ? pullRequest.draft ? "badge-warning" : "badge-info"
-      : "badge-neutral";
-  return statusBadge(className, pullRequestLifecycle(pullRequest));
 };
 
 const mergeRestriction = (pullRequest: PullRequest): string | undefined => {

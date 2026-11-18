@@ -23,7 +23,6 @@ import {
   sessionsLink,
   sessionTargetLabel,
   settingsRow,
-  skeletonRows,
   statusForSession,
   statusPill,
   statusTile,
@@ -533,10 +532,6 @@ export const renderSessionViewerFragment = ({
     <div data-viewer-content>${content}</div>
   </section>`;
 };
-
-/** Loading placeholder for hosts that fetch the viewer late (e.g. an embedded pane). */
-export const renderSessionViewerLoading = () =>
-  `<div class="sv-viewer" aria-busy="true">${skeletonRows(4, "Loading Agent activity")}</div>`;
 
 // ── Page ─────────────────────────────────────────────────────────────────
 

@@ -109,7 +109,7 @@ export const relativeTime = (iso: string | null | undefined, { now = Date.now(),
 
 // ── Lists ────────────────────────────────────────────────────────────────
 
-export type RowOptions = {
+type RowOptions = {
   title: string;
   href?: string;
   /** Leading tile markup (statusTile / plainTile / prTile). Omit for a plain row. */
@@ -235,61 +235,12 @@ export const button = ({
     : `<button class="${cls}" type="${type}"${aria}${attrs ? ` ${attrs}` : ""}>${inner}</button>`;
 };
 
-type FieldOptions = {
-  id: string;
-  name: string;
-  label: string;
-  value?: string;
-  hint?: string;
-  error?: string;
-  required?: boolean;
-  placeholder?: string;
-  attrs?: string;
-};
-
-const describedBy = (o: FieldOptions) =>
-  [o.hint ? `${o.id}-hint` : "", o.error ? `${o.id}-error` : ""].filter(Boolean).join(" ");
-
-const fieldShell = (o: FieldOptions, control: string) => `<div class="ax-field">
-  <label class="ax-label" for="${escapeHtml(o.id)}">${escapeHtml(o.label)}</label>
-  ${control}
-  ${o.error ? `<p id="${escapeHtml(o.id)}-error" class="ax-error-text">${escapeHtml(o.error)}</p>` : ""}
-  ${o.hint ? `<p id="${escapeHtml(o.id)}-hint" class="ax-hint">${escapeHtml(o.hint)}</p>` : ""}
-</div>`;
-
-const controlAttrs = (o: FieldOptions) => {
-  const described = describedBy(o);
-  return `id="${escapeHtml(o.id)}" name="${escapeHtml(o.name)}"${o.required ? " required" : ""}${o.placeholder ? ` placeholder="${escapeHtml(o.placeholder)}"` : ""}${described ? ` aria-describedby="${described}"` : ""}${o.error ? ' aria-invalid="true"' : ""}${o.attrs ? ` ${o.attrs}` : ""}`;
-};
-
-/** Outlined text field with label, hint and error. */
-export const textField = (o: FieldOptions & { type?: string; autocomplete?: string }) =>
-  fieldShell(o, `<input class="ax-input" type="${escapeHtml(o.type ?? "text")}" ${controlAttrs(o)}${o.value !== undefined ? ` value="${escapeHtml(o.value)}"` : ""}${o.autocomplete ? ` autocomplete="${escapeHtml(o.autocomplete)}"` : ""}>`);
-
-/** Outlined textarea with label, hint and error. */
-export const textareaField = (o: FieldOptions & { rows?: number }) =>
-  fieldShell(o, `<textarea class="ax-input" rows="${o.rows ?? 4}" ${controlAttrs(o)}>${escapeHtml(o.value ?? "")}</textarea>`);
-
-/** Settings row with an on/off switch (a real checkbox, role="switch"). */
-export const toggleRow = ({ id, name, label, hint, checked = false, value = "on", attrs = "" }: { id: string; name: string; label: string; hint?: string; checked?: boolean; value?: string; attrs?: string }) =>
-  `<label class="ax-setrow" for="${escapeHtml(id)}"><span class="ax-setrow-main">${escapeHtml(label)}${hint ? `<span>${escapeHtml(hint)}</span>` : ""}</span><input class="ax-toggle" type="checkbox" role="switch" id="${escapeHtml(id)}" name="${escapeHtml(name)}" value="${escapeHtml(value)}"${checked ? " checked" : ""}${attrs ? ` ${attrs}` : ""}></label>`;
-
 /** Settings row: title, optional sub line, trailing value; a link when `href` is set. */
 export const settingsRow = ({ title, sub, value, valueHtml, href, mono = false }: { title: string; sub?: string; value?: string; valueHtml?: string; href?: string; mono?: boolean }) => {
   const tag = href ? "a" : "div";
   const end = valueHtml ?? (value ? `<span class="ax-setrow-val${mono ? " ax-mono" : ""}">${escapeHtml(value)}</span>` : "");
   return `<${tag} class="ax-setrow"${href ? ` href="${escapeHtml(href)}"` : ""}><span class="ax-setrow-main">${escapeHtml(title)}${sub ? `<span>${escapeHtml(sub)}</span>` : ""}</span>${end}${href ? icon("chevron", 15, "ax-chev") : ""}</${tag}>`;
 };
-
-export type PickOption = { value: string; title: string; sub?: string; checked?: boolean; disabled?: boolean; reason?: string };
-
-/** Tick-list picker (radio group as Settings rows). Ineligible rows are dimmed and say why. */
-export const pickList = ({ name, legend, options, idPrefix = name }: { name: string; legend: string; options: PickOption[]; idPrefix?: string }) =>
-  `<fieldset class="m-0 min-w-0 border-0 p-0"><legend class="ax-group-label">${escapeHtml(legend)}</legend><div class="ax-group">${options.map((option, index) => {
-    const id = `${idPrefix}-${index}`;
-    const sub = option.disabled && option.reason ? `Can’t use: ${option.reason}` : option.sub;
-    return `<label class="ax-setrow ax-pick${option.disabled ? " ax-off" : ""}" for="${escapeHtml(id)}"><input type="radio" id="${escapeHtml(id)}" name="${escapeHtml(name)}" value="${escapeHtml(option.value)}"${option.checked && !option.disabled ? " checked" : ""}${option.disabled ? " disabled" : ""}><span class="ax-setrow-main"><b>${escapeHtml(option.title)}</b>${sub ? `<span>${escapeHtml(sub)}</span>` : ""}</span>${icon("check", 20, "ax-tick")}</label>`;
-  }).join("")}</div></fieldset>`;
 
 // ── Feedback ────────────────────────────────────────────────────────────
 
@@ -316,10 +267,6 @@ export const emptyCard = ({ title, body, bodyHtml, actionHtml, glyph = "inbox" }
 /** Shimmering placeholder rows while something loads (static under reduced motion). */
 export const skeletonRows = (count = 3, label = "Loading") =>
   `<div class="ax-group" role="status" aria-label="${escapeHtml(label)}">${Array.from({ length: count }, () => `<div class="ax-row" aria-hidden="true"><span class="ax-tile ax-sk"></span><span class="ax-row-main"><span class="ax-sk ax-sk-line"></span><span class="ax-sk ax-sk-line-short"></span></span></div>`).join("")}</div>`;
-
-/** Quick confirmation. Fixed above the tab bar unless `inline`. */
-export const toast = (text: string, { inline = false, glyph = "check" }: { inline?: boolean; glyph?: IconName } = {}) =>
-  `<div class="ax-toast${inline ? " ax-toast-inline" : ""}" role="status">${icon(glyph, 18)}${escapeHtml(text)}</div>`;
 
 // ── Overlays ────────────────────────────────────────────────────────────
 
