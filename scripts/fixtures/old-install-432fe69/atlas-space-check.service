@@ -1,0 +1,16 @@
+[Unit]
+Description=Atlas shared Btrfs pool and metadata status check
+After=local-fs.target
+RequiresMountsFor=/opt/atlas/current /var/lib/atlas
+
+[Service]
+Type=oneshot
+User=root
+Group=omega
+ExecStart=/opt/atlas/current/deploy/check-space.sh
+SuccessExitStatus=1 2
+UMask=0027
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=100
+SyslogIdentifier=atlas-space
+LogNamespace=atlas

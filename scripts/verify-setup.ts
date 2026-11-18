@@ -29,6 +29,11 @@ import type { RunAs, RunResult, SetupHost } from "../src/setup/host.ts";
 import { runSetup } from "../src/setup/run.ts";
 const clientManifest = clientManifestJson as { version: string };
 
+// The fake root models a host where root (umask 022) made every folder and
+// file. Fixtures here use default modes, so pin the umask: under 002 they come
+// out group-writable and setup (rightly) refuses them. Setup itself always
+// asks for explicit modes, which a umask can only narrow.
+process.umask(0o022);
 const base = join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "atlas-verify-setup");
 const removeBase = () => {
   // Release folders are read-only; make them writable before removing.
@@ -37,6 +42,16 @@ const removeBase = () => {
 };
 removeBase();
 mkdirSync(base, { recursive: true });
+// Setup refuses a source folder with a group/other-writable folder above it.
+// Those folders are outside this script's control, so say so up front.
+for (let folder = dirname(base); ; folder = dirname(folder)) {
+  const stat = lstatSync(folder);
+  if ((stat.mode & 0o022) !== 0 && (stat.mode & 0o1000) === 0) {
+    console.error(`verify-setup: ${folder} is writable by group or others, so setup would refuse every fixture under it. Fix its mode or set XDG_CACHE_HOME elsewhere.`);
+    process.exit(1);
+  }
+  if (folder === "/") break;
+}
 const stagesBefore = readdirSync("/var/tmp").filter((name) => name.startsWith("atlas-setup-")).sort();
 let failures = 0;
 let checks = 0;
@@ -477,20 +492,22 @@ for (const [label, scenario, extra, expect] of [
 }
 
 // ---------- 8. adopt ----------
-const git = (args: string[]) => Bun.spawnSync(["git", ...args], { stdout: "pipe" }).stdout.toString();
+// The older install's units and env examples, kept as files (CI clones with depth 1, so no git history).
+const OLD_INSTALL = join(import.meta.dir, "fixtures/old-install-432fe69");
+const oldFile = (name: string) => readFileSync(join(OLD_INSTALL, name), "utf8");
 const oldLayout = (root: string, sessionState: string | null) => {
   for (const name of ["atlas.service", "atlas-credentials.service", "atlas-updater.service", "opencode.service",
     "atlas-snapshot.service", "atlas-snapshot.timer", "atlas-space-check.service", "atlas-space-check.timer"]) {
     mkdirSync(p(root, "etc/systemd/system"), { recursive: true });
-    writeFileSync(p(root, `etc/systemd/system/${name}`), git(["show", `432fe69:deploy/systemd/${name}`]), { mode: 0o644 });
+    writeFileSync(p(root, `etc/systemd/system/${name}`), oldFile(name), { mode: 0o644 });
   }
   mkdirSync(p(root, "etc/atlas"), { recursive: true, mode: 0o750 });
-  const oldEnv = git(["show", "432fe69:deploy/atlas.env.example"])
+  const oldEnv = oldFile("atlas.env.example")
     .replace("REPLACE_WITH_PRIVATE_SHARED_TOKEN", "old-token-0123456789abcdefghijklmnopqrstuvwxyz")
     .replace("REPLACE_WITH_GITHUB_WEBHOOK_SECRET", "old-webhook-secret-value")
     .replace("ATLAS_GIT_BINARY=/opt/atlas/current/bin/git", "ATLAS_GIT_BINARY=/opt/atlas/current/deploy/bin/git");
   writeFileSync(p(root, "etc/atlas/atlas.env"), oldEnv, { mode: 0o600 });
-  writeFileSync(p(root, "etc/atlas/github.env"), git(["show", "432fe69:deploy/github.env.example"]).replace("your-organization", "acme"), { mode: 0o600 });
+  writeFileSync(p(root, "etc/atlas/github.env"), oldFile("github.env.example").replace("your-organization", "acme"), { mode: 0o600 });
   writeFileSync(p(root, "etc/atlas/github-app.pem"), readFileSync(pemPath), { mode: 0o600 });
   writeFileSync(p(root, "etc/atlas/supplier.key"), `${"1".repeat(64)}\n`, { mode: 0o600 });
   writeFileSync(p(root, "etc/atlas/updater.key"), `${"2".repeat(64)}\n`, { mode: 0o640 });

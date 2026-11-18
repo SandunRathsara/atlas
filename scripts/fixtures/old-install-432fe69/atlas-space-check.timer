@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh Atlas storage safety status
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+RandomizedDelaySec=30s
+AccuracySec=30s
+Unit=atlas-space-check.service
+
+[Install]
+WantedBy=timers.target

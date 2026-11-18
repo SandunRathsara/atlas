@@ -1,0 +1,15 @@
+[Unit]
+Description=Atlas coherent local Btrfs recovery snapshot
+After=local-fs.target
+RequiresMountsFor=/opt/atlas/current /var/lib/atlas /var/backups/atlas
+
+[Service]
+Type=oneshot
+User=root
+Group=omega
+ExecStart=/opt/atlas/current/deploy/atlas-snapshot.sh
+UMask=0027
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=100
+SyslogIdentifier=atlas-snapshot
+LogNamespace=atlas
