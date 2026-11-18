@@ -152,8 +152,12 @@ and copied to `/etc/atlas/github-app.pem`.
      stops unless `--confirm-running-sessions` is given.
    - Running Sessions keep their OpenCode work, because OpenCode is not
      restarted. A Session that is *preparing* fails and must be started again.
-4. Setup backs up the old units, `/etc/atlas` and the symlinks to
-   `/var/backups/atlas/<time>/` and writes `ROLLBACK.txt` there.
+4. Setup backs up the old units, `atlas.env` and `github.env` to
+   `/var/backups/atlas/<time>/`, plus any other file whose contents it
+   changes. It records the old symlink targets in `ROLLBACK.txt` there.
+   Keys whose contents stay the same (`supplier.key`, `updater.key`, the App
+   key) are not copied; they only change owner and mode, and rollback does not
+   change those back.
 5. It stops atlas → atlas-updater → atlas-credentials, writes the new units,
    starts them, and checks `/health`.
 6. If that fails and the database schema is unchanged, setup restores the old
@@ -207,5 +211,27 @@ Check `rollback.codeOnlyCompatible` in that Release's metadata first
 Root never follows a path the service account can change: setup refuses
 symlinks and unsafe parent folders, replaces files instead of changing them in
 place, and does everything inside the data folder as the service account.
-Limit: Sessions run as the same account as the credentials service, so a
-Session can read the App key and `supplier.key`.
+
+## Security model and known limits
+
+- **Trust.** A Release is trusted through HTTPS plus a SHA-256 from the same
+  GitHub Release. There is no signature, so whoever controls this repository's
+  Releases controls every install's updates.
+- **Root treats the service account as untrusted.** The installer, setup and
+  the updater never run, own or re-permission anything that account can write.
+  No binary runs before its SHA-256 matches. Candidates run as the service
+  account, never as root. The updater only moves forward to a higher build.
+- **Limit: Sessions can use the GitHub App.** Sessions run as the same account
+  as the credentials service, so code in a Session can read the App key and
+  `supplier.key`. It can act as the App on every repository the App is
+  installed on, not just its own. This was already true before the single
+  binary. Install the App only on repositories you are willing to expose to
+  Sessions, and keep the dedicated unprivileged account (the default). A
+  separate credentials account is future work.
+- **Limit: Sessions can start updates.** A Session can read `updater.key`. With
+  it, it can switch the policy to automatic and stage, prepare and activate a
+  newer published Release without approval in the web UI, skipping Atlas's safe
+  pause. It cannot downgrade, supply its own metadata, or run unpublished code,
+  and all staging and checksum checks still apply.
+- **Not tested automatically yet:** real Tailscale Serve (tests use fakes),
+  Btrfs snapshots on a real Btrfs host. musl and arm64 are not supported.

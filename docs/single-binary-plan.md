@@ -7,10 +7,10 @@ Status: **Implemented on the `single-binary` branch; first Release `v0.1.0+build
 Another team can install their own private Atlas with one command:
 
 ```sh
-curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sudo sh
 ```
 
-The command downloads one `atlas` binary, checks it, and runs `sudo atlas setup`. The setup wizard asks a few questions, writes config and systemd units, and starts Atlas.
+The command runs as root. It downloads one `atlas` binary into a root-only folder, checks it, and runs `atlas setup`. The setup wizard asks a few questions, writes config and systemd units, and starts Atlas.
 
 ## Owner decisions (2026-11-18)
 
@@ -45,7 +45,7 @@ These override the matching lines further down.
 | Three entry files (`src/server.ts`, `credential-server.ts`, `updater-server.ts`) | One entry `src/cli.ts`: `atlas serve`, `atlas credentials`, `atlas updater`, `atlas gh`, `atlas git-credential`, `atlas setup`, `atlas version` |
 | Support bundle = copied `.ts` files | Support bundle = a copy of the binary |
 | `deploy/bootstrap.sh` + manual host setup | `install.sh` + `atlas setup` |
-| Service user hard-coded to `omega` | Chosen during setup (default: the user who ran `sudo`) |
+| Service user hard-coded to `omega` | Chosen during setup (default: a dedicated `atlas` system account, created with consent) |
 
 ## Code that assumes a source folder (all fixable)
 
@@ -85,21 +85,21 @@ The GitHub Release ships:
 
 ## Install flow
 
-1. `install.sh` (POSIX sh):
+1. `install.sh` (POSIX sh, root only; without root it stops before downloading):
    - refuses anything other than Linux x64 with glibc
-   - downloads the latest stable `atlas-linux-x64`, or a version passed as an argument
+   - downloads the latest stable `atlas-linux-x64`, or a version passed as an argument, into a new root-only folder under `/var/tmp`
    - verifies the SHA-256 and stops on mismatch
-   - runs `sudo atlas setup --source-dir <download>`; with no terminal and no answers it keeps the files and prints that command
+   - runs `atlas setup --source-dir <folder>`; with no terminal and no answers it keeps the folder and prints that command to run as root
    - never creates the release folder itself (setup does)
 2. `atlas setup` (root):
    - **Checks:** systemd, git and gh are present at the minimum versions. Anything missing is listed with a fix-it hint, and setup stops before changing anything. A missing OpenCode is a warning.
-   - **Asks:** service user, GitHub org, GitHub App ID, installation ID and private-key path, public origin URL, ports.
+   - **Asks:** service user (default `atlas`; creating it needs a yes; an account that can become root is refused unless explicitly allowed), GitHub org, GitHub App ID, installation ID and private-key path, public origin URL, ports.
    - **Generates:** shared token and webhook secret.
-   - **Writes:** `/etc/atlas/atlas.env` and `/etc/atlas/github.env` (`0600`), data folders, systemd units (embedded in the binary), and the headless OpenCode config.
+   - **Writes:** root-owned `/etc/atlas` (`atlas.env` root `0600`; `github.env` and keys `root:<group> 0640`), data folders, systemd units (embedded in the binary), and the headless OpenCode config.
    - **Starts and checks:** starts the services, then checks `/health`.
-   - **Tailscale (optional):** after a y/n, `tailscale serve` for the UI and `ATLAS_ORIGIN` from the tailnet name.
+   - **Tailscale (optional):** after a y/n, `tailscale serve` for the UI and `ATLAS_ORIGIN` from the tailnet name. An existing serve config is replaced only after another yes.
    - **Prints:** the URL, the token (once), and the Funnel hint for webhooks.
-3. **Adopt mode:** if `/etc/atlas` and `/var/lib/atlas` already exist, setup keeps them. It only replaces the units and the release layout, keeps a backup of the old units, and stops the old services first. This is how the owner's server moves over.
+3. **Adopt mode:** if `/etc/atlas` and `/var/lib/atlas` already exist, setup keeps them and the existing service user (warning if it is privileged). It replaces the units and the release layout, moves the secrets to root ownership, keeps a backup of the old units and env files, and stops the old services first. This is how the owner's server moves over.
 
 ## Phases
 
@@ -131,8 +131,8 @@ Decided on 2026-11-18. Every phase follows this so the parts fit together.
 - **`install.sh` is thin:** platform check, download, SHA-256 check, then hand off to `atlas setup`. POSIX `sh`, no bashisms.
 - **`atlas setup` is testable:** every answer can come from flags or an answers file (no TTY needed), and a root-prefix option lets checks run it in a temp folder without root and with `systemctl` faked.
 - **Tool versions:** minimum versions for git (2.36.0) and gh (2.3.0). No Bun on the host. OpenCode stays diagnostic-only.
-- **Service user:** chosen in setup, never hard-coded. systemd units are generated from templates embedded in the binary.
-- **Root updater rule:** never execute a binary before its SHA-256 matches the published checksum. Run candidates as the service user, never as root.
+- **Service user:** chosen in setup (default a dedicated `atlas` account), never hard-coded. systemd units are generated from templates embedded in the binary.
+- **Root updater rule:** never execute a binary before its SHA-256 matches the published checksum. Run candidates as the service user, never as root. Fetch Release metadata itself, only move forward to a higher build, and keep state in root-only `/var/lib/atlas-updater`.
 - **Release pipeline:** manual `workflow_dispatch` with a `patch`/`minor`/`major` bump, an allowlist of releasers (`SandunRathsara`), the full check gate first, a build job with a read-only token, and a separate publish job that re-checks the SHA-256 and runs no repo code. Every Action is pinned to a commit SHA. `check.yml` runs fast checks on PRs and full checks plus a throwaway packaging check on `main`.
 - **Out of scope:** musl/Alpine, arm64, installing git/gh/OpenCode, Tailscale Funnel or the firewall, moving the owner's server (the owner runs adopt mode by hand).
 

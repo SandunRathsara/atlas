@@ -9,7 +9,7 @@ Answers: where is today's shipped implementation? Organized by capability and co
 | `src/cli.ts` | The only entry point: the compiled `atlas` binary and `bun src/cli.ts`. Lazily loads one subcommand: `serve`, `credentials`, `updater`, `gh`, `git-credential`, `setup`, `ops`, `version`. Each module exports `run(args)`. |
 | `src/server.ts#run` (`atlas serve`) | UI process. Loads env and release identity (`src/runtime.ts#defaultReleaseRoot` or `ATLAS_RELEASE_ROOT`), configures independent credential/updater clients, restores an activation-owned safe pause when needed, starts SQLite, Repository refresh and Release discovery, serves UI + webhook listeners, and shuts down without owning either surviving socket. |
 | `src/credential-server.ts#run` (`atlas credentials`) | Independent credential supplier process. Owns the authenticated Unix-socket boundary and survives Atlas UI restarts. |
-| `src/updater-server.ts#run` (`atlas updater`) | Independent root policy/staging/activation/recovery/retention process. Reports host git/gh versions, owns the updater socket, reads canonical Session helper references, controls only `atlas.service`, checks activation health in-process (`checkActivationHealth`), and resumes durable host work after its own restart. Runs candidates as `ATLAS_SERVICE_USER`, never as root. |
+| `src/updater-server.ts#run` (`atlas updater`) | Independent root policy/staging/activation/recovery/retention process. Reports host git/gh versions, owns the updater socket, reads canonical Session helper references, controls only `atlas.service`, checks activation health in-process (`checkActivationHealth`), and resumes durable host work after its own restart. Runs candidates as `ATLAS_SERVICE_USER`, never as root. Takes only tags over the socket and fetches each Release's metadata itself. |
 | `src/commands/gh.ts#run` (`atlas gh`) | Scoped `gh` wrapper behind the Release `bin/gh` shim. Skips shims on `PATH` by `RELEASE_SHIM_MARKER`. |
 | `src/commands/git-credential.ts#run` (`atlas git-credential`) | Git credential helper used by preparation and the Release `bin/git-credential-atlas` shim. Fails closed with `quit=true`. |
 | `src/commands/setup.ts` → `src/setup/run.ts#runSetup` (`atlas setup`) | Root installer: fresh install, safe re-run, or adopt of the older Bun/source-tree layout. See **Install and setup**. |
@@ -19,7 +19,7 @@ Answers: where is today's shipped implementation? Organized by capability and co
 | `justfile#dev` | Local bootstrap then `bun run dev`. `justfile#checklist` opens the bearings previewer. |
 | `src/app.ts#createApp` | Private UI Hono app; returned `AtlasApp.updatePause` coordinates preparation/handoff for explicit or same-SemVer automatic activation and can start held while surviving host work completes. |
 | `src/webhook.ts#createWebhookApp` | Webhook-only Hono app. |
-| `install.sh` | POSIX `sh` installer (fourth Release asset). Refuses non-Linux-x64 or musl, downloads the binary, sidecar and metadata (latest or `--version`/`ATLAS_VERSION`), checks SHA-256 and metadata, then runs `sudo atlas setup --source-dir <download> …`. With no terminal and no answers it keeps the files and prints that command. Never lays out `/opt/atlas`. Test hook `ATLAS_INSTALL_BASE_URL`. |
+| `install.sh` | POSIX `sh` installer (fourth Release asset), root only (`curl … | sudo sh`; without root it prints the `sudo sh` command and downloads nothing). Refuses non-Linux-x64 or musl, downloads the binary, sidecar and metadata (latest or `--version`/`ATLAS_VERSION`) into a new root-only folder under `/var/tmp` (`TMPDIR` ignored; binary `0500`), checks SHA-256 and metadata, then runs `atlas setup --source-dir <folder> …`. With no terminal and no answers it keeps that folder and prints the command to run as root. Never lays out `/opt/atlas`. Whole script is one function called on the last line. Test hooks `ATLAS_INSTALL_BASE_URL`, `ATLAS_INSTALL_TMP_PARENT`. |
 | `scripts/build-binary.ts` (`build:binary`) | Builds CSS, then `bun build --compile --target=bun-linux-x64-baseline src/cli.ts`, defining `__ATLAS_RELEASE_TAG__`/`__ATLAS_RELEASE_SHA__`. |
 | `scripts/build-release.ts` (`build:release`), `scripts/release.ts` | The only Release producer: clean checkout at `HEAD`, `@opencode/client` agreement across `package.json`/`bun.lock`/`node_modules`, then exactly `atlas-linux-x64`, `.sha256`, schema-2 `atlas-release.json`, `install.sh`. `scripts/release.ts validate` checks the next tag against published tags. |
 | `.github/workflows/check.yml` | PRs: fast tier (install, typecheck, CSS, `deploy/verify-*.sh`, clone-scope, repository-filter). Push to `main` and `workflow_call`: full tier (every `verify:*` script plus a throwaway `scripts/verify-release-artifact.sh` build). Read-only token. |
@@ -158,7 +158,7 @@ Shared markup: `src/views/html.ts` (`escapeHtml`, `safeExternalUrl`, `renderDocu
 
 ### Recovery status — `src/recovery-status.ts#readRecoveryStatus`
 
-Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas reads host-written status; it does not take snapshots.
+Types: `RecoveryStatus`, `SpaceRecoveryStatus`, `BackupRecoveryStatus`. Atlas reads host-written status; it does not take snapshots. The root timers write it through `deploy/lib/recovery-status.sh`, which resolves only the folder and, when the folder is not root's, reads and writes as its owner via `setpriv`.
 
 ### Release identity — `src/release.ts`
 
@@ -199,20 +199,34 @@ services/timers that run `<prefix>/current/atlas ops …`. No checked-in units.
 ### Install and setup — `src/setup/run.ts#runSetup`
 
 Order: read the Release (`--source-dir` with `atlas-release.json`, or the
-folder next to the binary) and the host (`readExisting`: `layout` none →
+folder next to the binary; the folder and every parent must be root-owned and
+not group/other-writable, and it is copied to setup's own root-only folder and
+re-checked) and the host (unit and `atlas.env` trusted only when root-only;
+otherwise `atlas.env` secrets are kept and its paths dropped) (`readExisting`: `layout` none →
 fresh, current → re-run, Bun/`src/server.ts` unit → adopt) → `preflight`
-(`src/setup/preflight.ts`: systemd, git, gh at minimums stop setup; missing
-OpenCode warns) → answers (`src/setup/answers.ts#parseSetupArgs`: flags >
-answers file > existing config > prompt) → `--dry-run` plan → adopt: Session
-check, backup + `ROLLBACK.txt`, stop old services → folders, keys, env files,
+(`src/setup/preflight.ts`: systemd, `setpriv`, `getent`, git, gh at minimums
+stop setup; git/gh under `/home` or `/root` or changeable by non-root also stop
+it; `--version` probes run as `nobody` via `SetupHost.runAs`; missing OpenCode
+warns) → answers (`src/setup/answers.ts#parseSetupArgs`: flags > answers file >
+existing config > prompt) → service account (default `atlas`; `useradd
+--system` only with consent or `--create-user`; root refused; an account that
+can become root (`privilegeReasons`: privileged groups or sudo rules) needs a
+yes or `--allow-privileged-user`; re-run/adopt keep the unit's user and warn) → `--dry-run` plan → adopt: Session
+check (read as the service user through `atlas ops session-summary`), backup
+of units + `atlas.env`/`github.env` + `ROLLBACK.txt` (symlink targets recorded,
+not copied), stop old services → folders (`/etc/atlas` `root:<group> 0750`;
+data folder contents created as the service user), App key at the fixed
+`/etc/atlas/github-app.pem`, keys and env files (`atlas.env` root `0600`, the
+rest `root:<group> 0640`; any file whose text changes is backed up first),
 `buildReleaseFolder`, `current` (never moved to an older Release),
 `installShippedSupportServices`, `/usr/local/bin/atlas` link, units,
 maintenance units only on Btrfs, OpenCode config → start and poll `/health`
-→ optional `src/setup/tailscale.ts#setUpTailscale` (serve only; prints
-`funnelHint`). Adopt failure restores the old install if the database schema
+→ optional `src/setup/tailscale.ts#setUpTailscale` (serve only; an existing
+or unreadable serve config is replaced only after a yes; prints `funnelHint`). Adopt failure restores the old install if the database schema
 did not change. All host access goes through `src/setup/host.ts#SetupHost`
 (`--root` prefix, fake commands in checks); writes use `src/setup/files.ts`
-(atomic, no symlink follow, backup before change).
+(atomic replace, never chmod/chown in place, no symlink follow, unsafe parents
+refused, backup before change).
 
 ### Release discovery — `src/update-discovery.ts#createUpdateService`
 
@@ -237,8 +251,13 @@ status.
 Returns `{ start, close, status, setPolicy, requestStage, prepareActivation, beginActivation, abandonActivation }`; exported `installShippedSupportServices` builds the candidate's binary into a support bundle with `buildReleaseFolder` and atomically selects it; `createUpdaterClient` returns
 the UI-side authenticated Unix-socket `UpdaterClient`. Types: `UpdaterStatus`,
 `UpdaterResult`, `UpdatePolicy`, `CleanupStatus`, `RuntimeRequirements`, `HostRuntime`; release-bearing results and suppression/cleanup collections use validated `ReleaseTag`. The independent service
-atomically writes `/var/lib/atlas/update-state.json`, serializes one request,
-downloads the named binary and its `.sha256` sidecar, and builds the Release
+atomically writes `/var/lib/atlas-updater/update-state.json` (root-only
+`StateDirectory`; a file not owned by the updater or group/other-writable is
+ignored), serializes one request, takes only a tag from the socket, fetches
+that tag's `atlas-release.json` itself (64 KiB cap), refuses a build not above
+the active one, then downloads over HTTPS only (at most five https redirects,
+streamed with size caps; the binary must match the metadata size) the named
+binary and its `.sha256` sidecar, and builds the Release
 folder under `/opt/atlas/releases` with `buildReleaseFolder` (SHA-256 before
 execution, identity check as the service user). It reuses intact staged
 folders and resumes an active durable request after restart. The same schema-2
@@ -250,10 +269,11 @@ Immediately before safe pause it revalidates host git/gh against
 `minimumHostTools`. After a confirmed safe checkpoint it stops only Atlas, atomically selects the
 complete candidate, restarts Atlas, and requires exact Atlas identity plus
 healthy persistence within 60 seconds; failure selects/restarts/verifies the
-previous Release. After candidate health succeeds, it builds the candidate
+previous Release only if its recorded folder is still intact (otherwise
+`rollback_failed`). After candidate health succeeds, it builds the candidate
 binary into a read-only support bundle under `/opt/atlas/services/releases`
-and atomically selects `/opt/atlas/services/current` without restarting the
-running services. It then removes only managed Release folders older than current
+and atomically selects `/opt/atlas/services/current` (never replacing a
+selected bundle of a higher build) without restarting the running services. It then removes only managed Release folders older than current
 after protecting current, previous-working, staged/in-flight, and every tree
 containing a canonical Session helper reference. Cleanup targets/outcomes are
 durable, partial cleanup is re-evaluated after restart, and failure remains
@@ -281,9 +301,10 @@ support bundles, Session/data paths, credentials, or host tools.
 each `atlas-release.json` → `Persistence.recordUpdateDiscoverySuccess` (or a
 retaining failure) → updater policy selects newest overall in approval mode or
 the highest newer numeric build of the exact installed SemVer in automatic mode
-→ selected metadata over
+→ selected tag over
 `src/updater.ts#createUpdaterClient` → independent `src/updater-server.ts` →
-durable requested/downloading/verifying/preparing/result state → binary and
+self-fetched metadata + forward-only check → durable
+requested/downloading/verifying/preparing/result state → binary and
 sidecar download, sidecar check → `src/release-layout.ts#buildReleaseFolder`
 (SHA-256, identity as the service user) → atomic read-only Release folder. GET `/updates`
 and `/updates/status` read both stores and prefer matching durable updater state
@@ -341,13 +362,15 @@ answers `/health` → upload with a digest → publish (no checkout): re-check
 digest and checksum, one `gh release create` makes tag + Release. Nothing is
 tagged if any earlier job fails; `dry_run` stops before publishing.
 
-**Install / re-run / adopt.** `install.sh` → download + SHA-256 →
-`sudo atlas setup --source-dir <download>` → `src/setup/run.ts#runSetup`
+**Install / re-run / adopt.** `curl … | sudo sh` → `install.sh` (root only) →
+download into a root-only `/var/tmp` folder + SHA-256 →
+`atlas setup --source-dir <folder>` → `src/setup/run.ts#runSetup`
 (see **Install and setup**). Re-run keeps secrets and config unless
 `--rotate-*` or answers change them, backs up changed files to
 `/var/backups/atlas/setup-<time>/`, and restarts services only when something
-changed. Adopt stops `atlas` → `atlas-updater` → `atlas-credentials`, never
-OpenCode.
+changed. Adopt keeps the existing service user (warning once if it is privileged),
+moves secrets it owned to `root:<group> 0640`, and stops `atlas` →
+`atlas-updater` → `atlas-credentials`, never OpenCode.
 
 ## Shared Utilities and Infrastructure
 
@@ -386,7 +409,7 @@ OpenCode.
 
 **OpenCode:** `@opencode/client` `2.3.2` compiled into the binary (exact pin in `package.json` and `bun.lock`; reported as `openCodeClient` in metadata) against an independently running server with no version gate. Service file default `$XDG_STATE_HOME/opencode/service.json` or `OPENCODE_SERVICE_FILE`. Host: default `/opt/atlas/tools/opencode/current/bin/opencode` (setup `--opencode` may choose another path; `src/setup/preflight.ts#DEFAULT_OPENCODE`) on `127.0.0.1:49475`, `--log-level warn`, `XDG_CONFIG_HOME=/var/lib/atlas/opencode-config` holding the headless `opencode/opencode.json`.
 
-**Filesystem:** Session directories under `ATLAS_SESSION_ROOT`; credential scopes and canonical helper references in owner-controlled exact-`0600` `session-scopes.json`; supplier socket `0600`, owned by `atlas-credentials.service`; updater socket `0660`, owned by `atlas-updater.service`; immutable service bundles under `/opt/atlas/services/releases` with atomically selected `/opt/atlas/services/current`; durable updater policy/staging/activation/cleanup state at `/var/lib/atlas/update-state.json`; read-only Release folders under `/opt/atlas/releases`; atomically selected `/opt/atlas/current` symlink. Cleanup is confined to older managed Release directories and retains actual selected/staged/in-flight/helper-referenced folders; support bundles are outside its boundary.
+**Filesystem:** Session directories under `ATLAS_SESSION_ROOT`; credential scopes and canonical helper references in owner-controlled exact-`0600` `session-scopes.json`; supplier socket `0600`, owned by `atlas-credentials.service`; updater socket `0660`, owned by `atlas-updater.service`; immutable service bundles under `/opt/atlas/services/releases` with atomically selected `/opt/atlas/services/current`; durable updater policy/staging/activation/cleanup state at root-only `/var/lib/atlas-updater/update-state.json` (the updater sees the data folder read-only); read-only Release folders under `/opt/atlas/releases`; atomically selected `/opt/atlas/current` symlink. Cleanup is confined to older managed Release directories and retains actual selected/staged/in-flight/helper-referenced folders; support bundles are outside its boundary.
 
 **Update pause:** process-local generation and service hold flags only. Session identity, prompt, target, ordering, preparation/handoff uncertainty, execution-slot ownership, and reservations remain in existing SQLite rows/checkpoints. A restarting Atlas restores the hold from durable updater activation state; terminal host status releases it.
 
@@ -404,9 +427,13 @@ compiled into the binary. Untagged source has no metadata file and reports
 `published: false`.
 
 **Host layout written by setup:** `/opt/atlas/{releases,current,services}`,
-`/usr/local/bin/atlas` → `/opt/atlas/current/atlas`, `/etc/atlas/{atlas.env,github.env,supplier.key,updater.key}`,
-`/var/lib/atlas`, units in `/etc/systemd/system`, backups in
-`/var/backups/atlas`. The service user is chosen in setup.
+`/usr/local/bin/atlas` → `/opt/atlas/current/atlas`, `/etc/atlas` (`root:<group> 0750`) with
+`atlas.env` (root `0600`) and `github.env`, `github-app.pem`, `supplier.key`,
+`updater.key` (`root:<group> 0640`), `/var/lib/atlas` (service user `0700`),
+`/var/lib/atlas-updater` (root, `0700`), units in `/etc/systemd/system`,
+backups in `/var/backups/atlas`. The service user defaults to a dedicated
+`atlas` system account (home `<data>/home`). `src/credentials.ts` accepts a
+secret that is root-owned and not group-writable or other-readable.
 
 ## Change Hazards
 
@@ -423,9 +450,10 @@ compiled into the binary. Untagged source has no metadata file and reports
 - **No GitHub mutation from Atlas.** `GitHubClient` is read-only. Reservation release and target reconfirmation change SQLite only. Agent may publish via scoped git/gh; Atlas must not grow write APIs.
 - **Theme tokens.** Hex values live only in `src/styles.css` (light and dark blocks must stay in step) and are described in `DESIGN.md`. Rebuild with `bun run build:css` (`public/app.css` is generated, not committed, and must exist before anything imports `src/assets.ts`).
 - **Binary vs source.** Branch on `src/runtime.ts` only. New runtime files must be embedded (`with { type: "file" }` or `"text"`) and new subcommands use a literal `import()` in `src/cli.ts`, or `bun build --compile` will miss them. Nothing at runtime may need Bun, `node_modules`, or a source tree on the host.
+- **Updater trust.** The socket carries tags only; never let it accept caller metadata. Keep staging/activation forward-only, downloads https-only and size-capped, and state root-only.
 - **Root never runs an unverified binary.** Every Release folder comes from `buildReleaseFolder`: hash the copy before running it, run it only as the unprivileged service user, refuse identity mismatch, never overwrite a non-intact folder. Do not add a second folder builder (setup, staging, and support bundles share it).
 - **Units come from `src/units.ts` only.** There are no checked-in unit files; `deploy/verify-assets.sh` renders and checks them. Services refuse `root` as user/group.
-- **Setup safety.** Preflight must stay change-free. Re-runs keep secrets unless `--rotate-*`, back up before changing, and never move `current` to an older Release. Adopt backs up and stops services before writing and restores only when the database schema is unchanged. Setup never restarts OpenCode outside a fresh install, never touches the firewall, and never runs `tailscale funnel`. Keep host access behind `SetupHost` so `scripts/verify-setup.ts` can fake it.
+- **Setup safety.** Root never acts on a path the service account can change: no symlink follows, safe parents only, replace-not-edit, and everything inside the data folder is done as that account. Preflight must stay change-free. Re-runs keep secrets unless `--rotate-*`, back up before changing, and never move `current` to an older Release. Adopt backs up and stops services before writing and restores only when the database schema is unchanged. Setup never restarts OpenCode outside a fresh install, never touches the firewall, and never runs `tailscale funnel`. Keep host access behind `SetupHost` so `scripts/verify-setup.ts` can fake it.
 - **Release pipeline trust.** Only the publish job has a write token, and it runs no repo code. Keep Actions pinned to commit SHAs, the `RELEASERS` allowlist in both plan and publish, and the asset set exactly four files.
 - **Two ports.** `ATLAS_WEBHOOK_PORT !== ATLAS_PORT`. Both `127.0.0.1`. Funnel webhook only.
 - **WAL SQLite.** Required except in-memory. One writer. `restoreStartup` reclaims unfinished ownership; do not skip health restore.
@@ -497,9 +525,9 @@ compiled into the binary. Untagged source has no metadata file and reports
 | `bun run verify:issue56` | Real-SQLite coordinated preparation/handoff pause against a 2.3.2-shaped OpenCode fixture, controlled clone/prompt effects, timeout/resume, deadline-free restart hold, uncertainty/no-duplicate behavior (repeated-prompt-ID counter must stay 0; fixture serves `/api/experimental/job`), independent restrictions, and Running/Waiting/Idle non-blocking behavior. |
 | `bun run verify:issue57` | `scripts/verify-release.ts` (tag/order/global-sequence rules, schema-2 metadata, embedded identity, authenticated health identity) then `scripts/verify-release-artifact.sh` (builds the four files from a clean checkout, checks sidecar and metadata, runs the binary with no Bun on `PATH`, `/health` and `/health?activation=1` with OpenCode not ready and the pinned `clientVersion`). |
 | `bun run verify:binary` | Compiled binary from an empty folder with no Bun: `version`, dispatcher/help, fail-closed `git-credential`/`gh` and their shims, `serve` health identity and embedded assets. |
-| `bun run verify:setup` | `atlas setup` under `--root <tmp>` with a fake host: fresh, dry run, idempotent re-run, rotation, preflight stops, health failure, Btrfs units, adopt (data/secrets unchanged, backup, stop order, Session gate, automatic restore), every Tailscale branch. |
-| `bun run verify:install-script` | Real `install.sh` against a local HTTP fixture: latest/pinned URLs, bad version, SHA/metadata mismatch, aarch64, musl, no sudo, exit codes, no-terminal handoff, temp cleanup, `sh -n`/`dash -n`/`shellcheck -s sh`. |
-| `bash scripts/e2e-install-docker.sh [image…]` | Manual, needs Docker. Ubuntu 24.04 and Debian 12 systemd containers with stock git/gh: real fresh install via `install.sh`, update by re-run, and adopt of the older Bun layout. Not in CI. |
+| `bun run verify:setup` | `atlas setup` under `--root <tmp>` with a fake host: fresh (tools probed as `nobody`, data folders made by the service user), service-account creation/refusal/privileged checks, unsafe source/tool paths, dry run, idempotent re-run, rotation, preflight stops, health failure, Btrfs units, adopt (data/secrets unchanged, backup, stop order, Session gate, automatic restore), every Tailscale branch. |
+| `bun run verify:install-script` | Real `install.sh` against a local HTTP fixture: latest/pinned URLs, bad version, SHA/metadata mismatch, aarch64, musl, not root (refused before download), root-only `/var/tmp` folder, exit codes, no-terminal handoff, temp cleanup, `sh -n`/`dash -n`/`shellcheck -s sh`. |
+| `bash scripts/e2e-install-docker.sh [image…]` | Manual, needs Docker. Ubuntu 24.04 and Debian 12 systemd containers with stock git/gh: non-root refusals, real fresh install via `install.sh | sudo sh` with `--create-user`, owners/modes, recovery-status symlink safety, update by re-run, and adopt of the older Bun layout. Not in CI. |
 | `bun run verify:issue58` | Authenticated Updates HTTP/CSRF/value-preserving mutation failures, isolated live-status polling, labelled pending states, responsive global navigation, startup/four-hour/manual discovery, candidate retention/failures/ordering, runtime/maintenance presentation, updater socket/binary download failure/coalescing, durable restart status, and unchanged active selection/admission. |
 | `bun run verify:issue59` | Authenticated Install/Retry HTTP, durable approval/lost-response coalescing, safe-pause timeout and conservative startup reconciliation, runtime revalidation, atomic activation/support-bundle selection, Atlas-only identity/storage health, rollback/failure, failed-tag suppression, updater restart reconciliation, and unchanged shared data/OpenCode ownership. |
 | `bun run verify:issue60` | Default/persisted policy, authenticated policy HTTP/CSRF, same-SemVer numeric candidate selection ahead of newer SemVer, startup/scheduled/manual parity, existing-path automatic activation, overlap serialization, policy-change continuity, failed-build restart suppression/Retry, and later-build eligibility. |
@@ -515,4 +543,4 @@ compiled into the binary. Untagged source has no metadata file and reports
 | `bash deploy/verify-opencode-commands.sh` | Isolated server-only `bin/opencode` staging/integrity, `current` preflight selection, no-activation, embedded-Bun WAL probe (scrubbed env; rejects unfixed SQLite, missing Bun runtime, or a second embedded SQLite build), headless config installer (modes, idempotence, backup, `opencode.jsonc`/symlink refusal, no lifecycle, non-owner refusal, and root-to-owner privilege drop via a user namespace when available), and the credential scrub fixture (WAL-only and free-page secrets removed, unrelated rows kept, unknown store and missing file refused). |
 | `atlas ops verify-sqlite-wal` | Host-only, writers stopped. The binary's own SQLite (`atlas ops sqlite-version`) plus the selected OpenCode executable's own SQLite, read through its embedded Bun runtime (`BUN_BE_BUN=1`, `bun:sqlite`) in a throwaway scrubbed environment; requires exactly one embedded SQLite source ID. Assumes OpenCode uses `bun:sqlite`; a build without the embedded Bun CLI or with a second SQLite build fails closed. |
 
-<!-- repo-map-synced: 6bc43291f5448a895a7e09b559c8e35b8ac8bd93 -->
+<!-- repo-map-synced: b711a769e49c7d26dfdabb45b88111b4cbf43f41 -->

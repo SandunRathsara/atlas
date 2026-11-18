@@ -1,6 +1,6 @@
 # Atlas releases
 
-Atlas publishes immutable Linux x64 Releases from tags. Each Release is one
+Atlas publishes immutable Linux x64 Releases from a manual release workflow. Each Release is one
 compiled `atlas` binary; the host needs no Bun.
 The initial release identity is `v0.1.0+build.1`.
 
@@ -8,8 +8,10 @@ The initial release identity is `v0.1.0+build.1`.
 
 Release tags have the exact form `vMAJOR.MINOR.PATCH+build.BUILD`, using decimal
 integers without leading zeroes and a positive build number. The tag is the
-only maintained release identity; CI generates SemVer, build, and exact Git SHA
-metadata from it. An ordinary untagged checkout reports itself as unpublished
+only maintained release identity. Nobody pushes it by hand: the release
+workflow computes the next tag from the published Releases, embeds it with
+SemVer, build, and the exact Git SHA into the binary and metadata
+(`scripts/build-release.ts`), then creates the tag and Release together. An ordinary untagged checkout reports itself as unpublished
 development code rather than borrowing a release identity.
 
 SemVer communicates intended Atlas behavior: fixes increment patch, features

@@ -4,13 +4,13 @@ This repository contains the runnable Atlas slice: private sign-in, durable Repo
 
 ## Install on a server
 
-One line, as a user with `sudo` (Linux x64 with systemd; install git ≥ 2.36.0 and gh ≥ 2.3.0 first; OpenCode is needed to run Sessions):
+One line, run as root (Linux x64 glibc with systemd; install git ≥ 2.36.0 and gh ≥ 2.3.0 system-wide first; OpenCode is needed to run Sessions):
 
 ```sh
-curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sudo sh
 ```
 
-It downloads the `atlas` binary, checks its SHA-256, and runs `atlas setup`. The host needs no Bun. Details, re-runs, and adopting an older install: [`docs/INSTALL.md`](docs/INSTALL.md).
+It downloads the `atlas` binary into a root-only folder, checks its SHA-256, and runs `atlas setup`. Atlas runs as a dedicated `atlas` system account, created only if you agree. The host needs no Bun. Details, re-runs, and adopting an older install: [`docs/INSTALL.md`](docs/INSTALL.md). Updates are trusted through HTTPS and a SHA-256 (no signature), and Sessions can read the GitHub App key: read [Security model and known limits](docs/INSTALL.md#security-model-and-known-limits) first.
 
 ## Run locally
 
@@ -42,7 +42,7 @@ The credential file is a non-shell `KEY=value` file with mode `0600`; it contain
 
 `just dev` starts the credential supplier as a sibling process so UI watch restarts do not interrupt it. When running `bun run dev` directly, run `bun run credentials` separately first. `ATLAS_DATABASE_PATH` optionally selects the SQLite file; it defaults to `./data/atlas.sqlite`. Migrations run before the server starts and configure foreign keys, WAL, and `synchronous=FULL`. Webhook delivery IDs are retained for 30 days; accepted deliveries only increment durable refresh generations, and authoritative GitHub reads run in the background.
 
-The global `/updates` page checks public GitHub Releases at startup, every four hours, and through **Check now**. Production staging and activation are handled by the independently installed updater service through `ATLAS_UPDATER_SOCKET` and `ATLAS_UPDATER_KEY_PATH`; local development without that service reports updates as unavailable rather than changing an active release. **Install** records approval, waits for the existing safe preparation/handoff checkpoint, atomically selects the staged release, and verifies exact Atlas identity plus storage health. A failed candidate restores the previous release and requires explicit **Retry**. OpenCode and the credential supplier keep running and are excluded from the activation health gate.
+The global `/updates` page checks public GitHub Releases at startup, every four hours, and through **Check now**. Production staging and activation are handled by the independently installed updater service through `ATLAS_UPDATER_SOCKET` and `ATLAS_UPDATER_KEY_PATH`; local development without that service reports updates as unavailable rather than changing an active release. **Install** records approval, waits for the existing safe preparation/handoff checkpoint, atomically selects the staged release, and verifies exact Atlas identity plus storage health. Only newer builds are staged; the updater fetches each Release's metadata itself. A failed candidate restores the previous release and requires explicit **Retry**. OpenCode and the credential supplier keep running and are excluded from the activation health gate.
 
 `bun run demo` starts a local UI demo with seeded data on `http://127.0.0.1:4141/__demo` (token `demo`; set `ATLAS_DEMO_PORT` to change the port); it makes no GitHub or OpenCode calls.
 

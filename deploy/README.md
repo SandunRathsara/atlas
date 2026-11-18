@@ -57,20 +57,20 @@ there are no checked-in copies. `verify-assets.sh` renders and checks them.
 - `atlas-updater.service` runs as the surviving host authority from
   `/opt/atlas/services/current/atlas updater`, owns its authenticated Unix socket,
   downloads and verifies the public Atlas binary, builds Release folders, records durable policy,
-  staging, activation, and cleanup state under `/var/lib/atlas`, atomically selects
+  staging, activation, and cleanup state under root-only `/var/lib/atlas-updater`, atomically selects
   `/opt/atlas/current`, and stops/restarts only `atlas.service`. Its unit does
   not import or execute Atlas's environment. For candidate validation, it reads
   only the shared token and UI port as data from the restricted `atlas.env`,
   and requests the Atlas-only health response itself
   (`src/updater-server.ts#checkActivationHealth`). It never controls or inspects OpenCode.
-- `atlas.service` runs `/opt/atlas/current/atlas serve` as `omega` with the Release's Git wrapper,
+- `atlas.service` runs `/opt/atlas/current/atlas serve` as the service user (default `atlas`) with the Release's Git wrapper,
   `HOME`, `PATH`, working directory, crash restart, bounded journal rate, and
   `/etc/atlas/atlas.env`. It connects to, but does not own, either surviving
   service socket.
 - `opencode.service` independently runs the operator-selected server as
-  `omega`, bound to `127.0.0.1:49475` with `--service` discovery. The fixed port
+  the service user, bound to `127.0.0.1:49475` with `--service` discovery. The fixed port
   keeps it off OpenCode's default background-service port, which an
-  interactive OpenCode for the same `omega` user may use. Atlas still finds the
+  interactive OpenCode for the same user may use. Atlas still finds the
   URL and password through the registration file
   (`OPENCODE_SERVICE_FILE`, `opencode-state/opencode/service.json`), not the
   port. Its preflight follows `current`, validates the executable, and reports
@@ -131,8 +131,8 @@ Limits (Waiting is still possible):
   wait for approval.
 - Only the `question` form is blocked unconditionally.
 - The `/etc/atlas` deny closes only OpenCode's file tools. The shell tool is
-  allowed by default and runs as `omega`, so an agent can still read any file
-  `omega` can read, including `/etc/atlas` files readable by `omega`. That is a
+  allowed by default and runs as the service user, so an agent can still read any file
+  that user can read, including the group-readable `/etc/atlas` keys. That is a
   pre-existing property of running the agent as that user.
 - Idle servers still fetch the public model catalog from `models.opencode.ai`.
 
@@ -167,7 +167,7 @@ Limits (Waiting is still possible):
 
 Do not create nested subvolumes or rely on symlinks to include external data.
 Before activation, inventory every real OpenCode data/config path and verify the
-target is on the encrypted Btrfs pool. The shared `omega` identity is not
+target is on the encrypted Btrfs pool. The shared service user is not
 hostile-agent isolation. Refresh `recovery-config/current` after any accepted
 configuration, unit, route, firewall, binary, or release change; the previous
 copy is retained for rollback.

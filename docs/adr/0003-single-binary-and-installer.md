@@ -4,6 +4,8 @@
 
 Accepted on 2026-11-18 when the owner directed the full single-binary implementation and the first Release from it (`docs/single-binary-plan.md`), and the same day asked for native Tailscale Serve support in setup.
 
+Amended on 2026-11-18, at the developer's direction after a security review, so the text matches the hardened implementation: `install.sh` runs only as root, the default service user is a dedicated `atlas` account, and the root updater fetches Release metadata itself, is forward-only, and keeps its state under root-owned `/var/lib/atlas-updater`. No decision changed direction.
+
 Partially supersedes [ADR-0002](0002-versioned-releases-and-graceful-self-updates.md) (packaging, publishing trigger, and bootstrap). See Supersession.
 
 ## Context
@@ -46,7 +48,7 @@ Not in scope: Release identity and ordering, discovery, update policy, safe paus
 
 ### 3. `install.sh` and `atlas setup`
 
-- `install.sh` downloads the latest Release binary, checks its SHA-256 against the sidecar from the same Release, and runs `atlas setup` as root.
+- `install.sh` runs only as root (`curl … | sudo sh`). It downloads the latest Release binary into a new root-only folder, checks its SHA-256 against the sidecar from the same Release, and runs `atlas setup` from there.
 - `atlas setup` has three modes: fresh install, re-run (keeps config and keys), and adopt (an older Bun/source-tree install, detected from its `atlas.service`; it backs up the old units and env files and writes `ROLLBACK.txt`).
 - Setup checks systemd, git, and gh, lists anything missing with a fix-it hint, and stops before changing anything. A missing OpenCode is a warning. Setup does not install any of them.
 - Setup writes only Atlas's own config, keys, folders, Release folder, support bundle, systemd units, journald config, and headless OpenCode config. All unit text comes from one source file. Btrfs snapshot and space-check timers are added only on a Btrfs data folder.
@@ -56,11 +58,14 @@ Not in scope: Release identity and ordering, discovery, update policy, safe paus
 ### 4. Host tools and service user
 
 - git and gh are minimum versions, not exact pins: git ≥ 2.36.0, gh ≥ 2.3.0. The metadata carries them; the updater and the `bin/git` wrapper enforce them.
-- The service user is chosen at setup (not root). Nothing hard-codes a user name.
+- The service user is chosen at setup and is never root. The default is a dedicated `atlas` system account, created only with consent. An account that can become root is refused unless explicitly allowed; adopt keeps the existing user and warns. Nothing hard-codes a user name.
+- Everything that runs as root (installer, setup, updater) treats the service user as untrusted: secrets in `/etc/atlas` are root-owned and only group-readable, and root never follows or re-permissions a path that account can change.
 
 ### 5. Root updater rule
 
 - The root updater never runs a binary it has not verified (SHA-256 from the same Release, then embedded metadata).
+- Callers send only a tag. The updater fetches that Release's `atlas-release.json` itself over HTTPS and refuses any build not higher than the active one (forward-only). Downloads are streamed with size caps.
+- Its state lives in root-owned `/var/lib/atlas-updater`, not in the service user's data folder.
 - It runs candidate binaries only through `setpriv` as the service user.
 
 ## Alternatives
@@ -76,11 +81,14 @@ Not in scope: Release identity and ordering, discovery, update policy, safe paus
 - The binary is about 90 MiB, larger than the source archive.
 - Only Linux x64 glibc is built. No musl, no arm64.
 - Trust is HTTPS plus a SHA-256 from the same GitHub Release. There is no signature, so a compromised Release would pass the check.
-- Staging now downloads and verifies a binary instead of extracting an archive. The updater state and Release metadata moved to schema 2; a schema-1 state file resets to idle and keeps its policy.
+- Sessions run as the same account as the credentials service, so a Session can read the App key, the supplier key, and the updater key (documented in `docs/INSTALL.md`).
+- Staging now downloads and verifies a binary instead of extracting an archive. The updater state and Release metadata moved to schema 2, and the state moved to `/var/lib/atlas-updater`; a schema-1 state file resets to idle and keeps its policy.
 - Many `deploy/` scripts, unit files, and wrapper scripts were deleted; their behavior now lives in the binary (`atlas ops`, `src/units.ts`, `src/release-layout.ts`).
 - Verification: `bun run verify:binary`, `verify:setup`, `verify:install-script`, `verify:issue57`, the CI `check.yml` gate, and the Docker systemd check `scripts/e2e-install-docker.sh` (not in CI).
 
 ## Supersession
+
+Amended on 2026-11-18, at the developer's direction after a security review, so the text matches the hardened implementation: `install.sh` runs only as root, the default service user is a dedicated `atlas` account, and the root updater fetches Release metadata itself, is forward-only, and keeps its state under root-owned `/var/lib/atlas-updater`. No decision changed direction.
 
 Partially supersedes [ADR-0002](0002-versioned-releases-and-graceful-self-updates.md):
 

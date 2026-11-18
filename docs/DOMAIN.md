@@ -119,20 +119,31 @@ development identity.
 
 ### Install and set up
 
-The operator runs `install.sh` (one `curl … | sh` line). It downloads the latest
-Release binary, checks it against the SHA-256 from the same Release, and runs
-`atlas setup` as root. Setup checks systemd, git, and gh and stops with a fix-it
+The operator runs `install.sh` as root (one `curl … | sudo sh` line; without
+root it stops before downloading). It downloads the latest Release binary into a
+root-only folder, checks it against the SHA-256 from the same Release, and runs
+`atlas setup` from there. Setup checks systemd, git, and gh and stops with a fix-it
 hint if any is missing (a missing OpenCode is only a warning); it does not
 install them. It then writes Atlas's own config,
 keys, folders, Release folder, systemd units, and headless OpenCode config,
-starts the services, and checks health. Services run as a chosen non-root
-service user. After an explicit yes it can put the UI behind Tailscale Serve;
-it never turns on Funnel and only prints the Funnel command for the webhook.
+starts the services, and checks health. Secrets in `/etc/atlas` are owned by
+root; the service user can read them but not change them.
+
+Services run as a non-root service user, by default a dedicated `atlas` system
+account that setup creates only after a yes (or `--create-user`). Setup refuses
+root, and refuses an account that can become root (sudo, wheel, docker, …)
+unless the operator explicitly allows it. Everything that runs as root treats
+the service user as untrusted.
+
+After an explicit yes it can put the UI behind Tailscale Serve. It never
+replaces another or unreadable serve config without a yes, never turns on
+Funnel, and only prints the Funnel command for the webhook.
 
 Running setup again keeps existing config and keys. On a host with an older
-Bun/source-tree install, setup adopts it: it backs up the old units and env
-files, writes `ROLLBACK.txt`, and switches to the binary layout while keeping
-data and secrets.
+Bun/source-tree install, setup adopts it: it keeps the existing service user
+(warning if it is privileged), backs up the old units and env files, writes
+`ROLLBACK.txt`, and switches to the binary layout while keeping data and
+secrets.
 
 ### Discover and stage Release
 
@@ -142,9 +153,11 @@ orders Releases by SemVer and then numeric build, and persists the complete
 known candidate set. A failed check retains that set and remains distinct from a
 successful check that found no newer Release.
 
-When a newer Release is available, Atlas requests staging over an authenticated
-Unix socket. The independently running updater durably records the request,
-progress, host-runtime requirements, and latest result; downloads the binary,
+When a newer Release is available, Atlas requests staging of its tag over an
+authenticated Unix socket. The independently running updater fetches that
+Release's metadata itself, refuses anything whose build is not newer than the
+active Release, durably records the request, progress, host-runtime
+requirements, and latest result; downloads the binary over HTTPS,
 verifies its SHA-256 and embedded metadata; and atomically creates a read-only
 Release folder. Repeated requests coalesce or reuse the completed folder. `/opt/atlas/current`
 and Session admission remain unchanged. The Updates page shows
@@ -295,6 +308,8 @@ _Avoid_: release tree
   exact Atlas identity and healthy persistence within 60 seconds, and never
   gates on or controls OpenCode. Failed tags require Retry; rollback success
   requires verified previous health. Policy and scheduling are installation-local.
+- The updater is forward-only: it stages and activates only published Releases
+  with a higher build than the active one, using metadata it fetched itself.
 - Release cleanup removes only managed Release folders older than current after protecting
   current, previous-working, staged, in-flight, and every helper-referenced
   Release. Cleanup outcomes and partial work are durable; failure does not alter
@@ -316,6 +331,6 @@ _Avoid_: release tree
   host-side dependency install, and automatic selection/upgrading of Git, gh,
   OS packages, or OpenCode. Release files are trusted by HTTPS plus the SHA-256
   from the same Release; there is no signature.
-- Phase 1 has no off-site backup. Snapshots cannot undo GitHub effects. The shared service user is not hostile-agent isolation.
+- Phase 1 has no off-site backup. Snapshots cannot undo GitHub effects. The service user is not hostile-agent isolation: Sessions run as the same account as credential serving, so a Session can read the GitHub App key and the supplier and updater keys (`docs/INSTALL.md`, Security model).
 
-<!-- repo-map-synced: 6bc43291f5448a895a7e09b559c8e35b8ac8bd93 -->
+<!-- repo-map-synced: b711a769e49c7d26dfdabb45b88111b4cbf43f41 -->
