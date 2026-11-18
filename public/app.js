@@ -209,6 +209,7 @@
       scrollTop: root.querySelector("[data-viewer-content]")?.scrollTop ?? 0,
       scrollY: window.scrollY,
       details: [...root.querySelectorAll("details")].map((detail) => detail.open),
+      folds: Object.fromEntries([...root.querySelectorAll("details[data-fold-key]")].map((detail) => [detail.dataset.foldKey, detail.open])),
       selected,
       activeSelection: active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
         ? { start: active.selectionStart, end: active.selectionEnd }
@@ -221,7 +222,11 @@
     if (content) content.scrollTop = context.scrollTop;
     context.details.forEach((open, index) => {
       const detail = root.querySelectorAll("details")[index];
-      if (detail) detail.open = open;
+      if (detail && !detail.dataset.foldKey) detail.open = open;
+    });
+    root.querySelectorAll("details[data-fold-key]").forEach((detail) => {
+      const open = context.folds?.[detail.dataset.foldKey];
+      if (open !== undefined) detail.open = open;
     });
     const active = (context.activeId && document.getElementById(context.activeId)) || (context.activePath ? nodeAtPath(root, context.activePath) : null);
     if (active instanceof HTMLElement && root.contains(active)) {
@@ -256,16 +261,16 @@
     }
     const status = root.querySelector("[data-viewer-connection-message]");
     if (status) {
-      const text = state === "fresh" ? "" : reason || (state === "auth" ? "Your sign-in expired. Sign in again before refreshing this Session view." : "Live Session data is stale; visible content is retained while Atlas reconciles.");
+      const text = state === "fresh" ? "" : state === "connecting" ? "Connecting to live updates…" : reason || (state === "auth" ? "Your sign-in expired. Sign in again before refreshing this Session view." : "Live Session data is stale; visible content is retained while Atlas reconciles.");
       if (status.dataset.viewerState !== state || status.textContent !== text) {
         status.dataset.viewerState = state;
         status.textContent = text;
       }
-      status.className = state === "fresh" ? "sr-only" : "alert alert-warning alert-soft mt-6 leading-normal";
+      status.className = state === "fresh" ? "sr-only" : state === "connecting" ? "sv-conn sv-conn-quiet" : "sv-conn";
     } else {
       const notice = document.createElement("div");
       notice.dataset.viewerConnectionMessage = "true";
-      notice.className = "alert alert-warning alert-soft mt-6 leading-normal";
+      notice.className = "sv-conn";
       notice.setAttribute("role", "status");
       notice.textContent = reason || (state === "auth" ? "Your sign-in expired. Sign in again before refreshing this Session view." : "Live Session data is stale; visible content is retained while Atlas reconciles.");
       root.querySelector("[data-viewer-content]")?.before(notice);
@@ -373,14 +378,15 @@
         if (controller.stopped || !root.isConnected) return;
         controller.connectionState = "stale";
         controller.connectionReason = undefined;
-        setViewerConnection(root, "stale");
+        setViewerConnection(root, controller.everConnected ? "stale" : "connecting");
         const source = new EventSource(root.dataset.sessionEventsUrl, { withCredentials: true });
         controller.source = source;
         source.addEventListener("connected", () => {
           controller.delay = 1000;
           controller.connectionState = "stale";
           controller.connectionReason = "OpenCode reconnected; Atlas is reconciling this Session view.";
-          setViewerConnection(root, "stale", controller.connectionReason);
+          setViewerConnection(root, controller.everConnected ? "stale" : "connecting", controller.connectionReason);
+          controller.everConnected = true;
           refreshViewer(root, controller);
         });
         source.addEventListener("refresh", () => refreshViewer(root, controller));
@@ -418,6 +424,28 @@
       connect();
     });
   };
+
+  // Session page tabs: links work without JS (?tab=); with JS switch panels in place so the
+  // live Activity viewer keeps its connection.
+  document.addEventListener("click", (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const link = event.target instanceof Element ? event.target.closest("[data-sv-tabs] a[href]") : null;
+    const page = link?.closest("[data-session-page]");
+    if (!link || !page) return;
+    const tab = new URL(link.href, window.location.href).searchParams.get("tab") || "activity";
+    const panel = page.querySelector(`[data-sv-panel="${tab}"]`);
+    if (!panel) return;
+    event.preventDefault();
+    page.querySelectorAll("[data-sv-panel]").forEach((other) => { other.hidden = other !== panel; });
+    link.parentElement?.querySelectorAll("a").forEach((other) => {
+      if (other === link) other.setAttribute("aria-current", "page");
+      else other.removeAttribute("aria-current");
+    });
+    const url = new URL(window.location.href);
+    if (tab === "activity") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", tab);
+    try { history.replaceState(history.state, "", `${url.pathname}${url.search}${url.hash}`); } catch { /* ignore */ }
+  });
 
   window.addEventListener("pagehide", () => {
     [...sessionViewerRoots].forEach((root) => root._atlasViewerClose?.());

@@ -397,8 +397,8 @@ const authHeaders = { Authorization: "Bearer secret" };
 const fullView = await httpApp.fetch(new Request(`http://atlas.test/sessions/${atlasSession.atlasId}/view`, { headers: authHeaders }));
 const fullViewBody = await fullView.text();
 assert.equal(fullView.status, 200);
-assert(fullViewBody.includes("Live Session view"), "direct viewer URL should return a full Session page");
-assert(fullViewBody.includes("Descendant Sessions"), "full viewer page should render verified descendants");
+assert(fullViewBody.includes("data-page-heading") && fullViewBody.includes("data-session-page") && fullViewBody.includes("data-session-viewer"), "direct viewer URL should return a full Session page");
+assert(fullViewBody.includes("Child Sessions"), "full viewer page should render verified descendants");
 
 const fragmentView = await httpApp.fetch(new Request(`http://atlas.test/sessions/${atlasSession.atlasId}/view?child=${childId}`, {
   headers: { ...authHeaders, "HX-Request": "true" },

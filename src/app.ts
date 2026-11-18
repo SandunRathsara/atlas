@@ -1675,6 +1675,7 @@ export const createApp = (options: AppOptions) => {
       persistenceHealth: persistence.getHealth(),
       sessionDirectoryAvailable: sessionDirectoryAvailable(session),
       inbox: inboxFromRequest(c),
+      tab: c.req.query("tab"),
     }));
   });
 
@@ -1989,6 +1990,7 @@ export const createApp = (options: AppOptions) => {
         persistenceHealth: persistence.getHealth(),
         sessionDirectoryAvailable: sessionDirectoryAvailable(session),
         inbox: inboxFromRequest(c),
+        tab: c.req.query("tab"),
       }));
     }
     return c.html(renderSessionViewerFragment({
