@@ -1,3 +1,197 @@
 /* Screen styles for the inbox slice. Use a unique class prefix; kit classes live in ../styles.css. */
 @layer components {
+  /* ── Phone / tablet list ─────────────────────────────────────────── */
+  .ix-banner {
+    margin: 0 0 16px;
+  }
+
+  .ix-list > .ix-section:first-child > .ax-section:first-child {
+    margin-top: 4px;
+  }
+
+  /* Warm needs-you card: the kit hero plus a soft amber ring (prototype .need). */
+  .ix-need .ax-hero {
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--f-waiting) 45%, transparent);
+  }
+
+  .ix-need .ax-hero-s .ax-notlive {
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+
+  .ix-gap {
+    margin-top: 12px;
+  }
+
+  /* State pill with a Not live tag: stack them so the title keeps its width. */
+  .ix-list .ax-row-end > span:first-child {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+  }
+
+  .ix-access {
+    font-weight: 600;
+  }
+
+  /* "All caught up" note when nothing needs you (prototype .ready). */
+  .ix-calm {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    border-radius: 14px;
+    background: var(--a-card);
+  }
+
+  .ix-calm b {
+    display: block;
+    font-weight: 650;
+  }
+
+  .ix-calm b + span {
+    display: block;
+    color: var(--a-sec);
+    font-size: 14px;
+  }
+
+  /* Long Settled lists fold the rest under "Show N more". */
+  .ix-more > summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 44px;
+    padding: 0 4px;
+    color: var(--a-link);
+    font-size: 15px;
+    font-weight: 600;
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .ix-more > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .ix-more > summary .ax-ic {
+    transition: transform 0.15s ease;
+  }
+
+  .ix-more[open] > summary .ax-ic {
+    transform: rotate(180deg);
+  }
+
+  .ix-more[open] .ix-more-closed,
+  .ix-more:not([open]) .ix-more-open {
+    display: none;
+  }
+
+  .ix-section > .ax-group + .ix-more {
+    margin-top: 4px;
+  }
+
+  /* ── Desktop: Mail-style pane ─────────────────────────────────────── */
+  .ix-desk {
+    display: none;
+  }
+
+  html[data-js] .ix-nojs {
+    display: none;
+  }
+
+  .ix-sk-head {
+    margin: 4px 0 22px;
+  }
+
+  .ix-sk-eyebrow {
+    width: 180px;
+    height: 13px;
+    margin-bottom: 12px;
+  }
+
+  .ix-sk-title {
+    width: min(520px, 70%);
+    height: 34px;
+    border-radius: 10px;
+  }
+
+  .ix-sk-hero {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 20px;
+    border-radius: 18px;
+    background: var(--a-card);
+  }
+
+  .ix-sk-lines {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .ix-sk-seg {
+    width: 320px;
+    height: 36px;
+    margin: 24px 0 16px;
+    border-radius: 10px;
+  }
+
+  .ix-pane-slow {
+    margin: 20px 0 0;
+    color: var(--a-sec);
+    font-size: 14px;
+    text-align: center;
+    opacity: 0;
+    animation: ix-reveal 0s linear 8s forwards;
+  }
+
+  .ix-pane-slow a {
+    color: var(--a-link);
+    font-weight: 600;
+  }
+
+  @keyframes ix-reveal {
+    to {
+      opacity: 1;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .ix-list {
+      display: none;
+    }
+
+    .ix-desk {
+      display: block;
+    }
+
+    /* The pane brings its own large title; keep "Inbox" for assistive tech only. */
+    .ix-paned .ax-content > .ax-head {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
+    }
+  }
+
+  @media (max-width: 759.98px) {
+    .ix-need .ax-hero {
+      gap: 12px;
+      padding: 14px;
+    }
+
+    .ix-need .ax-hero-t {
+      font-size: 17px;
+    }
+
+    .ix-need .ax-hero > .ax-btn {
+      flex: 1 1 100%;
+    }
+  }
 }

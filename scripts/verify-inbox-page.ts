@@ -101,7 +101,7 @@ const assertInboxPageChrome = (body: string) => {
   assert.match(body, /<nav class="ax-tabbar" aria-label="Atlas"><a href="\/inbox" aria-current="page">[\s\S]*?<span>Inbox<\/span><\/a>/);
   assert(body.includes("Sign out"));
   assert(!body.includes("data-mobile-navigation"));
-  assert(body.includes('id="inbox-page-repository"'));
+  assert(body.includes('id="inbox-head-repository"'));
   assert(body.includes('id="inbox-repository"'));
   assert(body.includes('action="/inbox" method="get"'));
   assert(!body.includes('hx-trigger="change"'));
@@ -119,7 +119,10 @@ const assertInboxPageChrome = (body: string) => {
   const body = await page.text();
   assertInboxPageChrome(body);
   assert(body.includes("Add a Repository"));
-  assert(body.includes('name="repository" disabled'));
+  // No Repositories: the filter offers only "All" and "Manage".
+  const repositoryValues = [...body.matchAll(/name="repository" value="([^"]*)"/g)].map((match) => match[1]);
+  assert(repositoryValues.length > 0);
+  assert(repositoryValues.every((value) => value === "" || value === "manage"));
   assert(!body.includes("No work yet"));
   assert(!body.includes("Needs you"));
   db.close();
@@ -191,11 +194,12 @@ const assertInboxPageChrome = (body: string) => {
   const body = await page.text();
   assertInboxPageChrome(body);
   assert(body.includes("Waiting spec"));
-  assert(body.includes("badge-error"));
-  assert(body.includes("Access unavailable"));
-  assert(body.includes("table-compact"));
-  assert(body.includes("md:hidden"));
-  assert(body.includes("hidden md:block"));
+  assert(body.includes('class="ix-access t-failed">Access unavailable</span>'));
+  assert(body.includes("ax-row"));
+  assert(body.includes("ix-list"));
+  // Desktop pane lazy-loads the top Needs-you Session; phones never trigger it.
+  assert(body.includes('hx-trigger="intersect once"'));
+  assert(body.includes("ix-paned"));
   assert(body.includes("Needs you"));
   db.close();
 }
@@ -246,8 +250,7 @@ const assertInboxPageChrome = (body: string) => {
   const page = await request(app, "/inbox", auth);
   const body = await page.text();
   assert(body.includes("Unknown access spec"));
-  assert(body.includes(">Access unknown</span>"));
-  assert(body.includes("badge-warning"));
+  assert(body.includes('class="ix-access t-waiting">Access unknown</span>'));
   assert(!body.includes(">Access unavailable</span>"));
   db.close();
 }

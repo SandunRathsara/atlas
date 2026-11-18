@@ -210,13 +210,17 @@ const assertShell = (body: string) => {
   assert(body.includes("Not started"));
   assert(body.includes("Settled"));
   assert(body.includes("Waiting spec"));
-  assert(body.includes("border-l-2 border-l-warning"));
-  assert(body.includes(">Stale</span>"));
-  assert(body.includes('class="ax-notlive"'));
+  // Warm Needs-you card leads the phone list.
+  assert(body.includes("ix-need"));
+  assert(body.includes(">Open Session<"));
+  // Stale rows say "Not live" in both the sidebar and the phone list.
+  assert(body.split('class="ax-notlive"').length - 1 >= 2);
   assert.match(body, /class="ax-live-item"[^>]*aria-label="[^"]*, not live/);
-  assert(body.includes(">No Session</span>"));
-  assert(body.includes(">alpha</p>"));
-  assert(body.includes(">beta</p>"));
+  // Not-started row links to its Spec and carries no Session pill.
+  assert.match(body, /href="\/repositories\/1\/specs\/3"[^>]*>(?:(?!<\/a>)[\s\S])*?<\/a>/);
+  assert(!/href="\/repositories\/1\/specs\/3"[^>]*>(?:(?!<\/a>)[\s\S])*?ax-pill/.test(body));
+  assert(body.includes("alpha · Spec #"));
+  assert(body.includes("beta · Spec #"));
   assert(body.includes('aria-label="Repository filter: All Repositories"'));
   assert(body.includes("View all Sessions"));
   assert(body.includes('id="inbox-view-all-sessions"'));
@@ -239,7 +243,7 @@ const assertShell = (body: string) => {
   const body = await filtered.text();
   assert(body.includes('aria-label="Repository filter: Org/alpha"'));
   assert(body.includes("Waiting spec"));
-  assert(!body.includes(">alpha</p>"));
+  assert(!body.includes("alpha · Spec #"));
   assert(!body.includes("Beta spec"));
   assert.equal(body.split('id="inbox-utility-pull-requests"').length - 1, 1);
   assert.equal(body.split('id="inbox-page-utility-pull-requests"').length - 1, 1);
@@ -406,8 +410,7 @@ const assertShell = (body: string) => {
   const page = await request(app, "/inbox", auth);
   const body = await page.text();
   assert(body.includes("Beta spec"));
-  assert(body.includes(">Access unknown</span>"));
-  assert(body.includes("badge-warning"));
+  assert(body.includes('class="ix-access t-waiting">Access unknown</span>'));
   assert(!body.includes(">Access unavailable</span>"));
   db.close();
 }
