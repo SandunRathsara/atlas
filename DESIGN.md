@@ -10,7 +10,7 @@ Implement the tokens once in `src/styles.css` and keep it synchronized with this
 
 ## Design decision record
 
-> **Overhaul shipped (2026-11-18).** The owner picked direction **A "Health"** (Apple-app feel) over B "Rex" and C "Warm" in the Phase 1 taste round of `docs/ui-overhaul-plan.md`. Prototype: `prototypes/taste/a.ts`. Direction A means large bold titles, grouped inset rounded lists, coloured status icon tiles, a translucent bar, a bottom tab bar on phones, Inter as the UI font, navy `#012B68` kept as the brand and tint, light and dark modes, and roomy spacing. The phase tables below record each pick; "Selected design system" describes what shipped. The first table is the superseded pre-overhaul look, kept for history.
+> **Overhaul shipped (2026-11-18).** The `prototypes/taste/*` files named below were deleted after the owner signed off; read them in git history at commit `08f5a77`. The owner picked direction **A "Health"** (Apple-app feel) over B "Rex" and C "Warm" in the Phase 1 taste round of `docs/ui-overhaul-plan.md`. Prototype: `prototypes/taste/a.ts`. Direction A means large bold titles, grouped inset rounded lists, coloured status icon tiles, a translucent bar, a bottom tab bar on phones, Inter as the UI font, navy `#012B68` kept as the brand and tint, light and dark modes, and roomy spacing. The phase tables below record each pick; "Selected design system" describes what shipped. The first table is the superseded pre-overhaul look, kept for history.
 >
 > **Phase 2 fine-tune (2026-11-18)**, picked on `prototypes/taste/tile.ts`. Values are prototype values; Phase 7 moves them into `src/styles.css`.
 >

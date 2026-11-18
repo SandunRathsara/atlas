@@ -1,6 +1,6 @@
 # UI/UX overhaul plan
 
-Status: **Phases 6/7 rolled out on 2026-11-18, awaiting owner review on the phone; prototypes are deleted after the owner signs off.** Phases 1–5 picks are recorded in `DESIGN.md` (decision tables and "Phase 5 screens"). The shipped system is the kit in `src/views/kit.ts`, the frame in `src/views/frame.ts` / `src/views/shell.ts`, and the tokens in `src/styles.css`. Prototypes stay in `prototypes/taste/` until sign-off.
+Status: **Done. Phases 6/7 rolled out on 2026-11-18; the owner signed off on the phone review the same day.** Phases 1–5 picks are recorded in `DESIGN.md` (decision tables and "Phase 5 screens"). The shipped system is the kit in `src/views/kit.ts`, the frame in `src/views/frame.ts` / `src/views/shell.ts`, and the tokens in `src/styles.css`. The throwaway prototypes were deleted after sign-off; they remain in git history at commit `08f5a77` (`prototypes/taste/`).
 
 ## How decisions get made
 
