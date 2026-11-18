@@ -1,3 +1,302 @@
-/* Screen styles for the lists slice. Use a unique class prefix; kit classes live in ../styles.css. */
+/* Screen styles for the lists slice (Sessions tab: ls-, Updates: up-). Kit classes live in ../styles.css. */
 @layer components {
+  /* ── Sessions tab ─────────────────────────────────────────── */
+  .ls-page {
+    min-width: 0;
+  }
+
+  .ls-pr,
+  .ls-reason,
+  .ls-note {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 3px;
+    font-size: 13.5px;
+    font-weight: 550;
+    overflow-wrap: anywhere;
+  }
+
+  .ls-pr {
+    color: var(--t-succeeded);
+  }
+
+  /* The full reason lives on the Session page; the list keeps two lines. */
+  .ls-reason {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    font-size: 13px;
+    color: var(--t-failed);
+    font-weight: 500;
+  }
+
+  .ls-note {
+    color: var(--t-waiting);
+  }
+
+  .ls-pr > svg,
+  .ls-note > svg {
+    flex-shrink: 0;
+  }
+
+  .ls-more {
+    color: var(--a-link);
+    font-weight: 600;
+  }
+
+  .ls-more:hover {
+    text-decoration: underline;
+  }
+
+  /* ── Updates ──────────────────────────────────────────────── */
+  .up-page {
+    max-width: 560px;
+    margin-inline: auto;
+  }
+
+  @media (min-width: 1024px) {
+    .up-page .ax-back {
+      display: none;
+    }
+  }
+
+  .up-hero {
+    background: var(--a-card);
+    border-radius: 18px;
+    padding: 18px;
+    text-align: center;
+  }
+
+  .up-hero > .ax-tile {
+    margin: 0 auto 10px;
+  }
+
+  .up-t {
+    font-size: 19px;
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    overflow-wrap: anywhere;
+  }
+
+  .up-v {
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--a-sec);
+    overflow-wrap: anywhere;
+  }
+
+  .up-s {
+    margin-top: 6px;
+    font-size: 13.5px;
+    line-height: 1.4;
+    color: var(--a-sec);
+  }
+
+  .up-left {
+    text-align: left;
+  }
+
+  .up-checking {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .up-reason {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--t-failed) 12%, transparent);
+    color: var(--a-text);
+    font-size: 13.5px;
+    line-height: 1.4;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+
+  .up-reason > svg {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: var(--t-failed);
+  }
+
+  .up-reason b {
+    display: block;
+    font-weight: 650;
+  }
+
+  .up-hero .ax-banner {
+    margin-top: 12px;
+    text-align: left;
+  }
+
+  .up-list {
+    margin: 4px 0 6px;
+    padding-left: 18px;
+    list-style: disc;
+  }
+
+  .up-prog {
+    display: block;
+    width: 100%;
+    height: 6px;
+    margin-top: 14px;
+    border: 0;
+    border-radius: 3px;
+    background: var(--a-fill);
+    color: var(--a-btn);
+    overflow: hidden;
+    appearance: none;
+  }
+
+  .up-prog::-webkit-progress-bar {
+    background: var(--a-fill);
+  }
+
+  .up-prog::-webkit-progress-value {
+    border-radius: 3px;
+    background: var(--a-btn);
+  }
+
+  .up-prog::-moz-progress-bar {
+    border-radius: 3px;
+    background: var(--a-btn);
+  }
+
+  .up-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 14px;
+    font-size: 14px;
+    text-align: left;
+  }
+
+  .up-steps > li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--a-sec);
+  }
+
+  .up-steps > li > i {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--a-sep);
+  }
+
+  .up-steps > .up-done > svg {
+    flex-shrink: 0;
+    color: var(--t-succeeded);
+  }
+
+  .up-steps > .up-now {
+    color: var(--a-text);
+    font-weight: 600;
+  }
+
+  .up-steps > .up-now > i {
+    border-color: var(--a-btn);
+    border-right-color: transparent;
+  }
+
+  .up-action {
+    margin-top: 14px;
+  }
+
+  .up-progress-text {
+    display: block;
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--a-sec);
+  }
+
+  .up-foot {
+    margin: 10px 4px 0;
+    font-size: 13px;
+    color: var(--a-sec);
+    text-align: center;
+  }
+
+  .up-live > .ax-banner {
+    margin-top: 12px;
+  }
+
+  .up-policy {
+    margin-top: 4px;
+  }
+
+  .up-switch {
+    cursor: pointer;
+  }
+
+  .up-policy-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 4px 0;
+  }
+
+  .up-policy-actions:not(:has(> button, > .htmx-request)) {
+    margin: 0;
+  }
+
+  html[data-js] .up-nojs {
+    display: none;
+  }
+
+  .up-tech {
+    margin-top: 22px;
+  }
+
+  .up-tech > summary {
+    background: var(--a-card);
+    border-radius: 14px;
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .up-tech > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .up-tech-chev {
+    transition: transform 0.15s ease;
+  }
+
+  .up-tech[open] .up-tech-chev {
+    transform: rotate(90deg);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .up-tech-chev {
+      transition: none;
+    }
+  }
+
+  .up-tech-body {
+    padding-bottom: 8px;
+  }
+
+  .up-note .ax-setrow-main > span {
+    font-size: 13.5px;
+    color: var(--a-sec);
+    line-height: 1.4;
+  }
+
+  .up-tech-check {
+    margin-top: 16px;
+  }
+
+  .up-link {
+    color: var(--a-link);
+    text-decoration: underline;
+  }
 }

@@ -10,7 +10,6 @@ export {
   renderPendingStartSessionPage,
   renderReservationReleaseForm,
   renderReservationReleasePage,
-  renderSessionsPage,
   renderStartSessionForm,
   renderStartSessionPage,
   renderTargetReconfirmationForm,
@@ -18,3 +17,4 @@ export {
 } from "./views/sessions.ts";
 export { renderSessionDetailPage, renderSessionViewerFragment } from "./views/viewer.ts";
 export { renderUpdatesPage, renderUpdatesStatus } from "./views/updates.ts";
+export { renderSessionsPage } from "./views/session-list.ts";
