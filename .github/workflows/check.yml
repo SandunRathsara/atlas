@@ -1,0 +1,124 @@
+# Atlas checks.
+#
+#   pull_request       fast tier (install, typecheck, CSS, static deploy checks)
+#   push to main       full tier (fast + every verify script + packaging check)
+#   workflow_call      full tier on inputs.ref; the release gate (release.yml)
+#   workflow_dispatch  either tier on any branch (`-f tier=full`)
+#
+# Read-only token, no secrets. Nothing is cached between runs: an install
+# takes seconds, and every run compiles its own binaries so no cache can
+# change a result. Nothing is uploaded or published.
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact 40-hex commit to check
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: Which checks to run
+        type: choice
+        options: [full, fast]
+        default: full
+
+permissions:
+  contents: read
+
+concurrency:
+  # A PR's superseded runs are cancelled; every other run is unique and kept.
+  group: check-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: ${{ (github.event_name == 'pull_request' || inputs.tier == 'fast') && 'fast' || 'full' }} checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      # In workflow_call, github.event_name is the caller's event and
+      # inputs.tier is unset, so the gate always runs the full tier.
+      TIER: ${{ (github.event_name == 'pull_request' || inputs.tier == 'fast') && 'fast' || 'full' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || '' }}
+          persist-credentials: false
+
+      - name: Confirm the checked-out commit
+        if: inputs.ref != ''
+        env:
+          EXPECTED_SHA: ${{ inputs.ref }}
+        run: |
+          actual=$(git rev-parse HEAD)
+          if [[ "$actual" != "$EXPECTED_SHA" ]]; then
+            echo "::error::checked out $actual, expected $EXPECTED_SHA"
+            exit 1
+          fi
+          echo "checking $actual ($TIER tier)"
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run check
+
+      # Anything importing src/app.ts needs public/app.css.
+      - name: Build CSS
+        run: bun run build:css
+
+      # deploy/verify-opencode-commands.sh rehearses a root install inside an
+      # unprivileged user namespace (unshare --map-auto). Ubuntu 24.04's
+      # AppArmor strips capabilities from such namespaces by default; lift that
+      # restriction (as on most Linux workstations) and prove chown works.
+      - name: Allow unprivileged user namespaces
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          probe=$(mktemp -d)
+          mkdir "$probe/home"
+          unshare --map-auto --map-root-user chown 1000:1000 "$probe/home"
+          rm -rf -- "$probe"
+
+      - name: Fast static checks
+        run: |
+          bash deploy/verify-assets.sh
+          bash deploy/verify-opencode-commands.sh
+          bun scripts/verify-clone-scope.ts
+          bun scripts/verify-repository-filter.ts
+
+      - name: Every verify script
+        if: env.TIER == 'full'
+        run: |
+          # Runs all of them and reports every failure, not just the first.
+          failed=()
+          for name in $(jq -r '.scripts | keys[] | select(startswith("verify:"))' package.json); do
+            echo "::group::bun run $name"
+            start=$SECONDS
+            if bun run "$name"; then status=ok; else status=FAILED; failed+=("$name"); fi
+            echo "::endgroup::"
+            echo "$status  $name  ($((SECONDS - start))s)"
+            echo "| \`$name\` | $status | $((SECONDS - start))s |" >> "$RUNNER_TEMP/verify-summary"
+          done
+          { echo "| verify script | result | time |"; echo "|---|---|---|"; cat "$RUNNER_TEMP/verify-summary"; } >> "$GITHUB_STEP_SUMMARY"
+          if (( ${#failed[@]} > 0 )); then
+            for name in "${failed[@]}"; do echo "::error title=verify failed::bun run $name"; done
+            exit 1
+          fi
+
+      - name: Packaging check (build, smoke, discard)
+        if: env.TIER == 'full'
+        run: |
+          output="$RUNNER_TEMP/packaging-check"
+          bash scripts/verify-release-artifact.sh "v0.1.0+build.1" "$(git rev-parse HEAD)" "$output"
+          ls -l "$output"
+          rm -rf -- "$output"
