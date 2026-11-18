@@ -126,6 +126,15 @@
     color: var(--t-failed);
   }
 
+  /* Access note under the Repository title (Specs / Pull requests / Sessions). */
+  .rp-head-note {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 12px;
+    font-size: 13.5px;
+  }
+
   .rp-stat {
     display: flex;
     flex-wrap: wrap;

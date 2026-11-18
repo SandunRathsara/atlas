@@ -1,6 +1,7 @@
 import type { RefreshState, Repository, Session, SessionState, Spec } from "../persistence.ts";
 import { escapeHtml, formatTime, safeExternalUrl } from "./html.ts";
 import { banner, confirmAction, segmented, type MenuItem } from "./kit.ts";
+import { icon } from "./icons.ts";
 
 // New UI kit (Look A). Prefer these over the deprecated helpers below.
 export * from "./kit.ts";
@@ -287,8 +288,11 @@ export const repositoryPage = (repository: Repository, section: RepositorySectio
     back: { href: "/repositories", label: "Repositories" },
     menu: items.length ? { title: repository.fullName, items, label: `More actions for ${repository.name}` } : undefined,
   };
+  // Access problems are a truthfulness rule: say so on every Repository page, not just the list card.
+  const access = !repository.removedAt && repository.accessStatus !== "available" ? repositoryNote(repository) : undefined;
   const intro = `<div class="rp-head">
   ${repository.removedAt ? `<div class="rp-removed"><span class="rp-note">Removed from Atlas · history kept</span>${readd}</div>` : ""}
+  ${access ? `<p class="rp-note rp-head-note${access.tone === "error" ? " rp-note-red" : ""}">${icon("warn", 14)}${escapeHtml(access.text)}</p>` : ""}
   ${repositoryTabs(repository, section)}
   ${eligibility ? banner({ tone: "warning", title: "Can’t start Sessions", body: eligibility }) : ""}
 </div>`;
