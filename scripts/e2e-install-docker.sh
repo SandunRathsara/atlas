@@ -2,7 +2,20 @@
 # End-to-end install test in throwaway systemd containers (Docker, privileged).
 #
 # Usage: bash scripts/e2e-install-docker.sh [ubuntu:24.04] [debian:12]   (default: both)
+#        bash scripts/e2e-install-docker.sh --published [tag] [distro…]
 #        KEEP=1 keeps the containers and images for debugging.
+#
+# --published installs a PUBLISHED Release from github.com exactly as the docs
+# say (no fixture server, no ATLAS_INSTALL_BASE_URL); tag defaults to latest.
+# It needs the internet and is never run by default or in CI. Per distro:
+# non-root refusal; no-terminal run keeps the files and its printed command
+# works (dry run); `… | sudo sh -s -- --answers … --create-user` from an admin
+# account; /health tag + gitSha (EXPECT_SHA, default: the tag's commit on
+# GitHub), /login, `atlas version`, the docs' owner/mode table; the app's
+# release check against the GitHub API ("up to date"); the root updater asked
+# over its socket to stage the installed tag fetches metadata from GitHub and
+# refuses it; a re-run with ATLAS_VERSION through sudo; then a second
+# container installs the pinned `--version <tag>` piped to sh as root.
 #
 # Per distro (systemd as PID 1, stock apt git/gh, no Bun, non-root sudo user):
 #   0. install.sh without root is refused before any download; `atlas setup`
@@ -28,6 +41,12 @@
 set -euo pipefail
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+published=""
+if [[ ${1:-} == --published ]]; then
+  shift
+  published=latest
+  if [[ ${1:-} == v* ]]; then published=$1; shift; fi
+fi
 distros=("$@")
 [[ ${#distros[@]} -gt 0 ]] || distros=(ubuntu:24.04 debian:12)
 work=${XDG_CACHE_HOME:-$HOME/.cache}/atlas-e2e-install
@@ -48,6 +67,7 @@ pass() { echo "  ok  $*"; }
 # ---------- two Releases (build.1, build.2) from this checkout ----------
 rm -rf -- "$work"
 mkdir -p "$work/releases/latest/download"
+if [[ -z $published ]]; then
 sha=$(git -C "$root" rev-parse HEAD)
 old_install=$root/scripts/fixtures/old-install-432fe69
 tag1=v0.0.1+build.1
@@ -72,6 +92,7 @@ echo "building $tag1 and $tag2 binaries"
 make_release "$tag1" "$work/releases/latest/download"
 make_release "$tag2" "$work/releases/download/$tag2"
 rm -rf -- "$work/build"
+fi
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$work/app.pem" 2>/dev/null
 chmod 0644 "$work/app.pem"
 cat >"$work/answers.json" <<'EOF'
@@ -85,7 +106,7 @@ image_for() {
   docker build -q -t "$image" - >/dev/null <<EOF
 FROM $distro
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus curl ca-certificates sudo git gh util-linux \
+RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus curl ca-certificates sudo git gh util-linux socat \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -m -s /bin/bash alice && echo 'alice ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/alice \
  && useradd -m -s /bin/bash omega
@@ -128,6 +149,148 @@ assert_running() {
   ! grep -Ev '^root (755|555) ' "$work/stat.txt" | grep -q . || { cat "$work/stat.txt"; fail "release folders not root-owned read-only"; }
   pass "release folders root-owned (755/555)"
 }
+
+if [[ -n $published ]]; then
+  repo=https://github.com/SandunRathsara/atlas
+  if [[ $published == latest ]]; then
+    landing=$(curl -fsSL --proto '=https' -o /dev/null -w '%{url_effective}' "$repo/releases/latest")
+    published=${landing##*/tag/}
+    published=${published//%2B/+}
+  fi
+  [[ $published =~ ^v[0-9]+\.[0-9]+\.[0-9]+\+build\.[0-9]+$ ]] || fail "not a Release tag: $published"
+  expect_sha=${EXPECT_SHA:-$(git ls-remote "$repo.git" "refs/tags/$published^{}" "refs/tags/$published" | head -1 | cut -f1)}
+  [[ $expect_sha =~ ^[0-9a-f]{40}$ ]] || fail "could not find the commit of $published on GitHub"
+  echo "published Release $published ($expect_sha)"
+  url="$repo/releases/latest/download/install.sh"
+  answers=/srv/fixture/answers.json
+  pub_identity() {
+    local health
+    health=$(in_root '. /etc/atlas/atlas.env; curl -fsS -H "Authorization: Bearer $ATLAS_SHARED_TOKEN" http://127.0.0.1:3000/health')
+    [[ $health == *"\"tag\":\"$published\""* && $health == *"\"gitSha\":\"$expect_sha\""* ]] || fail "/health identity: $health"
+    pass "/health reports $published ($expect_sha)"
+  }
+  pub_installed() {
+    local unit
+    for unit in atlas.service atlas-credentials.service atlas-updater.service; do
+      in_root "systemctl is-active --quiet $unit" || { in_root "systemctl status $unit --no-pager -n 30" || true; fail "$unit not active"; }
+    done
+    pass "units active"
+    pub_identity
+    in_root 'curl -fsS http://127.0.0.1:3000/login' | grep -qi 'sign' || fail "/login is not the sign-in page"
+    pass "/login sign-in page"
+    [[ $(in_root 'atlas version') == "atlas $published ($expect_sha)" ]] || fail "atlas version on PATH: $(in_root 'atlas version')"
+    pass "atlas version on PATH: $published ($expect_sha)"
+    for unit in atlas.service atlas-credentials.service; do
+      [[ $(in_root "stat -c %U /proc/\$(systemctl show -p MainPID --value $unit)") == atlas ]] || fail "$unit does not run as the atlas account"
+    done
+    [[ $(in_root 'getent passwd atlas | cut -d: -f6,7') =~ ^/var/lib/atlas/home:/(usr/)?s?bin/nologin$ ]] || fail "atlas account: $(in_root 'getent passwd atlas')"
+    pass "runs as the dedicated atlas account"
+    # docs/INSTALL.md "Files setup writes"
+    local paths=(/opt/atlas "/opt/atlas/releases/atlas-$published" /etc/atlas /etc/atlas/atlas.env /etc/atlas/github.env /etc/atlas/github-app.pem
+      /etc/atlas/supplier.key /etc/atlas/updater.key /var/lib/atlas /var/lib/atlas-updater /etc/systemd/system/atlas.service
+      /etc/systemd/system/atlas-credentials.service /etc/systemd/system/atlas-updater.service /etc/systemd/system/opencode.service)
+    [[ $(in_root "stat -c '%U:%G %a' ${paths[*]}" | tr '\n' ' ') == \
+      "root:root 755 root:root 555 root:atlas 750 root:root 600 root:atlas 640 root:atlas 640 root:atlas 640 root:atlas 640 atlas:atlas 700 root:atlas 700 root:root 644 root:root 644 root:root 644 root:root 644 " ]] ||
+      fail "owners/modes differ from docs/INSTALL.md: $(in_root "stat -c '%n %U:%G %a' ${paths[*]}")"
+    in_root 'find /var/lib/atlas -mindepth 1 -maxdepth 1 -type d ! -user atlas -o -mindepth 1 -maxdepth 1 -type d ! -perm 700' | grep . && fail "data folders not atlas 0700"
+    [[ $(in_root 'readlink /usr/local/bin/atlas') == /opt/atlas/current/atlas ]] || fail "/usr/local/bin/atlas link"
+    pass "owners and modes match docs/INSTALL.md"
+    in_root 'ls /var/tmp /tmp | grep -q atlas-install' && fail "install.sh left its download folder"
+    return 0
+  }
+
+  for distro in "${distros[@]}"; do
+    echo "== $distro (published $published)"
+    image=$(image_for "$distro")
+    images+=("$image")
+
+    # A: an admin account with sudo, the latest one-liner
+    container="atlas-e2e-pub-${distro//[:.]/-}"
+    start "$image" "$container"
+    echo "  $(in_root 'echo "git $(git --version | cut -d" " -f3), gh $(gh --version | head -1 | cut -d" " -f3)"'); bun: $(in_root 'command -v bun || echo none')"
+    # 4. non-root
+    if as_alice "curl -fsSL $url | sh -s -- --answers $answers --create-user" >"$work/user.log" 2>&1; then cat "$work/user.log"; fail "ran without root"; fi
+    { grep -q 'Nothing was downloaded' "$work/user.log" && grep -qF "$url | sudo sh -s -- '--answers' '$answers' '--create-user'" "$work/user.log"; } ||
+      { cat "$work/user.log"; fail "non-root refusal text"; }
+    in_root 'find / -xdev \( -name "atlas-linux-x64*" -o -name "atlas-install.*" \) -print 2>/dev/null' | grep . && fail "non-root run downloaded something"
+    pass "non-root: refused, sudo command printed, nothing downloaded"
+    # docs: no terminal and no options keeps the verified files and prints the setup command
+    as_alice "curl -fsSL $url | sudo sh" >"$work/notty.log" 2>&1 || true
+    keep=$(grep -o '/var/tmp/atlas-install\.[A-Za-z0-9]*/atlas-linux-x64 setup --source-dir /var/tmp/atlas-install\.[A-Za-z0-9]*' "$work/notty.log" | head -1)
+    [[ -n $keep ]] || { cat "$work/notty.log"; fail "no-terminal run did not print the setup command"; }
+    in_root "$keep --answers $answers --create-user --dry-run" >"$work/dry.log" 2>&1 || { cat "$work/dry.log"; fail "printed setup command (dry run) failed"; }
+    in_root 'test ! -e /etc/atlas && ! id atlas >/dev/null 2>&1' || fail "dry run changed the host"
+    in_root "rm -rf -- '${keep##* }'"
+    pass "no terminal: verified files kept, printed setup command works (dry run)"
+    # 1. the documented one-liner through real sudo
+    as_alice "curl -fsSL $url | sudo sh -s -- --answers $answers --create-user" >"$work/fresh.log" 2>&1 || { cat "$work/fresh.log"; fail "install failed"; }
+    grep -q 'Downloaded and verified' "$work/fresh.log" || fail "install.sh did not verify the download"
+    grep -q 'Sign-in token (shown once):' "$work/fresh.log" || fail "token not shown"
+    grep -q 'Runs as:  atlas (new system account)' "$work/fresh.log" || fail "service user not reported"
+    pass "curl … | sudo sh -s -- --answers … --create-user (from github.com)"
+    pub_installed
+    # 3a. the app's release check (what Settings → Updates → Check does), against the GitHub API
+    in_root '. /etc/atlas/atlas.env; curl -fsS -o /dev/null -X POST -H "Authorization: Bearer $ATLAS_SHARED_TOKEN" -H "HX-Request: true" http://127.0.0.1:3000/updates/check' ||
+      fail "POST /updates/check"
+    card=""
+    for _ in $(seq 60); do
+      card=$(in_root '. /etc/atlas/atlas.env; curl -fsS -H "Authorization: Bearer $ATLAS_SHARED_TOKEN" -H "HX-Request: true" http://127.0.0.1:3000/updates/status')
+      [[ $card == *"Atlas is up to date"* || $card == *"Couldn"*"t check for updates"* || $card == *" is available"* ]] && break
+      sleep 1
+    done
+    [[ $card == *"Atlas is up to date"* ]] || { echo "$card" | sed 's/<[^>]*>/ /g' | tr -s ' \n' ' ' | head -c 1500; echo; fail "release check did not conclude 'up to date'"; }
+    pass "app release check via api.github.com: up to date at $published"
+    # 3b. the root updater, asked over its socket like the app, fetches the metadata itself and refuses a non-newer tag
+    in_root 'systemctl set-property --runtime atlas-updater.service IPAccounting=yes'
+    bytes() { in_root 'systemctl show -p IPIngressBytes --value atlas-updater.service'; }
+    # ignoreeof: a half-closed request makes the updater close before an async reply.
+    in_root "curl -fsSL --proto '=https' '$repo/releases/download/${published//+/%2B}/atlas-release.json'" | grep -qF "\"tag\": \"$published\"" ||
+      fail "the metadata the updater fetches is not on GitHub"
+    stage() {
+      in_root "key=\$(tr -d '\\n' </etc/atlas/updater.key); printf '{\"operation\":\"%s\",\"tag\":\"%s\",\"key\":\"%s\"}\\n' stage '$1' \"\$key\" | timeout 90 socat -t 90 -,ignoreeof UNIX-CONNECT:/run/atlas-updater/updater.sock"
+    }
+    status=$(in_root "key=\$(tr -d '\\n' </etc/atlas/updater.key); printf '{\"operation\":\"status\",\"key\":\"%s\"}\\n' \"\$key\" | timeout 30 socat -t 30 -,ignoreeof UNIX-CONNECT:/run/atlas-updater/updater.sock")
+    [[ $status == *'"ok":true'* && $status == *'"state":"idle"'* ]] || fail "updater status over its socket: $status"
+    before=$(bytes)
+    reply=$(stage "$published")
+    after=$(bytes)
+    echo "    updater stage $published -> $reply (received $((after - before)) bytes)"
+    [[ $reply == *'"ok":false'* ]] || fail "updater accepted the installed tag: $reply"
+    (( after - before > 1000 )) || fail "updater did not fetch anything from GitHub ($before -> $after bytes)"
+    status=$(in_root "key=\$(tr -d '\\n' </etc/atlas/updater.key); printf '{\"operation\":\"status\",\"key\":\"%s\"}\\n' \"\$key\" | timeout 30 socat -t 30 -,ignoreeof UNIX-CONNECT:/run/atlas-updater/updater.sock")
+    [[ $status == *'"state":"idle"'* && $status != *'"stagedPath":"/'* ]] || fail "updater state changed: $status"
+    journal=$(in_root 'journalctl --namespace=atlas -u atlas-updater.service --no-pager -o cat' || true)
+    echo "    updater journal: $(echo "$journal" | tail -3 | tr '\n' '|')"
+    if [[ $journal == *"not newer than the active $published"* ]]; then pass "root updater fetched $published metadata from GitHub and refused it: not newer"
+    else pass "root updater fetched from GitHub (${after}B in) and refused $published; reason not logged (see report)"; fi
+    # 5. docs walk: re-run with ATLAS_VERSION through sudo, help, status/journal commands, sign-in paths, rollback path
+    token=$(in_root 'grep ^ATLAS_SHARED_TOKEN= /etc/atlas/atlas.env')
+    as_alice "curl -fsSL $url | sudo ATLAS_VERSION='$published' sh -s -- --tailscale no" >"$work/rerun.log" 2>&1 || { cat "$work/rerun.log"; fail "re-run with ATLAS_VERSION failed"; }
+    grep -q 'Sign-in token: unchanged' "$work/rerun.log" || fail "re-run re-showed the token"
+    [[ $(in_root 'grep ^ATLAS_SHARED_TOKEN= /etc/atlas/atlas.env') == "$token" ]] || fail "re-run changed the token"
+    pub_identity
+    pass "docs: re-run with ATLAS_VERSION through sudo keeps the token"
+    in_root 'atlas setup --help' | grep -q -- '--health-timeout' || fail "atlas setup --help"
+    in_root 'systemctl status atlas atlas-credentials atlas-updater --no-pager >/dev/null' || fail "documented systemctl status"
+    in_root 'journalctl --namespace=atlas -u atlas.service -n 5 --no-pager' | grep -q . || fail "documented journalctl --namespace=atlas shows nothing"
+    in_root 'sudo -u atlas env HOME=/var/lib/atlas/home XDG_CONFIG_HOME=/var/lib/atlas/opencode-config XDG_DATA_HOME=/var/lib/atlas/opencode-data XDG_STATE_HOME=/var/lib/atlas/opencode-state XDG_CACHE_HOME=/var/lib/atlas/opencode-cache sh -c "test -w \$HOME && test -d \$XDG_CONFIG_HOME"' ||
+      fail "OpenCode sign-in paths from the docs do not exist for atlas"
+    in_root "test -d /opt/atlas/releases/atlas-$published && grep -Eq '\"codeOnlyCompatible\": ?true' /opt/atlas/releases/atlas-$published/RELEASE_METADATA.json" || fail "rollback path or metadata from the docs missing"
+    pass "docs: setup --help, status/journal commands, OpenCode sign-in paths, rollback folder + metadata"
+    docker rm -f "$container" >/dev/null
+
+    # B: pinned --version, piped to sh as root (no sudo)
+    container="atlas-e2e-pubpin-${distro//[:.]/-}"
+    start "$image" "$container"
+    in_root "curl -fsSL $url | sh -s -- --version '$published' --answers $answers --create-user" >"$work/pinned.log" 2>&1 || { cat "$work/pinned.log"; fail "pinned install as root failed"; }
+    grep -q "Downloaded and verified" "$work/pinned.log" || fail "pinned: download not verified"
+    pass "curl … | sh -s -- --version $published (as root, %2B URL against github.com)"
+    pub_installed
+    docker rm -f "$container" >/dev/null
+  done
+  echo "e2e published install: all checks passed ($published on ${distros[*]})"
+  exit 0
+fi
 
 for distro in "${distros[@]}"; do
   echo "== $distro"

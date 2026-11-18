@@ -33,11 +33,14 @@ With an answers file (no questions):
 curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sudo sh -s -- --answers /root/atlas-answers.json --create-user
 ```
 
-A pinned Release (`ATLAS_VERSION=v1.2.0+build.7` works too):
+A pinned Release:
 
 ```sh
 curl -fsSL https://github.com/SandunRathsara/atlas/releases/latest/download/install.sh | sudo sh -s -- --version v1.2.0+build.7
 ```
+
+`… | sudo ATLAS_VERSION=v1.2.0+build.7 sh` works too; the variable must come
+after `sudo`, or `sudo` drops it.
 
 Every option other than `--version` goes to `atlas setup`. Without root the
 installer stops before downloading and prints the `sudo sh` command. With no
@@ -53,6 +56,13 @@ again before installing.
 At the end setup prints the URL, the account Atlas runs as, and the sign-in
 token. **The token is shown once.** Save it.
 
+Check it later:
+
+```sh
+sudo systemctl status atlas atlas-credentials atlas-updater
+sudo journalctl --namespace=atlas -u atlas.service   # logs use the atlas namespace
+```
+
 ## Service account
 
 Atlas runs as a dedicated system account, `atlas` by default: own group, no
@@ -67,7 +77,13 @@ y/n; without one it stops unless `--allow-privileged-user` is given. root is
 always refused. A re-run or adopt keeps the account already in the units and
 warns once if it is privileged.
 
-Sign OpenCode in as that account (setup prints this after a fresh install):
+Setup looks for OpenCode at `/opt/atlas/tools/opencode/current/bin/opencode`
+(or `--opencode <path>`). To put a chosen version there, use
+`atlas ops stage-opencode <version> <new-folder>` and follow
+[`deploy/README.md`](../deploy/README.md) (OpenCode staging), then
+`sudo systemctl enable --now opencode.service`.
+
+Sign OpenCode in as that account (setup prints this once OpenCode is found):
 
 ```sh
 sudo -u atlas env HOME=/var/lib/atlas/home XDG_CONFIG_HOME=/var/lib/atlas/opencode-config \
@@ -188,14 +204,15 @@ sudo systemctl start atlas-credentials.service atlas-updater.service atlas.servi
 ```
 
 If the new Atlas already migrated the database, restore `/var/lib/atlas` from
-a snapshot first (`deploy/RECOVERY.md`); the old code cannot read a newer
+a snapshot first ([`deploy/RECOVERY.md`](../deploy/RECOVERY.md)); the old code cannot read a newer
 schema.
 
 To go back to an older binary Release after a re-run, point `current` at its
 folder and restart:
 `sudo ln -sfnT /opt/atlas/releases/atlas-<tag> /opt/atlas/current && sudo systemctl restart atlas`.
-Check `rollback.codeOnlyCompatible` in that Release's metadata first
-(`docs/RELEASES.md`).
+First check that `rollback.codeOnlyCompatible` is `true` in
+`/opt/atlas/releases/atlas-<tag>/RELEASE_METADATA.json`
+([`docs/RELEASES.md`](RELEASES.md)).
 
 ## Files setup writes
 
