@@ -31,7 +31,8 @@
     "credentials": "bun src/credential-server.ts",
     "updater": "bun src/updater-server.ts",
     "dev": "bun run build:css && bun --watch src/server.ts",
-    "start": "bun src/server.ts"
+    "start": "bun src/server.ts",
+    "demo": "bun scripts/ui-demo.ts"
   },
   "dependencies": {
     "@opencode/client": "2.3.2",
