@@ -302,7 +302,10 @@ const parseStatus = (value: unknown): UpdaterStatus => {
 const readStatusFile = (path: string) => {
   const stat = lstatSync(path, { throwIfNoEntry: false });
   if (!stat) return initialStatus();
-  // A state file someone else could have written is ignored and rebuilt.
+  // Old or foreign state is deliberately ignored, never migrated: state lives
+  // only in root-owned /var/lib/atlas-updater (the old data-folder path is not
+  // read; no Release ever used it), and a file someone else could have written
+  // is ignored and rebuilt.
   const uid = typeof process.getuid === "function" ? process.getuid() : stat.uid;
   if (!stat.isFile() || stat.uid !== uid || (stat.mode & 0o022) !== 0) return initialStatus();
   const value = JSON.parse(readFileSync(path, "utf8")) as { schemaVersion?: unknown; policy?: unknown } | null;
