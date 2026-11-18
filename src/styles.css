@@ -1700,6 +1700,18 @@
     visibility: hidden;
   }
 
+  /* app.js pins the tip to one edge when centring would push it off-screen. */
+  .ax-time-tip.ax-tip-start {
+    left: 0;
+    transform: none;
+  }
+
+  .ax-time-tip.ax-tip-end {
+    left: auto;
+    right: 0;
+    transform: none;
+  }
+
   .ax-time:hover .ax-time-tip,
   .ax-time:focus .ax-time-tip,
   .ax-time:focus-within .ax-time-tip {
@@ -1908,6 +1920,19 @@
   .ax-prose-table th {
     color: var(--a-sec);
     font-weight: 600;
+  }
+
+  /* Cells never break mid-word: a wide table scrolls sideways inside its own box instead. */
+  .ax-prose-table th,
+  .ax-prose-table td {
+    min-width: 7em;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  .ax-prose-table th,
+  .ax-prose-table td code {
+    white-space: nowrap;
   }
 
 

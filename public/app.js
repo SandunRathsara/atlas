@@ -203,6 +203,20 @@
       time.dataset.exactTimeLocal = "";
     });
   };
+  // Keep the exact-time tooltip inside the viewport (phones): pin it to the nearer edge if needed.
+  const placeTimeTip = (event) => {
+    const time = event.target instanceof Element ? event.target.closest(".ax-time") : null;
+    const tip = time?.querySelector(".ax-time-tip");
+    if (!tip) return;
+    tip.classList.remove("ax-tip-start", "ax-tip-end");
+    const box = tip.getBoundingClientRect();
+    const edge = 8;
+    if (box.right > document.documentElement.clientWidth - edge) tip.classList.add("ax-tip-end");
+    else if (box.left < edge) tip.classList.add("ax-tip-start");
+  };
+  document.addEventListener("mouseover", placeTimeTip);
+  document.addEventListener("focusin", placeTimeTip);
+
   document.body.addEventListener("htmx:afterSettle", (event) => {
     if (event.detail.elt instanceof Element) localizeTimes(event.detail.elt.parentElement ?? document);
   });
