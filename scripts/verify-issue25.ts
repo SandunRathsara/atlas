@@ -1,6 +1,7 @@
 import "./isolate-opencode.ts";
 import { strict as assert } from "node:assert";
 import { createApp } from "../src/app.ts";
+import { inboxCookie } from "../src/inbox-state.ts";
 import { createPersistence } from "../src/persistence.ts";
 import type { PullRequest, RefreshState } from "../src/persistence.ts";
 import { renderPullRequestsPage } from "../src/views.ts";
@@ -187,6 +188,43 @@ assert.equal(response.status, 200);
 assert.equal(refCalls, 0);
 assert(body.includes("head belongs to another Repository"));
 assert(!body.includes("Eligible standalone target"));
+
+// Cross-Repository Pull requests tab: auth required, last-seen data only, frame filter honoured.
+const unauthenticated = await app.fetch(new Request("http://atlas.test/pull-requests"));
+assert.notEqual(unauthenticated.status, 200);
+assert(!(await unauthenticated.text()).includes("Fork PR"));
+appPersistence.upsertRepository({ ...repository, githubId: "2", name: "other", fullName: "Org/other" });
+appPersistence.replacePullRequests("2", [pullRequest({ githubId: "other-pr", repositoryId: "2", headRepositoryId: "2", number: "9", title: "Other PR" })], []);
+appPersistence.upsertRepository({ ...repository, githubId: "3", name: "gone", fullName: "Org/gone" });
+appPersistence.replacePullRequests("3", [pullRequest({ githubId: "gone-pr", repositoryId: "3", headRepositoryId: "3", number: "4", title: "Removed Repository PR" })], []);
+appPersistence.removeRepository("3");
+const callsBefore = refCalls;
+const all = await app.fetch(new Request("http://atlas.test/pull-requests", { headers: { Authorization: "Bearer secret" } }));
+const allBody = await all.text();
+assert.equal(all.status, 200);
+assert.equal(refCalls, callsBefore, "the cross-Repository page reads stored data only");
+assert(allBody.includes('data-page-heading'));
+assert(allBody.includes("Fork PR") && allBody.includes("Other PR"));
+assert(allBody.includes("head belongs to another Repository"));
+assert(allBody.includes('href="/repositories/1/pull-requests"') && allBody.includes('href="/repositories/2/pull-requests"'));
+assert(!allBody.includes("Removed Repository PR"), "removed Repositories are omitted");
+const filterCookie = inboxCookie("2").split(";")[0]!;
+const filteredAll = await app.fetch(new Request("http://atlas.test/pull-requests", {
+  headers: { Authorization: "Bearer secret", Cookie: filterCookie },
+}));
+const filteredBody = await filteredAll.text();
+assert.equal(filteredAll.status, 200);
+assert(filteredBody.includes("Other PR"));
+assert(!filteredBody.includes("Fork PR"), "the Repository filter limits the page to one Repository");
 appPersistence.close();
+
+const eligible = render();
+assert(eligible.includes("Eligible standalone target"), "an eligible standalone PR says so");
+assert(eligible.includes('data-target-status="eligible"'));
+const emptyPage = render(repository, []);
+assert(emptyPage.includes("No open pull requests"));
+const unverifiedEmpty = render(repository, [], { ...pullRequestsRefresh, availability: "unavailable" as const });
+assert(!unverifiedEmpty.includes("No open pull requests"), "a failed read is not shown as an empty list");
+assert(unverifiedEmpty.includes("Couldn’t check GitHub just now"));
 
 console.log("Issue #25 defect checks passed");

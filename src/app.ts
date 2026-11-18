@@ -63,6 +63,7 @@ import {
   targetObservation,
   type PendingStartSession,
 } from "./views.ts";
+import { renderAllPullRequestsPage } from "./views/pull-requests.ts";
 import { renderInboxList, renderInboxPage } from "./views/inbox.ts";
 import { renderMorePage, renderShell } from "./views/shell.ts";
 import { DEVELOPMENT_RELEASE_IDENTITY, parseReleaseTag, type ReleaseIdentity } from "./release.ts";
@@ -1226,6 +1227,23 @@ export const createApp = (options: AppOptions) => {
       accessRefresh,
       specsRefresh,
       inbox: inboxFromRequest(c),
+    }));
+  });
+
+  app.get("/pull-requests", privateHeaders, auth.middleware, (c) => {
+    const identity = c.get("auth");
+    const inbox = inboxFromRequest(c);
+    const repositories = (inbox.filtered ? [inbox.filtered] : persistence.listRepositories()).map((repository) => ({
+      repository,
+      pullRequests: persistence.listPullRequests(repository.githubId),
+      stacks: persistence.listPrStacks(repository.githubId),
+      accessRefresh: persistence.getRefreshState(repository.githubId, "access"),
+      refresh: persistence.getRefreshState(repository.githubId, "pullRequests"),
+    }));
+    return c.html(renderAllPullRequestsPage({
+      csrfToken: auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined),
+      repositories,
+      inbox,
     }));
   });
 
