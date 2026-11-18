@@ -7,7 +7,7 @@ One command installs Atlas on a private Linux server. As root, it downloads the
 ## What the server needs
 
 - Linux x86_64 with glibc (Debian, Ubuntu, Fedora, ...). Not Alpine/musl, not arm64.
-- systemd, `curl` (or `wget`), `sha256sum`, and root (`sudo`).
+- systemd, `curl`, `sha256sum`, and root (`sudo`).
 - git 2.36.0 or newer and gh 2.3.0 or newer, installed system-wide: owned by
   root, not writable by anyone else, not under `/home` or `/root`. Stock
   Debian 12 and Ubuntu 24.04 packages are fine: `sudo apt install git gh`.
@@ -152,16 +152,17 @@ and copied to `/etc/atlas/github-app.pem`.
      stops unless `--confirm-running-sessions` is given.
    - Running Sessions keep their OpenCode work, because OpenCode is not
      restarted. A Session that is *preparing* fails and must be started again.
-4. Setup backs up the old units, `atlas.env` and `github.env` to
-   `/var/backups/atlas/<time>/`, plus any other file whose contents it
-   changes. It records the old symlink targets in `ROLLBACK.txt` there.
-   Keys whose contents stay the same (`supplier.key`, `updater.key`, the App
-   key) are not copied; they only change owner and mode, and rollback does not
-   change those back.
+4. Setup backs up the old units and every file in `/etc/atlas` to
+   `/var/backups/atlas/<time>/` (root-only), plus any other file whose
+   contents it changes. It records the original owner and mode of `/etc/atlas`
+   and each file in it (`etc-atlas-owners.json`) and the old symlink targets.
+   `ROLLBACK.txt` there lists the commands to undo it.
 5. It stops atlas → atlas-updater → atlas-credentials, writes the new units,
    starts them, and checks `/health`.
 6. If that fails and the database schema is unchanged, setup restores the old
-   install by itself. If the new Atlas already migrated the database, it does
+   install by itself, including the original owner and mode of `/etc/atlas`
+   and its files (old installs expect e.g. a service-user-owned 0600
+   `supplier.key`). If the new Atlas already migrated the database, it does
    not restore; see Rollback.
 7. Afterwards: setup does not restart OpenCode. If its unit changed, setup says
    so; restart it when no Session runs: `sudo systemctl restart opencode`.
@@ -179,6 +180,8 @@ Each adopt backup has a `ROLLBACK.txt` with the exact commands. Its shape:
 sudo systemctl stop atlas.service atlas-updater.service atlas-credentials.service
 sudo cp -a /var/backups/atlas/<time>/etc/systemd/system/. /etc/systemd/system/
 sudo cp -a /var/backups/atlas/<time>/etc/atlas/. /etc/atlas/
+sudo chown <uid>:<gid> /etc/atlas/supplier.key       # one chown + chmod per
+sudo chmod 600 /etc/atlas/supplier.key               # /etc/atlas entry
 sudo ln -sfnT <old target> /opt/atlas/current      # one line per symlink
 sudo systemctl daemon-reload
 sudo systemctl start atlas-credentials.service atlas-updater.service atlas.service

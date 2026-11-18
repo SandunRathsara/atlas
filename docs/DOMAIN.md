@@ -141,8 +141,8 @@ Funnel, and only prints the Funnel command for the webhook.
 
 Running setup again keeps existing config and keys. On a host with an older
 Bun/source-tree install, setup adopts it: it keeps the existing service user
-(warning if it is privileged), backs up the old units and env files, writes
-`ROLLBACK.txt`, and switches to the binary layout while keeping data and
+(warning if it is privileged), backs up the old units and `/etc/atlas` (with
+owners and modes), writes `ROLLBACK.txt`, and switches to the binary layout while keeping data and
 secrets.
 
 ### Discover and stage Release
