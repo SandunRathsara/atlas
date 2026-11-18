@@ -693,15 +693,15 @@ export const createOpenCodeHandoffService = (options: OpenCodeOptions) => {
       const confirmingOutcome = !info.outcome && after?.terminalAt !== undefined && Date.now() - after.terminalAt < OUTCOME_CONFIRM_MS;
       const busy = treeLive || confirmingOutcome || beforeStarted || after?.executionStarted === true || after?.status === "busy";
       const terminal = !treeLive && info.outcome ? info.outcome : undefined;
-      const nextState = permissions.length > 0 || forms.length > 0
-        ? "waiting"
-        : terminal ?? (retrying ? "waiting" : busy ? "running" : "idle");
-      const reason = permissions.length > 0
-        ? "OpenCode is waiting for a permission request."
-        : forms.length > 0
-          ? "OpenCode is waiting for a form response."
-          : terminal
-            ? `OpenCode confirmed ${terminal === "interrupted" ? "an" : "a"} ${terminal} outcome and its Session tree is quiet.`
+      // A blocked execution keeps the root active, so `terminal` is unset while it waits; a pending item
+      // left beside a quiet tree with a confirmed outcome is stale and must not hold the slot forever.
+      const nextState = terminal ?? (permissions.length > 0 || forms.length > 0 || retrying ? "waiting" : busy ? "running" : "idle");
+      const reason = terminal
+        ? `OpenCode confirmed ${terminal === "interrupted" ? "an" : "a"} ${terminal} outcome and its Session tree is quiet.`
+        : permissions.length > 0
+          ? "OpenCode is waiting for a permission request."
+          : forms.length > 0
+            ? "OpenCode is waiting for a form response."
             : retrying
               ? retryReason(retry ?? {})
               : !tree.complete

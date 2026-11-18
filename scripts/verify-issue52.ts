@@ -55,6 +55,9 @@ type RemoteTree = {
   /** Running jobs returned by `GET /api/experimental/job` (the fixture ignores the `descendants` filter). */
   jobs: Array<Record<string, unknown>>;
   inbox: Map<string, unknown[]>;
+  /** Items returned by `GET /api/session/:id/permission` and `/form`. */
+  permissions: Map<string, unknown[]>;
+  forms: Map<string, unknown[]>;
   children: Array<{ id: string; parentID: string; directory: string }>;
   /** The latest assistant message's `retry` field, as 2.3.2 exposes it while a provider retry is scheduled. */
   retry?: { attempt: number; at: number; error: { type: string; message: string } };
@@ -66,7 +69,7 @@ type RemoteTree = {
 const fixture = async (name: string, options: FixtureOptions) => {
   const requests: RecordedRequest[] = [];
   const sessions = new Map<string, { directory: string; title: string; prompts: Map<string, unknown> }>();
-  const tree: RemoteTree = { outcomes: new Map(), active: new Set(), jobs: [], inbox: new Map(), children: [] };
+  const tree: RemoteTree = { outcomes: new Map(), active: new Set(), jobs: [], inbox: new Map(), permissions: new Map(), forms: new Map(), children: [] };
   // Real 2.3.2 dedupes a repeated prompt id (same item, no second user message, no second model call), but a
   // repeat after the round ended still wakes the Session for an empty execution round. Atlas must never resend.
   const promptCounts = new Map<string, number>();
@@ -148,6 +151,8 @@ const fixture = async (name: string, options: FixtureOptions) => {
           return json({ data: saved.prompts.get(promptId) });
         }
         if (match[2] === "inbox") return json({ data: tree.inbox.get(id) ?? [] });
+        if (match[2] === "permission") return json({ data: tree.permissions.get(id) ?? [] });
+        if (match[2] === "form") return json({ data: tree.forms.get(id) ?? [] });
         if (match[2] === "message") {
           const data = tree.retry && url.searchParams.get("type") === "assistant"
             ? [{
@@ -591,6 +596,53 @@ try {
     remote.tree.outcomes.set(rootId, "succeeded");
     await service.process();
     assert.equal(observe(persistence, atlasId).state, "succeeded");
+  });
+
+  // Real 2.3.2: a blocked execution keeps the root in `session.active()`, and interrupting it or restarting the
+  // server clears the pending item with the round. Pending wins while live; a confirmed quiet outcome wins otherwise.
+  await withFixture("pending-items", {
+    info: serverInfo(installedClient.version),
+  }, async ({ persistence, service, remote, released, terminals }) => {
+    const { atlasId, rootId } = await handedOff(persistence, service);
+    const permission = {
+      id: "per_fixture", sessionID: rootId, action: "shell", resources: ["touch approved.txt"], save: ["touch *"],
+      source: { type: "tool", messageID: "msg_fixture", id: "call_1" },
+    };
+    const form = {
+      id: "frm_fixture", sessionID: rootId, title: "Questions", metadata: { kind: "question", tool: { messageID: "msg_fixture", id: "call_2" } },
+      fields: [{ key: "q0", title: "Color", type: "string", options: [{ value: "Red", label: "Red" }], custom: true }],
+    };
+
+    // Root active + pending permission, even beside a stale earlier-round outcome: waiting, slot held.
+    remote.tree.outcomes.set(rootId, "succeeded");
+    remote.tree.active = new Set([rootId]);
+    remote.tree.permissions.set(rootId, [permission]);
+    await service.process();
+    let seen = observe(persistence, atlasId);
+    assert.equal(seen.state, "waiting", "an active root blocked on a permission must be waiting");
+    assert.equal(seen.slot, true);
+    assert.match(seen.reason, /permission request/u);
+
+    remote.tree.permissions.clear();
+    remote.tree.forms.set(rootId, [form]);
+    await service.process();
+    seen = observe(persistence, atlasId);
+    assert.equal(seen.state, "waiting", "an active root blocked on a form must be waiting");
+    assert.match(seen.reason, /form response/u);
+    assert.equal(released(), 0);
+    assert.equal(terminals(), 0);
+
+    // Quiet tree + confirmed outcome + a stale pending permission and form: terminal, slot released.
+    remote.tree.active = new Set();
+    remote.tree.outcomes.set(rootId, "interrupted");
+    remote.tree.permissions.set(rootId, [permission]);
+    await service.process();
+    seen = observe(persistence, atlasId);
+    assert.equal(seen.state, "interrupted", "a stale pending item must not hold a quiet, terminal Session in waiting");
+    assert.equal(seen.slot, false);
+    assert.match(seen.reason, /interrupted outcome and its Session tree is quiet/u);
+    assert.equal(released(), 1);
+    assert.equal(terminals(), 1);
   });
 
   const rejected: Array<[string, FixtureOptions]> = [
