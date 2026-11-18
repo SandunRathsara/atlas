@@ -57,11 +57,12 @@ const uncertaintyLine = (session: Session) => {
 };
 
 const sessionRow = (session: Session, now: number, repository?: Repository) => {
-  const age = ageShort(session.updatedAt, now);
-  const ageText = age === "now" ? "just now" : age ? `${age} ago` : "";
+  // The list is newest-started first, so the row shows when the Session started (same key as the sort).
+  const age = ageShort(session.submittedAt, now);
+  const ageText = age === "now" ? "started just now" : age ? `started ${age} ago` : "";
   // Short Repository name like the Inbox; the Spec number when the Repository is already known.
   const place = repository ? `${repository.name} · Spec #${session.specIssueNumber}` : `Spec #${session.specIssueNumber}`;
-  const sub = `${escapeHtml(place)}${ageText ? ` · <time datetime="${escapeHtml(session.updatedAt)}">${escapeHtml(ageText)}</time>` : ""}`;
+  const sub = `${escapeHtml(place)}${ageText ? ` · <time datetime="${escapeHtml(session.submittedAt)}">${escapeHtml(ageText)}</time>` : ""}`;
   return row({
     title: session.specTitle,
     href: `/sessions/${encodeURIComponent(session.atlasId)}`,
@@ -132,7 +133,9 @@ export const renderSessionsPage = ({
   const repositoryById = new Map(repositories.map((item) => [item.githubId, item]));
   // The global list follows the frame's Repository filter so the list never contradicts it.
   const filtered = repository ? undefined : inbox?.filtered;
-  const shown = filtered ? sessions.filter((session) => session.repositoryId === filtered.githubId) : sessions;
+  // Newest-started first, by the same time each row shows (submission order breaks ties).
+  const shown = (filtered ? sessions.filter((session) => session.repositoryId === filtered.githubId) : [...sessions])
+    .sort((left, right) => Date.parse(right.submittedAt) - Date.parse(left.submittedAt) || right.submissionOrder - left.submissionOrder);
   const base = repository ? sessionsLink(repository) : "/sessions";
 
   const chips = chipRow({
