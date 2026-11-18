@@ -59,7 +59,8 @@ const uncertaintyLine = (session: Session) => {
 const sessionRow = (session: Session, now: number, repository?: Repository) => {
   const age = ageShort(session.updatedAt, now);
   const ageText = age === "now" ? "just now" : age ? `${age} ago` : "";
-  const place = repository ? repository.fullName : `Spec #${session.specIssueNumber}`;
+  // Short Repository name like the Inbox; the Spec number when the Repository is already known.
+  const place = repository ? `${repository.name} · Spec #${session.specIssueNumber}` : `Spec #${session.specIssueNumber}`;
   const sub = `${escapeHtml(place)}${ageText ? ` · <time datetime="${escapeHtml(session.updatedAt)}">${escapeHtml(ageText)}</time>` : ""}`;
   return row({
     title: session.specTitle,
@@ -152,7 +153,7 @@ export const renderSessionsPage = ({
   const pendingReason = pendingRepositories.size === 1 ? [...pendingRepositories.values()][0]!.failureReason : null;
 
   const list = shown.length > 0
-    ? group(shown.map((session) => sessionRow(session, now, repository ? undefined : repositoryById.get(session.repositoryId))), {
+    ? group(shown.map((session) => sessionRow(session, now, repository || filtered ? undefined : repositoryById.get(session.repositoryId))), {
       label: `${filterLabel(filter)} Sessions`,
       id: "session-list",
     })

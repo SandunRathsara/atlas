@@ -1064,6 +1064,14 @@
     white-space: nowrap;
   }
 
+  /* Pill with an optional "Not live" tag stacked under it, so the title keeps its width. */
+  .ax-row-end > span:first-child {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+  }
+
   .ax-row-time {
     color: var(--a-ter);
     font-variant-numeric: tabular-nums;
@@ -1184,6 +1192,14 @@
   @media (pointer: coarse) {
     .ax-chips > a {
       min-height: 44px;
+    }
+  }
+
+  /* The row scrolls sideways on narrow screens: fade the right edge so the cut reads as "more". */
+  @media (max-width: 1023px) {
+    .ax-chips {
+      mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+      padding-right: 32px;
     }
   }
 
