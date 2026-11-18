@@ -344,12 +344,12 @@ try {
   let runtimesAvailable = true;
   const runtimeCandidate = metadata("v0.1.3+build.12", "c");
   const runtimeHost = await createHost("runtime-revalidation", runtimeCandidate, {
-    hostRuntime: () => ({ git: runtimesAvailable ? "2.100.1" : "2.54.9", gh: "2.100.0" }),
+    hostRuntime: () => ({ git: runtimesAvailable ? "2.100.1" : "2.35.9", gh: "2.100.0" }),
   });
   runtimesAvailable = false;
   await assert.rejects(runtimeHost.client().prepareActivation(runtimeCandidate, false), /rejected/, "activation must revalidate host runtimes after staging and immediately before the pause");
   const runtimeStatus = await runtimeHost.client().status();
-  assert.match(runtimeStatus.requirements?.unmet[0] ?? "", /Git 2\.55\.0 or newer is required; this host reports 2\.54\.9/);
+  assert.match(runtimeStatus.requirements?.unmet[0] ?? "", /Git 2\.36\.0 or newer is required; this host reports 2\.35\.9/);
   assert.deepEqual(runtimeHost.controls, [], "runtime drift must be recorded before Atlas is paused or stopped");
   runtimeHost.service().close();
 

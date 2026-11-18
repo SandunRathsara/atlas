@@ -89,8 +89,10 @@ done
 wal_record="$source_path/recovery-config/current/checksums/sqlite-wal-versions"
 [[ -f "$wal_record" && ! -L "$wal_record" ]] || fail scope_incomplete "SQLite WAL safety verification record is missing"
 grep -Fxq 'wal_reset_fix=verified' "$wal_record" || fail scope_incomplete "SQLite WAL safety verification record is invalid"
-recorded_commit=$(sed -n 's/^release_commit=//p' "$wal_record")
-[[ -n "$recorded_commit" && "$recorded_commit" == "$(cat "$source_path/recovery-config/current/release/RELEASE_COMMIT")" ]] || fail scope_incomplete "SQLite verification does not match the protected release"
+recorded_release=$(sed -n 's/^release_metadata_sha256=//p' "$wal_record")
+protected_metadata="$source_path/recovery-config/current/release/RELEASE_METADATA.json"
+[[ -f "$protected_metadata" && ! -L "$protected_metadata" ]] || fail scope_incomplete "recovery configuration has no Release metadata"
+[[ -n "$recorded_release" && "$recorded_release" == "$(sha256sum < "$protected_metadata" | cut -d ' ' -f 1)" ]] || fail scope_incomplete "SQLite verification does not match the protected release"
 
 [[ -d "$backup_root" && ! -L "$backup_root" ]] || fail source_invalid "snapshot destination root is missing or unsafe"
 [[ "$source_path" != "$backup_root" && "$source_path" != "$backup_root"/* && "$backup_root" != "$source_path"/* ]] || fail source_invalid "snapshot source and destination must be separate"

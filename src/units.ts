@@ -244,3 +244,101 @@ export const renderUnits = (options: UnitOptions): Record<UnitName, string> => {
     ),
   };
 };
+
+export type MaintenanceUnitOptions = Pick<UnitOptions, "group" | "prefix" | "dataDir"> & {
+  /** Snapshot destination. Default `/var/backups/atlas`. */
+  backupRoot?: string;
+};
+
+export const MAINTENANCE_UNIT_NAMES = [
+  "atlas-snapshot.service",
+  "atlas-snapshot.timer",
+  "atlas-space-check.service",
+  "atlas-space-check.timer",
+] as const;
+export type MaintenanceUnitName = (typeof MAINTENANCE_UNIT_NAMES)[number];
+
+/**
+ * Btrfs snapshot and storage-check units (root oneshots plus timers). They run
+ * the selected Release's `atlas ops`, so the host needs no Bun or source tree.
+ * `atlas setup` installs them only when the data folder is on Btrfs. Pure.
+ */
+export const renderMaintenanceUnits = (options: MaintenanceUnitOptions): Record<MaintenanceUnitName, string> => {
+  const group = safeName("group", options.group);
+  if (group === "root") throw new Error("Atlas services must not run as root");
+  const prefix = safePath("prefix", options.prefix ?? "/opt/atlas");
+  if (prefix === "/") throw new Error("prefix must not be /");
+  const data = safePath("dataDir", options.dataDir ?? "/var/lib/atlas");
+  const backups = safePath("backupRoot", options.backupRoot ?? "/var/backups/atlas");
+  const current = `${prefix}/current`;
+  const shared = [
+    "Type=oneshot",
+    "User=root",
+    `Group=${group}`,
+    `Environment=ATLAS_RECOVERY_STATUS_GROUP=${group}`,
+    `Environment=ATLAS_RECOVERY_STATUS_PATH=${data}/recovery-status`,
+  ];
+  const logging = (identifier: string) => [
+    "UMask=0027",
+    "LogRateLimitIntervalSec=30s",
+    "LogRateLimitBurst=100",
+    `SyslogIdentifier=${identifier}`,
+    "LogNamespace=atlas",
+  ];
+  return {
+    "atlas-snapshot.service": lines(
+      "[Unit]",
+      "Description=Atlas coherent local Btrfs recovery snapshot",
+      "After=local-fs.target",
+      `RequiresMountsFor=${current} ${data} ${backups}`,
+      "",
+      "[Service]",
+      ...shared,
+      `Environment=ATLAS_SNAPSHOT_SOURCE=${data}`,
+      `Environment=ATLAS_SNAPSHOT_ROOT=${backups}`,
+      `Environment=ATLAS_STORAGE_PATH=${data}`,
+      `ExecStart=${current}/atlas ops snapshot`,
+      ...logging("atlas-snapshot"),
+    ),
+    "atlas-snapshot.timer": lines(
+      "[Unit]",
+      "Description=Daily Atlas local recovery snapshot with catch-up",
+      "",
+      "[Timer]",
+      "OnCalendar=*-*-* 03:00:00",
+      "Persistent=true",
+      "AccuracySec=1s",
+      "Unit=atlas-snapshot.service",
+      "",
+      "[Install]",
+      "WantedBy=timers.target",
+    ),
+    "atlas-space-check.service": lines(
+      "[Unit]",
+      "Description=Atlas shared Btrfs pool and metadata status check",
+      "After=local-fs.target",
+      `RequiresMountsFor=${current} ${data}`,
+      "",
+      "[Service]",
+      ...shared,
+      `Environment=ATLAS_STORAGE_PATH=${data}`,
+      `ExecStart=${current}/atlas ops check-space`,
+      "SuccessExitStatus=1 2",
+      ...logging("atlas-space"),
+    ),
+    "atlas-space-check.timer": lines(
+      "[Unit]",
+      "Description=Refresh Atlas storage safety status",
+      "",
+      "[Timer]",
+      "OnCalendar=*:0/5",
+      "Persistent=true",
+      "RandomizedDelaySec=30s",
+      "AccuracySec=30s",
+      "Unit=atlas-space-check.service",
+      "",
+      "[Install]",
+      "WantedBy=timers.target",
+    ),
+  };
+};

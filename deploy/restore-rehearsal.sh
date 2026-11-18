@@ -21,6 +21,8 @@ history_manifest=$(realpath "$4")
 restore_root=$(realpath -m "${ATLAS_RESTORE_REHEARSAL_ROOT:-/var/lib/atlas-restore-rehearsals}")
 release_root=$(realpath "${ATLAS_RELEASE_ROOT:-/opt/atlas/current}")
 btrfs_binary=${ATLAS_BTRFS_BINARY:-btrfs}
+# Set by `atlas ops`: the binary that embeds this script.
+atlas_bin=${ATLAS_BIN:-$release_root/atlas}
 
 [[ "$target" == "$restore_root"/* && "$target" != "$restore_root" ]] || { echo "restore target must be a direct child of the isolated rehearsal root" >&2; exit 1; }
 [[ "$(dirname "$target")" == "$restore_root" ]] || { echo "nested restore targets are not allowed" >&2; exit 1; }
@@ -33,8 +35,7 @@ done
 "$root/atlas-snapshot.sh" --verify "$snapshot" >/dev/null
 recovery="$snapshot/recovery-config/current"
 [[ -d "$recovery" && ! -L "$recovery" ]] || { echo "snapshot recovery configuration is unavailable" >&2; exit 1; }
-cmp -s "$recovery/release/RELEASE_COMMIT" "$release_root/RELEASE_COMMIT" || { echo "restore snapshot and selected Atlas release do not match" >&2; exit 1; }
-cmp -s "$recovery/release/pins.env" "$release_root/deploy/pins.env" || { echo "restore snapshot and selected tool pins do not match" >&2; exit 1; }
+cmp -s "$recovery/release/RELEASE_METADATA.json" "$release_root/RELEASE_METADATA.json" || { echo "restore snapshot and selected Atlas release do not match" >&2; exit 1; }
 grep -Fxq 'wal_reset_fix=verified' "$recovery/checksums/sqlite-wal-versions" || { echo "snapshot lacks SQLite WAL safety verification" >&2; exit 1; }
 (
   cd "$recovery"
@@ -51,9 +52,7 @@ sha256sum --quiet -c "$recovery/checksums/tools.sha256"
 atlas_db="$target/atlas.sqlite"
 opencode_db="$target/opencode-data/opencode/opencode.db"
 registry="$target/session-scopes.json"
-# shellcheck disable=SC1090
-source "$release_root/deploy/pins.env"
-"$ATLAS_BUN_BINARY" "$release_root/scripts/check-restored-state.ts" \
+"$atlas_bin" ops check-restored-state \
   "$atlas_db" "$opencode_db" "$target" "$registry" "$history_manifest"
 
 checked_files=0
@@ -80,7 +79,7 @@ rm -f -- \
   "$target/opencode-data/opencode/auth.json" \
   "$target/session-scopes.json"
 [[ -f "$opencode_db" && ! -L "$opencode_db" ]] || { echo "restored OpenCode database is missing or unsafe; restore target retained" >&2; exit 1; }
-"$ATLAS_BUN_BINARY" "$root/scrub-opencode-credentials.ts" "$opencode_db" || { echo "restored OpenCode credentials could not be scrubbed; restore target retained" >&2; exit 1; }
+"$atlas_bin" ops scrub-opencode-credentials "$opencode_db" || { echo "restored OpenCode credentials could not be scrubbed; restore target retained" >&2; exit 1; }
 find "$target" -type s -print -quit | grep -q . && { echo "restored socket remained after endpoint scrubbing; restore target retained" >&2; exit 1; }
 # The scrub above removed every OpenCode config document. Re-install only the
 # selected release's credential-free headless configuration so the restored

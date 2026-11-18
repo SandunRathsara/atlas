@@ -7,6 +7,19 @@ declare module "*.woff2" {
   const path: string;
   export default path;
 }
+// `with { type: "text" }` yields the file's text (see src/commands/ops.ts).
+declare module "*.sh" {
+  const text: string;
+  export default text;
+}
+declare module "*.conf" {
+  const text: string;
+  export default text;
+}
+declare module "*.marker" {
+  const text: string;
+  export default text;
+}
 declare module "htmx.org/dist/htmx.min.js" {
   const path: string;
   export default path;

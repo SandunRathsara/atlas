@@ -64,24 +64,26 @@ private_directory "$release_dir"
 }
 
 config_files=(atlas.env github.env github-app.pem supplier.key updater.key)
-unit_files=(atlas.service atlas-credentials.service atlas-updater.service opencode.service atlas-snapshot.service atlas-snapshot.timer atlas-space-check.service atlas-space-check.timer)
+unit_files=(atlas.service atlas-credentials.service atlas-updater.service opencode.service)
+# Snapshot units exist only when the data folder is on Btrfs (atlas setup).
+optional_unit_files=(atlas-snapshot.service atlas-snapshot.timer atlas-space-check.service atlas-space-check.timer)
 for name in "${config_files[@]}"; do regular_file "$config_root/$name"; done
 for name in "${unit_files[@]}"; do regular_file "$unit_root/$name"; done
 regular_file "$route_record"
 regular_file "$firewall_record"
 regular_file "$journal_config"
-regular_file "$release_dir/RELEASE_COMMIT"
-regular_file "$release_dir/deploy/pins.env"
+regular_file "$release_dir/RELEASE_METADATA.json"
+regular_file "$release_dir/atlas"
 
-# The release pin manifest is non-secret and is the source of the binary list.
-# shellcheck disable=SC1090
-. "$release_dir/deploy/pins.env"
-: "${ATLAS_BUN_BINARY:?Bun pin is missing}"
-: "${ATLAS_OPENCODE_BINARY:?OpenCode executable selection is missing}"
-: "${ATLAS_GIT_BINARY:?Git pin is missing}"
-: "${ATLAS_GIT_WRAPPER:?Git wrapper pin is missing}"
-: "${ATLAS_REAL_GH:?gh pin is missing}"
-tool_paths=("$ATLAS_BUN_BINARY" "$ATLAS_OPENCODE_BINARY" "$ATLAS_GIT_BINARY" "$ATLAS_GIT_WRAPPER" "$ATLAS_REAL_GH")
+# The tools a restore must find again: the Atlas binary and git wrapper of the
+# selected Release, the operator-selected OpenCode, and host git and gh.
+tool_paths=(
+  "$release_dir/atlas"
+  "$release_dir/bin/git"
+  "$(realpath "${ATLAS_OPENCODE_BINARY:-/opt/atlas/tools/opencode/current/bin/opencode}")"
+  "$(realpath "${ATLAS_REAL_GIT:-/usr/bin/git}")"
+  "$(realpath "${ATLAS_REAL_GH:-/usr/bin/gh}")"
+)
 for path in "${tool_paths[@]}"; do regular_file "$path"; done
 
 staging=$(mktemp -d "$recovery_root/.capture.XXXXXX")
@@ -96,17 +98,22 @@ copy_private() {
 
 for name in "${config_files[@]}"; do copy_private "$config_root/$name" "$staging/etc-atlas/$name"; done
 for name in "${unit_files[@]}"; do copy_private "$unit_root/$name" "$staging/units/$name"; done
+for name in "${optional_unit_files[@]}"; do
+  if [[ -e "$unit_root/$name" || -L "$unit_root/$name" ]]; then
+    regular_file "$unit_root/$name"
+    copy_private "$unit_root/$name" "$staging/units/$name"
+  fi
+done
 copy_private "$journal_config" "$staging/journald/atlas.conf"
-copy_private "$release_dir/RELEASE_COMMIT" "$staging/release/RELEASE_COMMIT"
-copy_private "$release_dir/deploy/pins.env" "$staging/release/pins.env"
+copy_private "$release_dir/RELEASE_METADATA.json" "$staging/release/RELEASE_METADATA.json"
 copy_private "$route_record" "$staging/routing/record"
 copy_private "$firewall_record" "$staging/firewall/record"
 
 sha256sum -- "${tool_paths[@]}" > "$staging/checksums/tools.sha256"
-printf 'captured_at=%s\nrelease=%s\ncommit=%s\n' \
+printf 'captured_at=%s\nrelease=%s\nrelease_metadata_sha256=%s\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   "$release_dir" \
-  "$(cat "$release_dir/RELEASE_COMMIT")" > "$staging/checksums/metadata"
+  "$(sha256sum < "$release_dir/RELEASE_METADATA.json" | cut -d ' ' -f 1)" > "$staging/checksums/metadata"
 (
   cd "$staging"
   find etc-atlas units journald release routing firewall -type f -print0 | sort -z | xargs -0 sha256sum > checksums/files.sha256

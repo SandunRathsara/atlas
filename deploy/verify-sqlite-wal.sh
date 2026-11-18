@@ -7,8 +7,11 @@ set -euo pipefail
 }
 
 release_root=$(realpath "${ATLAS_RELEASE_ROOT:-/opt/atlas/current}")
-# shellcheck disable=SC1090
-source "$release_root/deploy/pins.env"
+# Atlas's own SQLite is the one compiled into its binary (`atlas ops` sets
+# ATLAS_BIN to that binary). OpenCode is the operator-selected executable.
+atlas_bin=${ATLAS_BIN:-$release_root/atlas}
+ATLAS_OPENCODE_BINARY=${ATLAS_OPENCODE_BINARY:-/opt/atlas/tools/opencode/current/bin/opencode}
+ATLAS_OPENCODE_BINARY=$(realpath -m -- "$ATLAS_OPENCODE_BINARY")
 
 fixed_version() {
   local version=$1 major minor patch
@@ -18,19 +21,19 @@ fixed_version() {
   (( minor >= 52 )) || (( minor == 51 && patch >= 3 )) || (( minor == 50 && patch >= 7 )) || (( minor == 44 && patch >= 6 ))
 }
 
-[[ -x "$ATLAS_BUN_BINARY" && ! -L "$ATLAS_BUN_BINARY" ]] || { echo "pinned Bun binary is unavailable" >&2; exit 1; }
+[[ -x "$atlas_bin" ]] || { echo "Atlas binary is unavailable" >&2; exit 1; }
+[[ -f "$release_root/RELEASE_METADATA.json" && ! -L "$release_root/RELEASE_METADATA.json" ]] || { echo "selected Atlas Release has no metadata" >&2; exit 1; }
 [[ -x "$ATLAS_OPENCODE_BINARY" && ! -L "$ATLAS_OPENCODE_BINARY" ]] || { echo "selected OpenCode executable is unavailable" >&2; exit 1; }
-[[ "$("$ATLAS_BUN_BINARY" --version)" == "$ATLAS_BUN_VERSION" ]] || { echo "Bun runtime does not match the release pin" >&2; exit 1; }
 if ! opencode_version=$("$ATLAS_OPENCODE_BINARY" --version) || [[ -z "$opencode_version" ]]; then
   echo "selected OpenCode executable did not report its version" >&2
   exit 1
 fi
 
-bun_sqlite=$(
-  "$ATLAS_BUN_BINARY" --eval 'import { Database } from "bun:sqlite"; const db = new Database(":memory:"); console.log(db.query("SELECT sqlite_version() AS version").get().version); db.close();'
-)
+runtime=$("$atlas_bin" ops sqlite-version) || { echo "Atlas could not report its embedded SQLite version" >&2; exit 1; }
+atlas_bun=$(sed -n 's/^bun=//p' <<<"$runtime")
+bun_sqlite=$(sed -n 's/^sqlite=//p' <<<"$runtime")
 [[ "$bun_sqlite" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && fixed_version "$bun_sqlite" || {
-  echo "Bun's embedded SQLite does not include the accepted WAL-reset fix" >&2
+  echo "Atlas's embedded SQLite does not include the accepted WAL-reset fix" >&2
   exit 1
 }
 
@@ -85,8 +88,8 @@ temporary=$(mktemp "$(dirname "$record")/.sqlite-wal-versions.XXXXXX")
 trap 'rm -f -- "$temporary"' EXIT
 {
   printf 'verified_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf 'release_commit=%s\n' "$(cat "$release_root/RELEASE_COMMIT")"
-  printf 'bun_version=%s\n' "$ATLAS_BUN_VERSION"
+  printf 'release_metadata_sha256=%s\n' "$(sha256sum < "$release_root/RELEASE_METADATA.json" | cut -d ' ' -f 1)"
+  printf 'bun_version=%s\n' "$atlas_bun"
   printf 'bun_sqlite_version=%s\n' "$bun_sqlite"
   printf 'opencode_version=%s\n' "$opencode_version"
   printf 'opencode_bun_version=%s\n' "$opencode_bun"
@@ -98,4 +101,4 @@ trap 'rm -f -- "$temporary"' EXIT
 chmod 0400 "$temporary"
 mv -f -- "$temporary" "$record"
 trap - EXIT
-echo "embedded SQLite WAL-reset fix verified for Bun $ATLAS_BUN_VERSION and $opencode_version"
+echo "embedded SQLite WAL-reset fix verified for Atlas (Bun $atlas_bun) and $opencode_version"

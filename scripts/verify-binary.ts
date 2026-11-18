@@ -76,9 +76,9 @@ try {
   const help = runSync([binary, "--help"]);
   assert.equal(help.code, 0);
   for (const name of ["serve", "credentials", "updater", "gh", "git-credential", "setup", "version"]) assert.match(help.stdout, new RegExp(`\\b${name}\\b`));
-  const setup = runSync([binary, "setup"]);
-  assert.notEqual(setup.code, 0, "setup is a stub");
-  assert.match(setup.stderr, /not implemented/);
+  const setupHelp = runSync([binary, "setup", "--help"]);
+  assert.equal(setupHelp.code, 0, setupHelp.stderr);
+  assert.match(setupHelp.stdout, /--answers <file>/);
 
   // git-credential and gh fail closed without a credential supplier.
   const supplierEnv = { ATLAS_SUPPLIER_SOCKET: join(scratch, "no-supplier.sock"), ATLAS_SUPPLIER_KEY_PATH: join(scratch, "no-supplier.key") };

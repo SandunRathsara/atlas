@@ -14,7 +14,8 @@ const commands: Record<string, { summary: string; load: () => Promise<Run> }> = 
   updater: { summary: "Run the release updater", load: async () => (await import("./updater-server.ts")).run },
   gh: { summary: "Scoped gh wrapper for Sessions", load: async () => (await import("./commands/gh.ts")).run },
   "git-credential": { summary: "Git credential helper for Sessions", load: async () => (await import("./commands/git-credential.ts")).run },
-  setup: { summary: "Set up Atlas on this host (not implemented yet)", load: async () => (await import("./commands/setup.ts")).run },
+  setup: { summary: "Install, re-run, or adopt Atlas on this host (root)", load: async () => (await import("./commands/setup.ts")).run },
+  ops: { summary: "Operator maintenance tools (snapshot, check-space, recovery)", load: async () => (await import("./commands/ops.ts")).run },
   version: { summary: "Print the release identity (--json for JSON)", load: async () => (await import("./commands/version.ts")).run },
 };
 
