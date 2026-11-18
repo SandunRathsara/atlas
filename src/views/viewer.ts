@@ -637,7 +637,7 @@ const statusCard = ({ session, viewer, stale }: { session: Session; viewer?: Ses
   </section>`;
 };
 
-const pullRequestCard = (session: Session) => {
+const pullRequestCard = (session: Session, title?: string) => {
   if (!session.resultPullRequestId) return "";
   const url = safeExternalUrl(session.resultPullRequestUrl ?? "");
   const number = session.resultPullRequestNumber ? `#${session.resultPullRequestNumber}` : "Pull request";
@@ -645,12 +645,26 @@ const pullRequestCard = (session: Session) => {
   const unsure = session.publicationStatus === "unverified" || session.publicationStatus === "ambiguous";
   return `<section class="sv-pr" aria-labelledby="sv-pr-t">
     <p class="sv-pr-k">${icon("pr", 15)}Pull request opened</p>
-    <h2 id="sv-pr-t" class="sv-pr-t">${escapeHtml(number)}${session.workingBranch ? ` <span class="ax-mono">${escapeHtml(session.workingBranch)}</span>` : ""}</h2>
-    <p class="sv-pr-s">Into <span class="ax-mono">${escapeHtml(into)}</span></p>
+    ${title
+      ? `<h2 id="sv-pr-t" class="sv-pr-t">${escapeHtml(title)}</h2>
+    <p class="sv-pr-s">${escapeHtml(number)}${session.workingBranch ? ` · <span class="ax-mono">${escapeHtml(session.workingBranch)}</span>` : ""} into <span class="ax-mono">${escapeHtml(into)}</span></p>`
+      : `<h2 id="sv-pr-t" class="sv-pr-t">${escapeHtml(number)}${session.workingBranch ? ` <span class="ax-mono">${escapeHtml(session.workingBranch)}</span>` : ""}</h2>
+    <p class="sv-pr-s">Into <span class="ax-mono">${escapeHtml(into)}</span></p>`}
     ${unsure ? `<p class="sv-card-note">${icon("warn", 15)}<span>GitHub hasn’t confirmed this yet${session.publicationReason ? `: ${escapeHtml(session.publicationReason)}` : "."}</span></p>` : ""}
     ${url ? `<div class="sv-pr-acts">${button({ label: "Open on GitHub", href: url, icon: "external", block: true, attrs: 'target="_blank" rel="noopener noreferrer"' })}</div>` : '<p class="sv-pr-s">GitHub link unavailable.</p>'}
   </section>`;
 };
+
+const isStale = (session: Session, viewer?: SessionViewerProjection) =>
+  session.opencodeFreshness === "stale" || viewer?.freshness === "stale";
+
+/**
+ * Fresh status and Pull request cards for the Session page. The `/sessions/:id/view` HTMX response
+ * appends this after the viewer; `public/app.js` swaps it into `[data-sv-pr-slot]` and
+ * `[data-sv-status-slot]` whenever it applies a fresh viewer refresh.
+ */
+export const renderSessionLiveCards = ({ session, viewer, pullRequestTitle }: { session: Session; viewer?: SessionViewerProjection; pullRequestTitle?: string }) =>
+  `<template data-sv-live-cards><div data-sv-pr-slot>${pullRequestCard(session, pullRequestTitle)}</div><div data-sv-status-slot>${statusCard({ session, viewer, stale: isStale(session, viewer) })}</div></template>`;
 
 const tabHref = (base: string, tab: SessionTab) => {
   const url = new URL(base, "http://atlas.invalid");
@@ -737,6 +751,7 @@ export const renderSessionDetailPage = ({
   sessionDirectoryAvailable,
   inbox,
   tab: requestedTab,
+  pullRequestTitle,
 }: {
   csrfToken: string;
   repository: Repository;
@@ -750,12 +765,14 @@ export const renderSessionDetailPage = ({
   sessionDirectoryAvailable?: boolean;
   inbox?: InboxContext;
   tab?: string;
+  /** Title of the Session's Pull request, when Atlas has seen it. */
+  pullRequestTitle?: string;
 }) => {
   const id = encodeURIComponent(session.atlasId);
   const tab = sessionTab(requestedTab);
   const specPath = `/repositories/${encodeURIComponent(repository.githubId)}/specs/${encodeURIComponent(session.specIssueNumber)}`;
   const specUrl = safeExternalUrl(session.specHtmlUrl);
-  const stale = session.opencodeFreshness === "stale" || viewer?.freshness === "stale";
+  const stale = isStale(session, viewer);
   const terminal = ["succeeded", "failed", "interrupted", "failed_setup"].includes(session.state);
 
   const menu: MenuItem[] = [
@@ -795,9 +812,9 @@ export const renderSessionDetailPage = ({
 
   const content = `<div class="sv-page${stale ? " sv-stale" : ""}${terminal ? " sv-terminal" : ""}" data-session-page>
     ${notices}
-    ${pullRequestCard(session)}
+    <div data-sv-pr-slot>${pullRequestCard(session, pullRequestTitle)}</div>
     ${staleBanner}
-    <div class="sv-live-wrap">${statusCard({ session, viewer, stale })}</div>
+    <div class="sv-live-wrap" data-sv-status-slot>${statusCard({ session, viewer, stale })}</div>
     <div class="sv-tabs" data-sv-tabs>${segmented({ label: "Session sections", large: true, items: TABS.map((item) => ({ href: tabHref(base, item.id), label: item.label, current: item.id === tab })) })}</div>
     ${panel("activity", `<div class="sv-live-wrap">${renderSessionViewerFragment({
       session,

@@ -286,6 +286,25 @@
     root.replaceChildren(...[...replacement.childNodes]);
   };
 
+  // Session page: the /view response also carries fresh status and Pull request cards.
+  const applyLiveCards = (root, fragment) => {
+    const page = root.closest("[data-session-page]");
+    const cards = fragment.querySelector("template[data-sv-live-cards]");
+    if (!page || !cards) return;
+    const before = page.querySelector("[data-session-state]")?.dataset.sessionState;
+    ["data-sv-pr-slot", "data-sv-status-slot"].forEach((name) => {
+      const slot = page.querySelector(`[${name}]`);
+      const fresh = cards.content.querySelector(`[${name}]`);
+      if (slot && fresh) slot.replaceChildren(...fresh.childNodes);
+    });
+    const after = page.querySelector("[data-session-state]");
+    if (after && before && after.dataset.sessionState !== before) {
+      const status = document.getElementById("global-status");
+      const title = after.querySelector(".sv-card-t");
+      if (status && title?.firstChild) status.textContent = `Session status: ${title.firstChild.textContent.trim()}`;
+    }
+  };
+
   const refreshViewer = (root, controller) => {
     controller.requested += 1;
     if (controller.timer || controller.loading) {
@@ -321,6 +340,7 @@
           if (replacement?.querySelector("[data-viewer-content]")) {
             if (replacement.dataset.viewerFreshness === "fresh") {
               replaceViewerMarkup(root, replacement);
+              applyLiveCards(root, template.content);
               controller.connectionState = "fresh";
               controller.connectionReason = undefined;
               setViewerConnection(root, "fresh");

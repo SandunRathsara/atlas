@@ -48,6 +48,7 @@ import {
   renderReservationReleasePage,
   renderSessionDetailPage,
   renderSessionViewerFragment,
+  renderSessionLiveCards,
   renderSessionsPage,
   renderTargetReconfirmationForm,
   renderTargetReconfirmationPage,
@@ -1696,6 +1697,7 @@ export const createApp = (options: AppOptions) => {
       session,
       viewer,
       pullRequestsRefresh,
+      pullRequestTitle: resultPullRequestTitle(session),
       openCodeReadiness: currentOpenCodeReadiness(),
       persistenceHealth: persistence.getHealth(),
       sessionDirectoryAvailable: sessionDirectoryAvailable(session),
@@ -1965,6 +1967,11 @@ export const createApp = (options: AppOptions) => {
     return redirectToSession(c, result.session);
   });
 
+  /** Title of the Session's resulting Pull request from Atlas's last GitHub read, if it saw it. */
+  const resultPullRequestTitle = (session: Session) => session.resultPullRequestId
+    ? persistence.listPullRequests(session.repositoryId).find((item) => item.githubId === session.resultPullRequestId)?.title
+    : undefined;
+
   app.get("/sessions/:sessionId/view", async (c) => {
     const sessionId = c.req.param("sessionId");
     if (!sessionIdPattern.test(sessionId)) return c.text("Invalid Session ID", 400);
@@ -2011,6 +2018,7 @@ export const createApp = (options: AppOptions) => {
         pullRequestsRefresh: persistence.getRefreshState(session.repositoryId, "pullRequests"),
         viewerRequestUrl,
         viewerLimit: limit,
+        pullRequestTitle: resultPullRequestTitle(session),
         openCodeReadiness: currentOpenCodeReadiness(),
         persistenceHealth: persistence.getHealth(),
         sessionDirectoryAvailable: sessionDirectoryAvailable(session),
@@ -2018,14 +2026,14 @@ export const createApp = (options: AppOptions) => {
         tab: c.req.query("tab"),
       }));
     }
-    return c.html(renderSessionViewerFragment({
+    return c.html(`${renderSessionViewerFragment({
       session,
       viewer: projection,
       endpoint: `/sessions/${encodeURIComponent(session.atlasId)}/view`,
       eventsEndpoint: `/events?session=${encodeURIComponent(session.atlasId)}`,
       requestUrl: viewerRequestUrl,
       limit,
-    }));
+    })}${renderSessionLiveCards({ session, viewer: projection, pullRequestTitle: resultPullRequestTitle(session) })}`);
   });
 
   app.post("/logout", auth.middleware, async (c) => {
