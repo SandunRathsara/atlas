@@ -150,7 +150,7 @@ try {
   let response = await app.fetch(new Request("http://atlas.test/updates", { headers: { Authorization: "Bearer secret" } }));
   let html = await response.text();
   assert.match(html, /Approval required/);
-  assert.match(html, /Automatic for current SemVer builds/);
+  assert.match(html, /Install small fixes automatically/);
   response = await app.fetch(new Request("http://atlas.test/updates/policy", { method: "POST" }));
   assert.equal(response.status, 401, "policy changes require existing Atlas access");
   response = await app.fetch(new Request("http://atlas.test/updates/policy", {

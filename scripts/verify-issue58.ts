@@ -277,7 +277,8 @@ try {
   html = await response.text();
   assert.match(html, /The update change was not completed/);
   assert.match(html, /Review the preserved choice and try again/);
-  assert.match(html, /<option value="automatic" selected>/, "a failed policy save must preserve the submitted choice");
+  assert.match(html, /<input[^>]*id="update-policy"[^>]*\bchecked>/, "a failed policy save must preserve the submitted choice");
+  assert.match(html, /<button[^>]*name="policy" value="automatic">Try saving again<\/button>/, "a failed policy save must offer to resubmit the preserved choice");
   assert.match(html, /href="\/inbox">return to Inbox<\/a>/);
   rejectPolicy = false;
 

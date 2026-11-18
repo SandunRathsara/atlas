@@ -974,6 +974,7 @@ export const createApp = (options: AppOptions) => {
     return c.html(renderShell({
       title: "Updates",
       csrfToken,
+      tab: "more",
       inbox: inboxFromRequest(c),
       content: renderUpdatesPage(status, csrfToken),
     }));
@@ -994,6 +995,7 @@ export const createApp = (options: AppOptions) => {
     return c.html(renderShell({
       title: "Updates",
       csrfToken,
+      tab: "more",
       inbox: inboxFromRequest(c),
       content,
     }), statusCode);
