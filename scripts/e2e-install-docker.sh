@@ -49,6 +49,7 @@ pass() { echo "  ok  $*"; }
 rm -rf -- "$work"
 mkdir -p "$work/releases/latest/download"
 sha=$(git -C "$root" rev-parse HEAD)
+old_install=$root/scripts/fixtures/old-install-432fe69
 tag1=v0.0.1+build.1
 tag2=v0.0.1+build.2
 make_release() {
@@ -217,16 +218,16 @@ for distro in "${distros[@]}"; do
   start "$image" "$container"
   for unit in atlas atlas-credentials atlas-updater opencode atlas-snapshot atlas-space-check; do
     for kind in service timer; do
-      git -C "$root" show "432fe69:deploy/systemd/$unit.$kind" >"$work/old-$unit.$kind" 2>/dev/null || { rm -f "$work/old-$unit.$kind"; continue; }
-      docker cp "$work/old-$unit.$kind" "$container:/etc/systemd/system/$unit.$kind"
+      [[ -f $old_install/$unit.$kind ]] || continue
+      docker cp "$old_install/$unit.$kind" "$container:/etc/systemd/system/$unit.$kind"
       in_root "chown root:root /etc/systemd/system/$unit.$kind && chmod 0644 /etc/systemd/system/$unit.$kind"
     done
   done
-  git -C "$root" show 432fe69:deploy/atlas.env.example | sed \
+  sed \
     -e 's/^ATLAS_SHARED_TOKEN=.*/ATLAS_SHARED_TOKEN=old-shared-token-0123456789abcdefghij/' \
     -e 's/^ATLAS_GITHUB_WEBHOOK_SECRET=.*/ATLAS_GITHUB_WEBHOOK_SECRET=old-webhook-secret-0123456789/' \
-    -e 's/^ATLAS_ORIGIN=.*/ATLAS_ORIGIN=https:\/\/atlas.e2e.test/' >"$work/old-atlas.env"
-  git -C "$root" show 432fe69:deploy/github.env.example | sed 's/your-organization/acme-e2e/' >"$work/old-github.env"
+    -e 's/^ATLAS_ORIGIN=.*/ATLAS_ORIGIN=https:\/\/atlas.e2e.test/' "$old_install/atlas.env.example" >"$work/old-atlas.env"
+  sed 's/your-organization/acme-e2e/' "$old_install/github.env.example" >"$work/old-github.env"
   docker cp "$work/old-atlas.env" "$container:/etc/atlas-old.env"
   docker cp "$work/old-github.env" "$container:/etc/github-old.env"
   in_root '
