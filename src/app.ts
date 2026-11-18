@@ -1451,6 +1451,7 @@ export const createApp = (options: AppOptions) => {
       repository: Repository = persistence.getRepository(repositoryId)!,
       spec = persistence.getSpec(repositoryId, issueNumber) ?? knownSpec,
       existingSession?: Session,
+      promptInvalid = false,
     ) => {
       if (status === 503) auth.restoreCsrf(stringField(form.csrf), identity.type === "browser" ? identity.sessionId : undefined);
       const csrfToken = auth.issueCsrf(identity.type === "browser" ? identity.sessionId : undefined);
@@ -1463,6 +1464,7 @@ export const createApp = (options: AppOptions) => {
         target: targetValue,
         error,
         existingSession,
+        promptInvalid,
       };
       const targetPullRequests = persistence.listPullRequests(repositoryId);
       const targetStacks = persistence.listPrStacks(repositoryId);
@@ -1521,10 +1523,10 @@ export const createApp = (options: AppOptions) => {
       return renderError(422, "Refresh the Start Session form before submitting again.");
     }
     if (prompt.trim().length === 0) {
-      return renderError(422, "Enter an initial prompt before starting the Session.");
+      return renderError(422, "Enter an initial prompt before starting the Session.", undefined, undefined, undefined, true);
     }
     if (promptCharacterCount(prompt) > MAX_PROMPT_CHARACTERS) {
-      return renderError(422, `The initial prompt must be ${MAX_PROMPT_CHARACTERS.toLocaleString()} characters or fewer.`);
+      return renderError(422, `The initial prompt must be ${MAX_PROMPT_CHARACTERS.toLocaleString()} characters or fewer.`, undefined, undefined, undefined, true);
     }
 
     let refreshResult: SyncResult;

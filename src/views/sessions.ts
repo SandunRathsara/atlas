@@ -22,6 +22,7 @@ export const renderStartSessionForm = ({
   prompt,
   error,
   existingSession,
+  promptInvalid = false,
   targetOptions,
   target = "default",
 }: {
@@ -31,6 +32,8 @@ export const renderStartSessionForm = ({
   prompt: string;
   error?: string;
   existingSession?: Session;
+  /** Only prompt errors mark the field invalid; other errors just show the red box. */
+  promptInvalid?: boolean;
   targetOptions?: string;
   target?: string;
 }) => {
@@ -41,10 +44,10 @@ export const renderStartSessionForm = ({
       bodyHtml: `<p>${escapeHtml(error)}</p>${existingSession ? `<a class="sp-errlink" href="${`/sessions/${encodeURIComponent(existingSession.atlasId)}`}">Open the existing Session ›</a>` : ""}`,
     })
     : "";
-  const errorAttributes = error ? ' aria-describedby="prompt-hint prompt-error" aria-invalid="true"' : ' aria-describedby="prompt-hint"';
+  const errorAttributes = error && promptInvalid ? ' aria-describedby="prompt-hint prompt-error" aria-invalid="true"' : ' aria-describedby="prompt-hint"';
   const cancelHref = action.replace(/\/sessions$/, "");
 
-  return `<form id="start-session-form" class="sp-form" action="${escapeHtml(action)}" method="post" hx-post="${escapeHtml(action)}" hx-target="#start-session-form" hx-swap="outerHTML" hx-indicator="#start-session-progress" hx-disabled-elt="button[type='submit']">
+  return `<form id="start-session-form" class="sp-form" action="${escapeHtml(action)}" method="post" hx-post="${escapeHtml(action)}" hx-target="#start-session-form" hx-swap="outerHTML" hx-indicator="#start-session-progress" hx-disabled-elt="button[type='submit']"${error && !promptInvalid ? ' aria-describedby="prompt-error"' : ""}>
     <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
     <input type="hidden" name="submission_id" value="${escapeHtml(submissionId)}">
     ${errorMarkup}
@@ -80,6 +83,7 @@ export const renderStartSessionPage = ({
   error,
   notice,
   existingSession,
+  promptInvalid,
   accessRefresh,
   pullRequests,
   stacks,
@@ -97,6 +101,7 @@ export const renderStartSessionPage = ({
   error?: string;
   notice?: string;
   existingSession?: Session;
+  promptInvalid?: boolean;
   accessRefresh?: RefreshState;
   specsRefresh?: RefreshState;
   pullRequests?: PullRequest[];
@@ -130,7 +135,7 @@ export const renderStartSessionPage = ({
           ${notice ? banner({ tone: "info", title: "Your form is kept", body: `${notice} Atlas will not resubmit automatically.`, attrs: 'tabindex="-1" data-focus-on-swap' }) : ""}
           ${retained ? banner({ role: "alert", title: "This Spec can’t start a Session", body: "This issue is no longer an open Spec on GitHub. Atlas shows the last copy it saw." }) : ""}
           ${accessRefresh && (accessRefresh.availability === "unavailable" || accessRefresh.availability === "partial") ? banner({ title: "Couldn’t check GitHub access just now", body: "Atlas checks again when you start. Nothing is queued until it can." }) : ""}
-          ${renderStartSessionForm({ action: formAction, csrfToken, submissionId, prompt, error, existingSession, targetOptions: renderStartTargetOptions(repository, pullRequests, stacks, accessRefresh, pullRequestsRefresh, target ?? "default", targetInvalid, "prompt-error"), target: target ?? "default" })}
+          ${renderStartSessionForm({ action: formAction, csrfToken, submissionId, prompt, error, existingSession, promptInvalid, targetOptions: renderStartTargetOptions(repository, pullRequests, stacks, accessRefresh, pullRequestsRefresh, target ?? "default", targetInvalid, "prompt-error"), target: target ?? "default" })}
         </section>
       </div>`,
   });
