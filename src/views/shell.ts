@@ -15,7 +15,7 @@ import {
 } from "./frame.ts";
 import { banner, group, pageTitle, plainTile, row, type PageTitleOptions } from "./kit.ts";
 
-export type { InboxContext, FrameTab, PageTitleOptions };
+export type { InboxContext, FrameTab };
 
 export type PendingStartSession = {
   action: string;
@@ -89,20 +89,30 @@ const emptyInbox = (): InboxContext => ({
   specsRefresh: [],
 });
 
-/** Phone top bar: brand (or back link) plus the Repository filter, so Repository context stays visible. */
-const phoneBar = (inbox: InboxContext, header?: PageTitleOptions) => {
+/** Top bar below 1024px: the back link on detail pages, the brand on top-level tabs. The page ⋯ menu is pinned at its right. */
+const phoneBar = (header?: ShellHeader) => {
   const lead = header?.back
     ? `<a class="ax-bar-back" href="${escapeHtml(header.back.href)}">${icon("back", 22)}${escapeHtml(header.back.label)}</a>`
     : `<a class="ax-bar-brand" href="/inbox">${logo(26, 7)}<span>Atlas</span></a>`;
-  const filter = !header?.filterHtml ? `<span class="ax-bar-filter">${repositoryFilter(inbox, "head")}</span>` : "";
-  return `<div class="ax-bar-phone">${lead}<span class="ax-bar-spacer"></span>${filter}</div>`;
+  return `<div class="ax-bar-phone">${lead}</div>`;
 };
+
+/** Pages whose own content follows the Repository filter; picking a Repository there stays on the page. */
+const FILTERED_PAGES = new Set(["/inbox", "/sessions", "/pull-requests"]);
+
+/**
+ * Page header for `renderShell`: `pageTitle` options plus `filter`, which puts the Repository filter
+ * beside the large title below 1024px. Use it only on pages whose content the filter narrows
+ * (Inbox, Sessions, cross-Repository Pull requests). On desktop the filter always sits in the top bar.
+ */
+export type ShellHeader = Omit<PageTitleOptions, "filterHtml"> & { filter?: boolean };
 
 /**
  * The app frame: desktop sidebar (≥1024px), sticky top bar, main content, phone tab bar and
  * optional sticky Start bar. Every existing caller passes `{ title, csrfToken, content, inbox?,
  * historyDisabled? }`; `tab`, `header`, `startBar` and `bodyClass` are optional extras.
- * `header` renders the large `pageTitle` (h1#page-title); omit it when `content` has its own h1.
+ * `header` renders the large `pageTitle` (h1#page-title) and drives the top bar (back link, ⋯ menu,
+ * filter). Only full-screen flows with their own bar (Start Session) put an h1 in `content`.
  */
 export const renderShell = ({
   title,
@@ -121,13 +131,17 @@ export const renderShell = ({
   content: string;
   inbox?: InboxContext;
   tab?: FrameTab;
-  header?: PageTitleOptions;
+  header?: ShellHeader;
   /** Trusted markup for the phone Start bar (usually one or two `ax-btn` buttons). */
   startBar?: string;
   bodyClass?: string;
 }) => {
   const current = tab ?? tabForPath(inbox.currentPath);
   const classes = [bodyClass, startBar ? "ax-has-startbar" : ""].filter(Boolean).join(" ");
+  const filterAction = FILTERED_PAGES.has(inbox.currentPath) ? inbox.currentPath : "/inbox";
+  const heading = header
+    ? pageTitle({ ...header, filterHtml: header.filter ? repositoryFilter(inbox, "head", filterAction) : undefined })
+    : "";
 
   return renderDocument(
     title,
@@ -141,13 +155,13 @@ export const renderShell = ({
       </aside>
       <div class="ax-main">
         <header class="ax-bar">
-          ${phoneBar(inbox, header)}
-          <div class="ax-bar-desk">${repositoryFilter(inbox, "bar")}</div>
+          ${phoneBar(header)}
+          <div class="ax-bar-desk">${repositoryFilter(inbox, "bar", filterAction)}</div>
         </header>
         <main id="main-content" class="ax-content" aria-labelledby="page-title"${historyDisabled ? ' hx-history="false"' : ""}>
           <div id="global-status" class="sr-only" role="status" aria-atomic="true">Signed in to Atlas.</div>
           ${renderWarningStrip(readRecoveryStatus())}
-          ${header ? pageTitle(header) : ""}
+          ${heading}
           ${content}
         </main>
       </div>
@@ -160,8 +174,7 @@ export const renderShell = ({
 
 /** Phone "More" tab body: Updates, Appearance and Sign out (the sidebar account menu on desktop). */
 export const renderMorePage = (csrfToken: string) =>
-  `${pageTitle({ title: "More" })}
-  ${group([row({ title: "Updates", href: "/updates", tileHtml: plainTile("refresh"), sub: "Atlas releases and update status", chevron: true })])}
+  `${group([row({ title: "Updates", href: "/updates", tileHtml: plainTile("refresh"), sub: "Atlas releases and update status", chevron: true })])}
   <div class="ax-needs-js ax-more-theme">
     <h2 class="ax-group-label">Appearance</h2>
     ${themeControl("more")}

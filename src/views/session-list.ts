@@ -9,7 +9,7 @@ import {
   emptyCard,
   group,
   icon,
-  renderRepositoryHeading,
+  repositoryPage,
   repositoryLink,
   row,
   rowEnd,
@@ -161,12 +161,14 @@ export const renderSessionsPage = ({
   const content = `<div class="ls-page">${chips}${publicationNote(pendingNames, pendingReason)}${list}</div>`;
 
   if (repository) {
+    const page = repositoryPage(repository, "sessions", csrfToken);
     return renderShell({
       title: `${repository.fullName} Sessions`,
       csrfToken,
       inbox,
       tab: "repos",
-      content: `${renderRepositoryHeading(repository, "Sessions", "Every Session for this Repository, newest first.", csrfToken)}${content}`,
+      header: page.header,
+      content: `${page.intro}${content}`,
     });
   }
   return renderShell({
@@ -174,7 +176,7 @@ export const renderSessionsPage = ({
     csrfToken,
     inbox,
     tab: "sessions",
-    header: { title: "Sessions" },
+    header: { title: "Sessions", filter: true },
     content,
   });
 };

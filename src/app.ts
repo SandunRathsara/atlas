@@ -621,9 +621,11 @@ export const createApp = (options: AppOptions) => {
       : undefined;
   };
 
+  // Pages whose Repository filter form submits to themselves (see `repositoryFilter`).
+  const filterPaths = new Set(["/inbox", "/inbox/list", "/sessions", "/pull-requests"]);
   const inboxFromRequest = (c: Context) => {
     const path = c.req.path;
-    const query = path === "/inbox" || path === "/inbox/list" ? c.req.query("repository") : undefined;
+    const query = filterPaths.has(path) ? c.req.query("repository") : undefined;
     const repositoryId = query !== undefined && query !== "manage"
       ? query
       : readInboxCookie(c.req.header("Cookie")).repositoryId;
@@ -733,6 +735,7 @@ export const createApp = (options: AppOptions) => {
       csrfToken,
       inbox: inboxFromRequest(c),
       tab: "more",
+      header: { title: "More" },
       content: renderMorePage(csrfToken),
     }));
   });
@@ -965,6 +968,8 @@ export const createApp = (options: AppOptions) => {
     });
   });
 
+  // Updates lives under More on phones and in the Account menu on desktop: the back link is phone-only.
+  const updatesHeader = { title: "Updates", back: { href: "/more", label: "More", phoneOnly: true } };
   const updatesPage = async (c: Context, fragment = false) => {
     const identity = c.get("auth");
     const status = await updates.status();
@@ -975,6 +980,7 @@ export const createApp = (options: AppOptions) => {
       title: "Updates",
       csrfToken,
       tab: "more",
+      header: updatesHeader,
       inbox: inboxFromRequest(c),
       content: renderUpdatesPage(status, csrfToken),
     }));
@@ -996,6 +1002,7 @@ export const createApp = (options: AppOptions) => {
       title: "Updates",
       csrfToken,
       tab: "more",
+      header: updatesHeader,
       inbox: inboxFromRequest(c),
       content,
     }), statusCode);
@@ -1235,6 +1242,9 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.get("/pull-requests", privateHeaders, auth.middleware, (c) => {
+    const managed = manageInboxFilter(c);
+    if (managed) return managed;
+    rememberInboxFilter(c);
     const identity = c.get("auth");
     const inbox = inboxFromRequest(c);
     const repositories = (inbox.filtered ? [inbox.filtered] : persistence.listRepositories()).map((repository) => ({
@@ -1629,6 +1639,9 @@ export const createApp = (options: AppOptions) => {
     const requestedFilter = c.req.query("status") ?? "active";
     if (!sessionFilters.has(requestedFilter as SessionFilter)) return c.text("Invalid Session status filter", 400);
     const filter = requestedFilter as SessionFilter;
+    const managed = manageInboxFilter(c);
+    if (managed) return managed;
+    rememberInboxFilter(c);
     const repositories = persistence.listRepositories();
     const sessions = repositories
       .flatMap((repository) => persistence.listSessions(repository.githubId, filter))

@@ -8,7 +8,6 @@ import {
   group,
   groupFoot,
   icon,
-  pageTitle,
   repositoryLink,
   repositoryNote,
   repositoryTile,
@@ -191,9 +190,8 @@ export const renderAddRepositoryPage = ({
     csrfToken,
     inbox,
     tab: "repos",
-    // Back link in the page title only (the shell would also put it in the phone bar).
-    content: `${pageTitle({ title: "Add Repository", back: { href: "/repositories", label: "Repositories" } })}
-    <div class="rp-page rp-add">
+    header: { title: "Add Repository", back: { href: "/repositories", label: "Repositories" } },
+    content: `    <div class="rp-page rp-add">
       ${errorMarkup}
       ${filterForm}
       ${list}

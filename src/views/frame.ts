@@ -49,9 +49,9 @@ export const renderTabBar = (tab: FrameTab | undefined) =>
 /**
  * One "All Repositories ▾" dropdown. A GET form to /inbox with `repository=<id>` (same contract as
  * the old select). `place` keeps ids unique: "bar" is the desktop top bar, "head" sits beside the
- * phone large title.
+ * phone large title. `action` is the page the choice reloads (Inbox, Sessions or Pull requests).
  */
-export const repositoryFilter = (inbox: InboxContext, place: "bar" | "head" = "head") => {
+export const repositoryFilter = (inbox: InboxContext, place: "bar" | "head" = "head", action = "/inbox") => {
   const selected = inbox.filtered?.githubId ?? "";
   const name = inbox.filtered?.fullName ?? "All Repositories";
   const id = place === "bar" ? "inbox-repository" : "inbox-head-repository";
@@ -59,7 +59,7 @@ export const repositoryFilter = (inbox: InboxContext, place: "bar" | "head" = "h
     `<button class="ax-menu-item" type="submit" name="repository" value="${escapeHtml(value)}"${value === selected && value !== "manage" ? ' aria-current="true"' : ""}>${glyph ? icon(glyph, 18) : ""}<span class="min-w-0 flex-1 truncate">${escapeHtml(label)}</span>${value === selected && value !== "manage" ? icon("check", 18, "ax-tick") : ""}</button>`;
   return `<details class="ax-dd${place === "head" ? "" : " ax-dd-left"}" id="${id}" data-menu>
   <summary aria-label="Repository filter: ${escapeHtml(name)}"><span>${escapeHtml(place === "head" && !inbox.filtered ? "All" : name)}</span>${icon("chevron-down", 14)}</summary>
-  <form class="ax-dd-panel" action="/inbox" method="get">
+  <form class="ax-dd-panel" action="${escapeHtml(action)}" method="get">
     ${option("", "All Repositories")}
     ${inbox.repositories.filter((repository) => !repository.removedAt || repository.githubId === selected).map((repository) => option(repository.githubId, repository.fullName)).join("")}
     <hr class="ax-menu-hr">

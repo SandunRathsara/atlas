@@ -819,11 +819,11 @@
     letter-spacing: 0.02em;
   }
 
+  /* Title row: title (+ phone filter) left, actions and ⋯ right. The ⋯ never wraps under the title. */
   .ax-head {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
     gap: 10px 16px;
     margin: 0 0 20px;
   }
@@ -848,18 +848,41 @@
   }
 
   .ax-head-desc {
-    /* Full row so it always wraps under the title; line length capped by padding. */
-    flex: 0 0 100%;
+    /* Full row under the title; line length capped. */
+    grid-column: 1 / -1;
+    max-width: 65ch;
     margin: -6px 0 0;
-    padding-right: max(0px, calc(100% - 65ch));
     color: var(--a-sec);
   }
 
   .ax-head-actions {
     display: flex;
     flex-wrap: wrap;
+    justify-content: flex-end;
     align-items: center;
     gap: 8px;
+  }
+
+  /* Below 1024px the back link lives in the top bar and the page ⋯ menu is pinned to its right end. */
+  @media (max-width: 1023.98px) {
+    .ax-back {
+      display: none;
+    }
+
+    .ax-head-actions .ax-menu {
+      position: fixed;
+      top: calc(env(safe-area-inset-top) + 4px);
+      right: max(8px, env(safe-area-inset-right));
+      z-index: 25;
+    }
+
+    .ax-head-actions .ax-menu[open] {
+      z-index: 80;
+    }
+
+    .ax-head-actions .ax-menu > summary {
+      background: none;
+    }
   }
 
   .ax-section {
@@ -1698,6 +1721,92 @@
     margin: 0;
   }
 
+  /* confirmAction inside a ⋯ menu: the summary looks like a red menu item and the confirm opens in place of the item list. */
+  .ax-menu .ax-confirm > summary {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 10px;
+    border-radius: 9px;
+    background: none;
+    color: var(--t-failed);
+    font-weight: 400;
+    justify-content: flex-start;
+  }
+
+  .ax-menu .ax-confirm > summary:hover {
+    background: var(--a-fill2);
+  }
+
+  .ax-menu .ax-confirm[open] > summary {
+    display: none;
+  }
+
+  .ax-menu-items:has(.ax-confirm[open]) > :not(.ax-confirm) {
+    display: none;
+  }
+
+  .ax-menu-panel:has(.ax-confirm[open]) > .ax-menu-title {
+    display: none;
+  }
+
+  .ax-menu .ax-confirm-panel {
+    margin: 0;
+    background: none;
+    box-shadow: none;
+    padding: 10px;
+  }
+
+  .ax-menu .ax-confirm-panel > b {
+    font-size: 15px;
+  }
+
+  .ax-menu .ax-confirm-actions form {
+    flex: 1 1 auto;
+  }
+
+  .ax-menu .ax-confirm-actions .ax-btn {
+    flex: 1 1 auto;
+  }
+
+  @media (max-width: 759.98px) {
+    .ax-menu .ax-confirm > summary {
+      justify-content: center;
+      min-height: 52px;
+      border-radius: 0;
+      font-size: 16px;
+    }
+
+    .ax-menu .ax-confirm-panel {
+      padding: 14px 14px 12px;
+      text-align: center;
+    }
+
+    .ax-menu .ax-confirm-panel > p {
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .ax-menu .ax-confirm-actions {
+      flex-direction: column;
+    }
+
+    .ax-menu .ax-confirm-actions form {
+      flex-direction: column;
+    }
+
+    .ax-menu .ax-confirm-actions .ax-btn {
+      width: 100%;
+      min-height: 48px;
+    }
+
+    /* The sheet already has its own Cancel. */
+    .ax-menu .ax-confirm-actions [data-confirm-cancel] {
+      display: none;
+    }
+  }
+
   /* Confirm for destructive actions */
   .ax-confirm > summary {
     list-style: none;
@@ -1856,12 +1965,6 @@
     min-width: 0;
     align-items: center;
     gap: 10px;
-  }
-
-  @media (min-width: 760px) {
-    .ax-bar-filter {
-      display: none;
-    }
   }
 
   /* More tab */
@@ -2197,15 +2300,6 @@
     margin-top: 32px;
   }
 
-  .ax-head-filter {
-    display: none;
-  }
-
-  .ax-bar-desk {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
 }
 
 @media (min-width: 1024px) {
@@ -2229,8 +2323,15 @@
     padding: 0 40px;
   }
 
-  .ax-bar-phone {
+  .ax-bar-phone,
+  .ax-head-filter {
     display: none;
+  }
+
+  .ax-bar-desk {
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
 
   .ax-tabbar,

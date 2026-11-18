@@ -56,12 +56,6 @@
     margin-inline: auto;
   }
 
-  @media (min-width: 1024px) {
-    .up-page .ax-back {
-      display: none;
-    }
-  }
-
   .up-hero {
     background: var(--a-card);
     border-radius: 18px;

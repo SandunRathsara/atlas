@@ -4,7 +4,7 @@
 import type { Inbox, InboxRow, RefreshState, Repository } from "../persistence.ts";
 import { escapeHtml, safeExternalUrl } from "./html.ts";
 import { icon } from "./icons.ts";
-import { renderLiveList, repositoryFilter } from "./frame.ts";
+import { renderLiveList } from "./frame.ts";
 import {
   ageShort,
   button,
@@ -20,8 +20,8 @@ import {
   sessionPill,
   statusForSession,
   statusTile,
-  type PageTitleOptions,
 } from "./kit.ts";
+import type { ShellHeader } from "./shell.ts";
 import { accessLabel } from "./shared.ts";
 
 export type InboxContext = {
@@ -299,8 +299,8 @@ export const renderInboxPage = (inbox: InboxContext) => {
 };
 
 /** Everything `renderShell` needs for the Inbox: large title with the phone filter, content, body class. */
-export const renderInboxScreen = (inbox: InboxContext): { header: PageTitleOptions; content: string; bodyClass: string } => ({
-  header: { title: "Inbox", filterHtml: repositoryFilter(inbox, "head") },
+export const renderInboxScreen = (inbox: InboxContext): { header: ShellHeader; content: string; bodyClass: string } => ({
+  header: { title: "Inbox", filter: true },
   content: renderInboxPage(inbox),
   bodyClass: inboxPaneItem(inbox) ? "ix-paned" : "",
 });

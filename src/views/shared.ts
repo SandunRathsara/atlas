@@ -1,7 +1,6 @@
 import type { RefreshState, Repository, Session, SessionState, Spec } from "../persistence.ts";
 import { escapeHtml, formatTime, safeExternalUrl } from "./html.ts";
-import { icon } from "./icons.ts";
-import { banner, confirmAction, moreMenu, segmented, type MenuItem } from "./kit.ts";
+import { banner, confirmAction, segmented, type MenuItem } from "./kit.ts";
 
 // New UI kit (Look A). Prefer these over the deprecated helpers below.
 export * from "./kit.ts";
@@ -255,9 +254,8 @@ export const repositoryAction = (repository: Repository, csrfToken: string, comp
   });
 };
 
-const repositoryTabs = (repository: Repository, title: string) => {
+const repositoryTabs = (repository: Repository, current: RepositorySection) => {
   const id = encodeURIComponent(repository.githubId);
-  const current = title === "Pull requests" ? "pull-requests" : title === "Sessions" ? "sessions" : "specs";
   return segmented({
     label: `${repository.name} sections`,
     items: [
@@ -268,33 +266,33 @@ const repositoryTabs = (repository: Repository, title: string) => {
   });
 };
 
+export type RepositorySection = "specs" | "pull-requests" | "sessions";
+
 /**
- * Repository page header shared by the Specs, Pull requests and Sessions pages: back link, the
- * Repository name as the page h1, its description, the Specs · Pull requests · Sessions control
- * (active tab from `title`), the ⋯ menu and a "can't start Sessions" note. `description` is the
- * page's own blurb; the header shows the Repository's description instead.
+ * Repository pages (Specs, Pull requests, Sessions): `header` for `renderShell` (Repository name as the
+ * h1, its description, back to Repositories, ⋯ menu with Open on GitHub and Remove) and `intro`, the
+ * content that opens the page: removed note with Re-add, the section control and a "can't start
+ * Sessions" note.
  */
-export const renderRepositoryHeading = (repository: Repository, title: string, _description: string, csrfToken?: string) => {
+export const repositoryPage = (repository: Repository, section: RepositorySection, csrfToken?: string) => {
   const githubUrl = safeExternalUrl(repository.htmlUrl);
   const eligibility = repository.removedAt ? "" : eligibilityNotice(repository);
   const items: MenuItem[] = [];
   if (githubUrl) items.push({ label: "Open on GitHub", href: githubUrl, external: true });
   if (csrfToken && !repository.removedAt) items.push({ label: "Remove from Atlas", danger: true, html: repositoryAction(repository, csrfToken) });
   const readd = csrfToken && repository.removedAt ? repositoryAction(repository, csrfToken, true) : "";
-  const sub = repository.description ?? repository.fullName;
-  return `<div class="rp-head">
-  <a class="ax-back" href="/repositories">${icon("back", 20)}Repositories</a>
-  <div class="ax-head">
-    <div class="ax-head-main">
-      <h1 id="page-title" class="ax-title" tabindex="-1" data-page-heading>${escapeHtml(repository.name)}</h1>
-    </div>
-    ${items.length ? `<div class="ax-head-actions">${moreMenu({ title: repository.fullName, items, label: `More actions for ${repository.name}` })}</div>` : ""}
-    <p class="ax-head-desc">${escapeHtml(sub)}</p>
-  </div>
+  const header = {
+    title: repository.name,
+    description: repository.description ?? repository.fullName,
+    back: { href: "/repositories", label: "Repositories" },
+    menu: items.length ? { title: repository.fullName, items, label: `More actions for ${repository.name}` } : undefined,
+  };
+  const intro = `<div class="rp-head">
   ${repository.removedAt ? `<div class="rp-removed"><span class="rp-note">Removed from Atlas · history kept</span>${readd}</div>` : ""}
-  ${repositoryTabs(repository, title)}
+  ${repositoryTabs(repository, section)}
   ${eligibility ? banner({ tone: "warning", title: "Can’t start Sessions", body: eligibility }) : ""}
 </div>`;
+  return { header, intro };
 };
 
 export const sessionStateLabel = (state: SessionState) => {

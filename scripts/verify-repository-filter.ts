@@ -2,7 +2,13 @@ import { strict as assert } from "node:assert";
 import type { GitHubRepository } from "../src/github.ts";
 import type { Repository } from "../src/persistence.ts";
 import { renderAddRepositoryPage, renderRepositoriesPage, repositoryMatchesQuery } from "../src/views.ts";
-import { renderRepositoryHeading } from "../src/views/shared.ts";
+import { pageTitle, repositoryPage, type RepositorySection } from "../src/views/shared.ts";
+
+// The Repository page header as rendered by the shell: large title (with ⋯ menu) plus the intro.
+const renderRepositoryHeading = (repository: Repository, section: RepositorySection, csrfToken: string) => {
+  const page = repositoryPage(repository, section, csrfToken);
+  return `${pageTitle(page.header)}${page.intro}`;
+};
 
 const repo = (overrides: Partial<GitHubRepository> = {}): GitHubRepository => ({
   id: "1",
@@ -113,7 +119,7 @@ assert(listPage.includes("Specs not read yet"), "No Spec count is invented befor
 
 // Remove lives in the Repository header ⋯ menu and asks first: the real POST form sits inside a
 // confirm-first <details data-confirm>, so opening the menu never submits it.
-const heading = renderRepositoryHeading(enrolled, "Pull requests", "ignored", "a");
+const heading = renderRepositoryHeading(enrolled, "pull-requests", "a");
 const removeForm = formOpen(heading, "repository-action-1");
 assert(!removeForm.includes('hx-target="none"'));
 assert(removeForm.includes('hx-target="this"'));
@@ -123,10 +129,10 @@ assert(confirmStart >= 0 && confirmStart < heading.indexOf('<form id="repository
 assert(heading.includes("Nothing changes on GitHub"));
 assert(heading.includes("history and existing Sessions are kept"));
 assert(heading.match(/data-page-heading>HelloWorld<\/h1>/), "Repository name is the page h1");
-assert(heading.includes('href="/repositories/1/pull-requests" aria-current="page"'), "active tab follows title");
-assert(renderRepositoryHeading(enrolled, "Specs unavailable", "x", "a").includes('href="/repositories/1/specs" aria-current="page"'));
-assert(renderRepositoryHeading(enrolled, "Sessions", "x", "a").includes('href="/repositories/1/sessions" aria-current="page"'));
-const removedHeading = renderRepositoryHeading({ ...enrolled, removedAt: "2026-01-02T00:00:00.000Z" }, "Specs", "x", "a");
+assert(heading.includes('href="/repositories/1/pull-requests" aria-current="page"'), "active tab follows the section");
+assert(renderRepositoryHeading(enrolled, "specs", "a").includes('href="/repositories/1/specs" aria-current="page"'));
+assert(renderRepositoryHeading(enrolled, "sessions", "a").includes('href="/repositories/1/sessions" aria-current="page"'));
+const removedHeading = renderRepositoryHeading({ ...enrolled, removedAt: "2026-01-02T00:00:00.000Z" }, "specs", "a");
 const readdHeadingForm = formOpen(removedHeading, "repository-action-1");
 assert(readdHeadingForm.includes('action="/repositories"'), "removed Repository offers Re-add through the enroll path");
 assert(!removedHeading.includes("/remove"));

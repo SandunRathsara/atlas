@@ -815,6 +815,7 @@ export const renderSessionDetailPage = ({
     csrfToken,
     historyDisabled: true,
     inbox,
+    bodyClass: "sv-detail",
     header: {
       title: session.specTitle,
       eyebrow: `${repository.name} · Spec #${session.specIssueNumber}`,

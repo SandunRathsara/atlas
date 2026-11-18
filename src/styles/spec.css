@@ -25,10 +25,6 @@
     gap: 8px;
   }
 
-  .sp-narrow {
-    display: inline-flex;
-  }
-
   .sp-actions {
     display: flex;
     flex-wrap: wrap;
@@ -456,19 +452,12 @@
     margin-top: 16px;
   }
 
-  @media (max-width: 1023.98px) {
-    .sp-detail .ax-content > .ax-back,
-    .sp-flow .ax-content > .ax-back {
-      display: none;
-    }
-  }
-
   @media (min-width: 1024px) {
     .sp-wide {
       display: inline-flex;
     }
 
-    .sp-narrow {
+    .sp-detail .ax-head .ax-menu {
       display: none;
     }
 

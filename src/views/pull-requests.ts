@@ -2,7 +2,7 @@ import type { PrStack, PullRequest, RefreshState, Repository } from "../persiste
 import { escapeHtml, safeExternalUrl } from "./html.ts";
 import { icon } from "./icons.ts";
 import { ageShort, button, emptyCard, prPill, prTile, relativeTime, sectionHeader, type PrState } from "./kit.ts";
-import { renderRepositoryHeading } from "./shared.ts";
+import { repositoryPage } from "./shared.ts";
 import { renderShell, type InboxContext } from "./shell.ts";
 import { pullRequestLifecycle, stackStatus, standaloneStatus, type TargetStatus, targetVerificationStatus } from "./targets.ts";
 
@@ -157,12 +157,14 @@ export const renderPullRequestsPage = ({
     ? noPullRequests("Open pull requests and GitHub stacks for this Repository show up here.")
     : "";
 
+  const page = repositoryPage(repository, "pull-requests", csrfToken);
   return renderShell({
     title: `${repository.fullName} Pull requests`,
     csrfToken,
     inbox,
     tab: "repos",
-    content: `${renderRepositoryHeading(repository, "Pull requests", repository.description ?? "", csrfToken)}
+    header: page.header,
+    content: `${page.intro}
       <div class="pr-page">
         ${unverifiedBanner(refresh, hasData)}
         ${empty}
@@ -223,6 +225,7 @@ export const renderAllPullRequestsPage = ({
     tab: "prs",
     header: {
       title: "Pull requests",
+      filter: true,
       description: filtered
         ? `Open pull requests and GitHub stacks in ${filtered.fullName}.`
         : "Open pull requests and GitHub stacks across your Repositories.",

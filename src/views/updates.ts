@@ -7,7 +7,7 @@ import type { UpdateStatus } from "../update-discovery.ts";
 import type { ReleaseIdentity, ReleaseMetadata } from "../release.ts";
 import { activationInProgress, type UpdatePolicy, type UpdaterStatus } from "../updater.ts";
 import { escapeHtml, formatTime } from "./html.ts";
-import { banner, group, icon, pageTitle, relativeTime, settingsRow, statusTile, type IconName, type StatusKey } from "./shared.ts";
+import { banner, group, icon, relativeTime, settingsRow, statusTile, type IconName, type StatusKey } from "./shared.ts";
 
 const activeStage = new Set<UpdaterStatus["state"]>(["requested", "downloading", "verifying", "extracting"]);
 const recovering = new Set(["selecting_previous", "restarting_previous", "validating_previous"]);
@@ -556,7 +556,6 @@ export const renderUpdatesPage = (status: UpdateStatus, csrfToken: string, feedb
     attrs: 'tabindex="-1" data-focus-on-swap',
     bodyHtml: `<strong>The update change was not completed.</strong> ${escapeHtml(feedback.message)} Review the preserved choice and try again, or <a class="up-link" href="/inbox">return to Inbox</a>.`,
   }) : ""}
-  ${pageTitle({ title: "Updates", back: { href: "/more", label: "More" } })}
   ${liveStatus(status, csrfToken, card)}
   ${policyMarkup(status, csrfToken, feedback?.policy)}
   ${technicalDetails(technicalBody(status, csrfToken, card))}

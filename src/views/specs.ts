@@ -8,12 +8,11 @@ import {
   group,
   heroCard,
   icon,
-  moreMenu,
   notLiveTag,
   plainTile,
   prose,
   relativeTime,
-  renderRepositoryHeading,
+  repositoryPage,
   repositoryLink,
   row,
   rowEnd,
@@ -259,12 +258,14 @@ export const renderSpecsPage = ({
       })
       : "";
 
+  const page = repositoryPage(repository, "specs", csrfToken);
   return renderShell({
     title: `${repository.fullName} Specs`,
     csrfToken,
     inbox,
     tab: "repos",
-    content: `${renderRepositoryHeading(repository, "Specs", "Open GitHub issues labelled exactly spec.", csrfToken)}
+    header: page.header,
+    content: `${page.intro}
       <div class="sp-list">
         ${specsFreshnessNote(specsRefresh, specs.length)}
         ${list}
@@ -349,13 +350,14 @@ export const renderSpecDetailPage = ({
   const githubButton = githubUrl
     ? button({ label: "GitHub", variant: "outline", href: githubUrl, icon: "external", attrs: 'target="_blank" rel="noopener noreferrer"', ariaLabel: "Open issue on GitHub" })
     : "";
-  const menu = moreMenu({
+  // Phones and tablets: GitHub and Repository Sessions live in the ⋯ menu; desktop shows buttons instead.
+  const menu = {
     title: spec.title,
     items: [
       ...(githubUrl ? [{ label: "Open issue on GitHub", href: githubUrl, external: true }] : []),
       { label: "Repository Sessions", href: sessionsLink(repository), icon: "sparkle" as const },
     ],
-  });
+  };
   const labels = spec.labels.length > 0
     ? `<div class="sp-labels" aria-label="Labels">${spec.labels.map((label) => `<span${label === "spec" ? ' class="sp-label-spec"' : ""}>${escapeHtml(label)}</span>`).join("")}</div>`
     : "";
@@ -373,7 +375,8 @@ export const renderSpecDetailPage = ({
     header: {
       title: spec.title,
       back: { href: repositoryLink(repository), label: repository.name },
-      actionsHtml: `<span class="sp-wide">${githubButton}${canStart ? startButton(false) : ""}</span><span class="sp-narrow">${menu}</span>`,
+      actionsHtml: `<span class="sp-wide">${githubButton}${canStart ? startButton(false) : ""}</span>`,
+      menu,
     },
     startBar: canStart ? startButton(true) : undefined,
     content: `<p class="sp-meta">Spec #${escapeHtml(spec.issueNumber)} · ${escapeHtml(repository.fullName)}${spec.updatedAt ? ` · updated <time datetime="${escapeHtml(spec.updatedAt)}">${escapeHtml(ago(spec.updatedAt))}</time>` : ""}</p>
@@ -414,12 +417,15 @@ export const renderSpecUnavailablePage = ({
   accessRefresh?: RefreshState;
   specsRefresh?: RefreshState;
   inbox?: InboxContext;
-}) => renderShell({
+}) => {
+  const page = repositoryPage(repository, "specs", csrfToken);
+  return renderShell({
   title: `${repository.fullName} Specs unavailable`,
   csrfToken,
   inbox,
   tab: "repos",
-  content: `${renderRepositoryHeading(repository, "Specs unavailable", "Atlas could not complete the first Specs read.", csrfToken)}
+  header: page.header,
+  content: `${page.intro}
     <div class="sp-list">
       ${banner({
         role: "alert",
@@ -429,4 +435,5 @@ export const renderSpecUnavailablePage = ({
       <div class="sp-actions">${button({ label: "Try again", href: repositoryLink(repository), variant: "outline", icon: "refresh" })}</div>
       <p class="sp-fresh">${checkedLine("Specs", specsRefresh)}</p>
     </div>`,
-});
+  });
+};

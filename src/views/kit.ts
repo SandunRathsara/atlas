@@ -169,22 +169,27 @@ export type PageTitleOptions = {
   title: string;
   eyebrow?: string;
   description?: string;
-  back?: { href: string; label: string };
+  /**
+   * Back link. Below 1024px it sits in the top bar (left, instead of the brand) and is not repeated
+   * in the content; on desktop it sits above the title. `phoneOnly` drops the desktop copy.
+   */
+  back?: { href: string; label: string; phoneOnly?: boolean };
   actionsHtml?: string;
-  menu?: { title?: string; items: MenuItem[] };
-  /** Trusted markup, usually `repositoryFilter(inbox, "head")`. Phone only: on wider screens it is in the top bar. */
+  /** ⋯ menu at the right end of the title row. Below 1024px it is pinned into the top bar (right). */
+  menu?: { title?: string; items: MenuItem[]; label?: string };
+  /** Trusted markup beside the title, below 1024px only. Set by `renderShell({ header: { filter: true } })`. */
   filterHtml?: string;
 };
 
 /** Large page title (h1#page-title, focus target on load) with back link, actions, ⋯ menu and phone filter. */
-export const pageTitle = (o: PageTitleOptions) => `${o.back ? `<a class="ax-back" href="${escapeHtml(o.back.href)}">${icon("back", 20)}${escapeHtml(o.back.label)}</a>` : ""}
+export const pageTitle = (o: PageTitleOptions) => `${o.back && !o.back.phoneOnly ? `<a class="ax-back" href="${escapeHtml(o.back.href)}">${icon("back", 20)}${escapeHtml(o.back.label)}</a>` : ""}
 ${o.eyebrow ? `<p class="ax-eyebrow">${escapeHtml(o.eyebrow)}</p>` : ""}
 <div class="ax-head">
   <div class="ax-head-main">
     <h1 id="page-title" class="ax-title" tabindex="-1" data-page-heading>${escapeHtml(o.title)}</h1>
     ${o.filterHtml ? `<div class="ax-head-filter">${o.filterHtml}</div>` : ""}
   </div>
-  ${o.actionsHtml || o.menu ? `<div class="ax-head-actions">${o.actionsHtml ?? ""}${o.menu ? moreMenu({ title: o.menu.title ?? o.title, items: o.menu.items }) : ""}</div>` : ""}
+  ${o.actionsHtml || o.menu ? `<div class="ax-head-actions">${o.actionsHtml ?? ""}${o.menu ? moreMenu({ title: o.menu.title ?? o.title, items: o.menu.items, label: o.menu.label }) : ""}</div>` : ""}
   ${o.description ? `<p class="ax-head-desc">${escapeHtml(o.description)}</p>` : ""}
 </div>`;
 
