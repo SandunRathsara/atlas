@@ -25,4 +25,3 @@ export const run = async () => {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 };
 
-if (import.meta.main) await run();

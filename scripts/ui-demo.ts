@@ -904,10 +904,11 @@ const identity = (tag: string, gitSha: string): PublishedReleaseIdentity => {
 };
 const installed = identity("v1.8.2+build.41", "4be1c0de8a51e3b7a9f2c6d0e1f4a7b8c9d0e1f2");
 const metadata = (release: PublishedReleaseIdentity): ReleaseMetadata => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   identity: release,
-  artifact: { name: `atlas-${release.semver}-linux-x64.tar.gz`, checksum: `sha256:${sha(release.tag)}${sha(release.tag).slice(0, 24)}`, os: "linux", architecture: "x64", format: "tar.gz" },
-  runtime: { bun: "1.3.14", git: "2.47.1", gh: "2.63.0" },
+  asset: { name: "atlas-linux-x64", checksum: "atlas-linux-x64.sha256", sha256: `${sha(release.tag)}${sha(release.tag).slice(0, 24)}`, size: 94_371_840, os: "linux", architecture: "x64" },
+  minimumHostTools: { git: "2.55.0", gh: "2.100.0" },
+  openCodeClient: "2.3.2",
   rollback: { codeOnlyCompatible: true, manualMaintenanceInstructions: null },
 });
 const installedMeta = metadata(installed);
@@ -919,7 +920,7 @@ let updateMode: UpdateMode = "ready";
 let updatePolicy: UpdatePolicy = "approval_required";
 let checkingUntil = 0;
 let tick = 0;
-const stagingStates = ["requested", "downloading", "verifying", "extracting"] as const;
+const stagingStates = ["requested", "downloading", "verifying", "preparing"] as const;
 const activationStates: ActivationState[] = ["awaiting_checkpoint", "stopping", "selecting", "starting", "validating"];
 
 const updateStatus = (): UpdateStatus => {
@@ -969,7 +970,7 @@ const updateStatus = (): UpdateStatus => {
     ? "idle"
     : updateMode === "staging" ? stagingStates[tick % stagingStates.length]! : "staged";
   const updater: UpdaterStatus = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     policy: updatePolicy,
     state: stageState,
     metadata: stageState === "idle" ? null : candidate,
@@ -977,8 +978,8 @@ const updateStatus = (): UpdateStatus => {
     updatedAt: iso(now - 9 * MIN),
     stagedPath: stageState === "staged" ? "/opt/atlas/releases/v1.9.0+build.44" : null,
     message: stageState === "staged" ? "v1.9.0+build.44 is staged and verified." : stageState === "idle" ? "Nothing is staged." : `Staging v1.9.0+build.44: ${stageState}.`,
-    requirements: { required: candidate.runtime, available: { bun: "1.3.14", git: "2.47.1", gh: "2.63.0" }, unmet: [] },
-    lastResult: stageState === "staged" ? { tag: candidate.identity.tag, state: "staged", message: "Downloaded, checksum verified, extracted.", at: iso(now - 9 * MIN) } : null,
+    requirements: { required: candidate.minimumHostTools, available: { git: "2.55.1", gh: "2.101.0" }, unmet: [] },
+    lastResult: stageState === "staged" ? { tag: candidate.identity.tag, state: "staged", message: "Downloaded, checksum verified, identity checked.", at: iso(now - 9 * MIN) } : null,
     activation,
     cleanup: { state: "idle", message: "Older releases are cleaned up after a successful activation.", updatedAt: null, pendingTags: [], removedTags: [] },
   };

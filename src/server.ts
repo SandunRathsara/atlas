@@ -162,4 +162,3 @@ export const run = async () => {
   });
 };
 
-if (import.meta.main) await run();

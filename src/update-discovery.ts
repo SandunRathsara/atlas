@@ -14,7 +14,7 @@ export const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DEFAULT_API_URL = "https://api.github.com/repos/SandunRathsara/atlas/releases";
 const DEFAULT_DOWNLOAD_BASE = "https://github.com/SandunRathsara/atlas/releases/download";
 const MAX_METADATA_BYTES = 1024 * 1024;
-const activeStage = new Set<UpdaterStatus["state"]>(["requested", "downloading", "verifying", "extracting"]);
+const activeStage = new Set<UpdaterStatus["state"]>(["requested", "downloading", "verifying", "preparing"]);
 
 export type UpdateStatus = {
   installed: ReleaseIdentity;

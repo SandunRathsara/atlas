@@ -1,10 +1,12 @@
-// Smoke check for the compiled `atlas` binary: build it, copy ONLY the binary
-// into an empty folder, and run it with a PATH that has no Bun.
+// Smoke check for the compiled `atlas` binary: build it (cached per source tree,
+// scripts/verify-binaries.ts), copy ONLY the binary into an empty folder, and
+// run it with a PATH that has no Bun.
 import { strict as assert } from "node:assert";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createReleaseMetadata } from "../src/release.ts";
+import { verifyBinary } from "./verify-binaries.ts";
 import { RELEASE_SHIMS, releaseShimText } from "../src/shims.ts";
 
 const repositoryRoot = resolve(import.meta.dir, "..");
@@ -27,14 +29,11 @@ const freePort = () => {
 
 try {
   // Build into one folder, run from another that holds only the binary.
-  const build = Bun.spawnSync([process.execPath, join(repositoryRoot, "scripts", "build-binary.ts"), "--out", join(scratch, "build"), "--tag", tag, "--sha", gitSha], {
-    cwd: repositoryRoot, stdin: "ignore", stdout: "pipe", stderr: "inherit",
-  });
-  assert.equal(build.exitCode, 0, "build-binary failed");
+  const built = await verifyBinary(tag, gitSha);
   const releaseRoot = join(scratch, "release");
   mkdirSync(releaseRoot, { mode: 0o700 });
   const binary = join(releaseRoot, "atlas");
-  copyFileSync(join(scratch, "build", "atlas"), binary);
+  copyFileSync(built, binary);
   chmodSync(binary, 0o755);
 
   const emptyBin = join(scratch, "empty-bin");
@@ -148,8 +147,8 @@ try {
   assert.deepEqual(body.atlas.release, { published: true, tag, semver: "0.1.0", build: 1, gitSha }, "serve must report the embedded identity");
   assert.equal(body.persistence.healthy, true);
   assert.equal(body.openCode.ready, false);
-  const pins = readFileSync(join(repositoryRoot, "deploy", "pins.env"), "utf8");
-  assert.equal(body.openCode.clientVersion, /^ATLAS_OPENCODE_CLIENT_VERSION=(.+)$/mu.exec(pins)?.[1], "clientVersion must be the build-time client version");
+  const client = JSON.parse(readFileSync(join(repositoryRoot, "node_modules", "@opencode", "client", "package.json"), "utf8")) as { version: string };
+  assert.equal(body.openCode.clientVersion, client.version, "clientVersion must be the build-time client version");
 
   const assets: [string, string][] = [
     ["/assets/app.css", "text/css; charset=UTF-8"],
@@ -182,7 +181,7 @@ try {
 
   // RELEASE_METADATA.json next to the binary must agree with the embedded identity.
   const metadataPath = join(releaseRoot, "RELEASE_METADATA.json");
-  writeFileSync(metadataPath, JSON.stringify(createReleaseMetadata("v0.1.0+build.2", gitSha, { bun: "1.3.14", git: "2.55.0", gh: "2.100.0" })));
+  writeFileSync(metadataPath, JSON.stringify(createReleaseMetadata("v0.1.0+build.2", gitSha, { sha256: "0".repeat(64), size: 1 }, client.version)));
   const mismatched = Bun.spawn([binary, "serve"], { cwd: work, env: { ...baseEnv, ...serveEnv }, stdin: "ignore", stdout: "ignore", stderr: "pipe" });
   children.push(mismatched);
   assert.notEqual(await mismatched.exited, 0, "serve must refuse metadata that disagrees with the embedded identity");
@@ -210,7 +209,6 @@ try {
       ATLAS_UPDATER_KEY_PATH: join(updaterRoot, "state", "updater.key"),
       ATLAS_RELEASES_ROOT: join(updaterRoot, "releases"),
       ATLAS_CURRENT_PATH: join(updaterRoot, "current"),
-      ATLAS_TOOLS_ROOT: join(updaterRoot, "tools"),
       ATLAS_SUPPORT_ROOT: join(updaterRoot, "services"),
       ATLAS_ENV_PATH: join(updaterRoot, "atlas.env"),
     },

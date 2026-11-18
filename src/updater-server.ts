@@ -1,14 +1,57 @@
 import { lstatSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { readSessionHelperReferences } from "./credentials.ts";
+import { parseToolVersion } from "./host-tools.ts";
+import { unprivilegedCommandPrefix, type ReleaseFolderRunAs } from "./release-layout.ts";
 import type { ReleaseMetadata } from "./release.ts";
 import { createUpdaterService, installShippedSupportServices } from "./updater.ts";
 
+/**
+ * One activation health probe: `GET /health?activation=1` with the shared
+ * token. Healthy only when the Atlas process and storage are healthy, the
+ * running Release is exactly `candidate`, and no OpenCode readiness is mixed in
+ * (activation never depends on OpenCode).
+ */
+export const checkActivationHealth = async (
+  candidate: Pick<ReleaseMetadata, "identity">,
+  target: { port: number; token: string },
+  fetcher: typeof fetch = fetch,
+) => {
+  try {
+    const response = await fetcher(`http://127.0.0.1:${target.port}/health?activation=1`, {
+      headers: { Authorization: `Bearer ${target.token}`, Accept: "application/json" },
+      redirect: "manual",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return false;
+    const body = await response.json() as {
+      atlas?: { process?: unknown; release?: { published?: unknown; tag?: unknown; gitSha?: unknown } };
+      persistence?: { healthy?: unknown };
+    } | null;
+    return !!body && typeof body === "object" && !Object.hasOwn(body, "openCode") &&
+      body.atlas?.process === true && body.persistence?.healthy === true &&
+      body.atlas.release?.published === true && body.atlas.release.tag === candidate.identity.tag &&
+      body.atlas.release.gitSha === candidate.identity.gitSha;
+  } catch {
+    return false;
+  }
+};
+
+const absolute = (label: string, value: string) => {
+  if (!isAbsolute(value)) throw new Error(`${label} must be an absolute path`);
+  return value;
+};
+
 export const run = async () => {
-  const toolsRoot = Bun.env.ATLAS_TOOLS_ROOT ?? "/opt/atlas/tools";
-  const supportRoot = Bun.env.ATLAS_UPDATER_SUPPORT_ROOT ?? "/opt/atlas/services/current/atlas-updater";
   const servicesRoot = Bun.env.ATLAS_SUPPORT_ROOT ?? "/opt/atlas/services";
   const atlasEnvironmentPath = Bun.env.ATLAS_ENV_PATH ?? "/etc/atlas/atlas.env";
+  const realGit = absolute("ATLAS_REAL_GIT", Bun.env.ATLAS_REAL_GIT ?? "/usr/bin/git");
+  const realGh = absolute("ATLAS_REAL_GH", Bun.env.ATLAS_REAL_GH ?? "/usr/bin/gh");
+  // Candidates and host-tool probes run as this account, never as root.
+  const runAs: ReleaseFolderRunAs | undefined = Bun.env.ATLAS_SERVICE_USER
+    ? { user: Bun.env.ATLAS_SERVICE_USER, group: Bun.env.ATLAS_SERVICE_GROUP ?? Bun.env.ATLAS_SERVICE_USER }
+    : undefined;
+  if (process.getuid?.() === 0) unprivilegedCommandPrefix(runAs);
   const registryPath = resolve(Bun.env.ATLAS_CREDENTIAL_REGISTRY_PATH ?? "/var/lib/atlas/session-scopes.json");
   const registryDirectory = lstatSync(dirname(registryPath));
   if (!registryDirectory.isDirectory() || registryDirectory.isSymbolicLink() || (registryDirectory.mode & 0o077) !== 0) {
@@ -39,28 +82,21 @@ export const run = async () => {
   };
   const checkAtlasHealth = async (candidate: ReleaseMetadata) => {
     try {
-      const environment = readAtlasHealthEnvironment();
-      const child = Bun.spawn([join(supportRoot, "check-activation-health.sh")], {
-        env: {
-          ...process.env,
-          ATLAS_SHARED_TOKEN: environment.token,
-          ATLAS_HEALTH_URL: `http://127.0.0.1:${environment.port}/health?activation=1`,
-          ATLAS_EXPECTED_RELEASE_TAG: candidate.identity.tag,
-          ATLAS_EXPECTED_RELEASE_SHA: candidate.identity.gitSha,
-        },
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-      return await child.exited === 0;
+      return await checkActivationHealth(candidate, readAtlasHealthEnvironment());
     } catch {
       return false;
     }
   };
-  const reportsVersion = (command: string, expected: string) => {
+  const toolVersion = (command: string) => {
     try {
-      const result = Bun.spawnSync([command, "--version"], { stdout: "pipe", stderr: "ignore" });
-      return result.exitCode === 0 && result.stdout.toString().includes(expected) ? expected : null;
+      const result = Bun.spawnSync([...unprivilegedCommandPrefix(runAs), command, "--version"], {
+        cwd: "/",
+        env: { PATH: "/usr/bin:/bin", LANG: "C" },
+        stdout: "pipe",
+        stderr: "ignore",
+        timeout: 10_000,
+      });
+      return result.exitCode === 0 ? parseToolVersion(result.stdout.toString()) : null;
     } catch {
       return null;
     }
@@ -75,16 +111,11 @@ export const run = async () => {
     controlAtlas: runSystemctl,
     checkAtlasHealth,
     listHelperReferences: () => readSessionHelperReferences({ registryPath, expectedOwnerUid: registryDirectory.uid }),
-    updateSupportServices: (releasePath, metadata) => {
-      installShippedSupportServices(releasePath, metadata, servicesRoot);
+    updateSupportServices: async (releasePath, metadata) => {
+      await installShippedSupportServices(releasePath, metadata, servicesRoot, runAs);
     },
-    hostRuntime: (candidate) => {
-      return {
-        bun: Bun.version,
-        git: reportsVersion(join(toolsRoot, "git", candidate.runtime.git, "bin", "git"), candidate.runtime.git),
-        gh: reportsVersion(join(toolsRoot, "gh", candidate.runtime.gh, "bin", "gh"), candidate.runtime.gh),
-      };
-    },
+    hostRuntime: () => ({ git: toolVersion(realGit), gh: toolVersion(realGh) }),
+    runAs,
   });
 
   await updater.start();
@@ -102,4 +133,3 @@ export const run = async () => {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 };
 
-if (import.meta.main) await run();

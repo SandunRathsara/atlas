@@ -2,7 +2,6 @@ import { strict as assert } from "node:assert";
 import {
   chmodSync,
   chownSync,
-  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -13,13 +12,19 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { createCredentialBoundary, readSessionHelperReferences } from "../src/credentials.ts";
-import { createReleaseMetadata, type ReleaseMetadata } from "../src/release.ts";
+import { buildReleaseFolder } from "../src/release-layout.ts";
+import type { ReleaseMetadata } from "../src/release.ts";
 import { createUpdaterClient, createUpdaterService } from "../src/updater.ts";
 import { renderUpdatesStatus } from "../src/views/updates.ts";
+import { fixtureReleaseFolder, verifyBinary, verifyMetadata } from "./verify-binaries.ts";
 
-const root = mkdtempSync(join(process.env.TMPDIR ?? "/tmp/opencode", "atlas-issue61-"));
+// One real compiled Release (~100 MB) lives here, so stay off the small /tmp.
+const cacheRoot = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
+mkdirSync(cacheRoot, { recursive: true });
+const root = mkdtempSync(join(cacheRoot, "atlas-issue61-"));
 const releasesRoot = join(root, "releases");
 const currentPath = join(root, "current");
 const statePath = join(root, "data", "update-state.json");
@@ -32,29 +37,9 @@ const sessionDirectory = join(root, "sessions", "ses_retained");
 const key = "a".repeat(64);
 const token = "release-retention-fixture-token";
 
-const metadata = (tag: string, character: string) => createReleaseMetadata(tag, character.repeat(40), {
-  bun: "1.3.14",
-  git: "2.55.0",
-  gh: "2.100.0",
-});
-const referenced = metadata("v0.0.1+build.1", "1");
-const startupUnused = metadata("v0.0.2+build.2", "2");
-const installed = metadata("v0.1.0+build.3", "3");
-const candidate = metadata("v0.1.0+build.4", "4");
-const inFlightUnused = metadata("v0.0.3+build.5", "5");
-const restartUnused = metadata("v0.0.4+build.6", "6");
-const failedCandidate = metadata("v0.1.0+build.7", "7");
-const rollbackUnused = metadata("v0.0.5+build.8", "8");
-const cleanupCandidate = metadata("v0.1.0+build.9", "9");
-const cleanupUnused = metadata("v0.0.6+build.10", "a");
-
-const releaseTree = (release: ReleaseMetadata) => {
-  const path = join(releasesRoot, `atlas-${release.identity.tag}`);
-  mkdirSync(path, { recursive: true, mode: 0o755 });
-  writeFileSync(join(path, "RELEASE_METADATA.json"), `${JSON.stringify(release)}\n`);
-  writeFileSync(join(path, "complete.txt"), `${release.identity.tag}\n`);
-  return path;
-};
+// Builder-made Release folders whose `atlas` is a stand-in that only reports
+// its identity: intact for staging and retention, cheap to make on demand.
+const releaseTree = (tag: string, character: string) => fixtureReleaseFolder(releasesRoot, tag, character.repeat(40));
 
 const waitFor = async (predicate: () => boolean | Promise<boolean>, message: string) => {
   for (let attempt = 0; attempt < 500; attempt += 1) {
@@ -73,18 +58,20 @@ try {
   mkdirSync(join(root, "config"), { recursive: true, mode: 0o700 });
   mkdirSync(sessionDirectory, { recursive: true, mode: 0o700 });
   writeFileSync(updaterKey, `${key}\n`, { mode: 0o600 });
-  const referencedPath = releaseTree(referenced);
-  releaseTree(startupUnused);
-  const installedPath = releaseTree(installed);
-  const candidatePath = releaseTree(candidate);
+  // The helper-referenced Release is a real compiled one: its helper must still work after cleanup.
+  const referencedBinary = await verifyBinary("v0.0.1+build.1", "1".repeat(40));
+  const referencedPath = await buildReleaseFolder({
+    binaryPath: referencedBinary,
+    metadata: verifyMetadata(referencedBinary, "v0.0.1+build.1", "1".repeat(40)),
+    releasesRoot,
+  });
+  const startupUnused = await releaseTree("v0.0.2+build.2", "2");
+  const { metadata: installed, path: installedPath } = await releaseTree("v0.1.0+build.3", "3");
+  const { metadata: candidate, path: candidatePath } = await releaseTree("v0.1.0+build.4", "4");
   symlinkSync(installedPath, currentPath, "dir");
 
-  const helper = join(referencedPath, "scripts", "atlas-git-credential.ts");
-  mkdirSync(join(referencedPath, "scripts"), { recursive: true });
-  mkdirSync(join(referencedPath, "src"), { recursive: true });
-  copyFileSync(join(import.meta.dir, "atlas-git-credential.ts"), helper);
-  copyFileSync(join(import.meta.dir, "../src/credentials.ts"), join(referencedPath, "src", "credentials.ts"));
-  chmodSync(helper, 0o755);
+  // A compiled Release's helper reference is its binary (src/runtime.ts#selfHelperPaths).
+  const helper = join(referencedPath, "atlas");
 
   credentials = createCredentialBoundary({
     registryPath,
@@ -99,10 +86,10 @@ try {
     directory: sessionDirectory,
     repositoryId: "123",
     fullName: "Acme/repo",
-    helperPaths: [referencedPath, helper],
+    helperPaths: [helper],
   });
   const registryOwnerUid = lstatSync(registryPath).uid;
-  assert.deepEqual(new Set(readSessionHelperReferences({ registryPath, expectedOwnerUid: registryOwnerUid })), new Set([referencedPath, helper]), "the updater-safe registry reader must accept the expected owner, mode, and path");
+  assert.deepEqual(new Set(readSessionHelperReferences({ registryPath, expectedOwnerUid: registryOwnerUid })), new Set([helper]), "the updater-safe registry reader must accept the expected owner, mode, and path");
   assert.throws(() => readSessionHelperReferences({ registryPath, expectedOwnerUid: registryOwnerUid + 1 }), /private regular file/, "the updater-safe reader must reject an unexpected owner");
   chmodSync(registryPath, 0o640);
   assert.throws(() => readSessionHelperReferences({ registryPath, expectedOwnerUid: registryOwnerUid }), /private regular file/, "the updater-safe reader must reject a group-readable registry");
@@ -126,7 +113,7 @@ try {
     currentPath,
     activationTimeoutMs: 80,
     activationPollMs: 2,
-    hostRuntime: () => ({ bun: "1.3.14", git: "2.55.0", gh: "2.100.0" }),
+    hostRuntime: () => ({ git: "2.55.0", gh: "2.100.0" }),
     listHelperReferences: () => readSessionHelperReferences({ registryPath, expectedOwnerUid: registryOwnerUid }),
     controlAtlas: (operation: "stop" | "start") => {
       controls.push(operation);
@@ -146,7 +133,7 @@ try {
   let client = updaterClient();
   let status = await client.status();
   assert.equal(status.cleanup.state, "succeeded");
-  assert.equal(existsSync(join(releasesRoot, `atlas-${startupUnused.identity.tag}`)), false, "startup cleanup retained an unused older release");
+  assert.equal(existsSync(startupUnused.path), false, "startup cleanup retained an unused older release");
   assert.equal(existsSync(referencedPath), true, "startup cleanup removed a helper-referenced release");
   assert.equal(realpathSync(currentPath), installedPath, "startup cleanup changed the current release");
   assert.equal(existsSync(candidatePath), true, "startup cleanup removed a newer inactive release");
@@ -156,7 +143,7 @@ try {
   await client.prepareActivation(candidate, false);
   await client.activate(candidate);
   await waitFor(async () => (await client.status()).activation.state === "validating", "candidate did not reach validation");
-  const inFlightUnusedPath = releaseTree(inFlightUnused);
+  const { path: inFlightUnusedPath } = await releaseTree("v0.0.3+build.5", "5");
   assert.equal(existsSync(inFlightUnusedPath), true, "cleanup raced in-flight activation");
   healthy.set(candidate.identity.tag, true);
   await waitFor(async () => (await client.status()).activation.state === "succeeded", "candidate activation did not succeed");
@@ -167,10 +154,11 @@ try {
   assert.equal(existsSync(referencedPath), true, "cleanup removed a referenced release");
   assert.equal(existsSync(inFlightUnusedPath), false, "post-activation cleanup retained an unused older release");
 
-  const helperChild = Bun.spawn([process.execPath, helper, "get"], {
+  // The old Release's own shim, with no Bun on PATH.
+  const helperChild = Bun.spawn([join(referencedPath, "bin", "git-credential-atlas"), "get"], {
     cwd: sessionDirectory,
     env: {
-      ...(process.env as Record<string, string>),
+      PATH: "/usr/bin:/bin",
       ATLAS_SUPPLIER_SOCKET: supplierSocket,
       ATLAS_SUPPLIER_KEY_PATH: supplierKey,
       ATLAS_SESSION_DIRECTORY: sessionDirectory,
@@ -187,7 +175,7 @@ try {
   assert.equal(helperExit, 0, "referenced older helper was not callable after cleanup");
   assert.match(helperOutput, new RegExp(`password=${token}`));
 
-  const restartUnusedPath = releaseTree(restartUnused);
+  const { path: restartUnusedPath } = await releaseTree("v0.0.4+build.6", "6");
   updater.close();
   updater = undefined;
   await Bun.sleep(5);
@@ -198,7 +186,7 @@ try {
   assert.equal(existsSync(installedPath), true, "restart cleanup removed the previous working release");
   assert.equal(existsSync(referencedPath), true, "restart cleanup removed a helper dependency");
 
-  const failedCandidatePath = releaseTree(failedCandidate);
+  const { metadata: failedCandidate, path: failedCandidatePath } = await releaseTree("v0.1.0+build.7", "7");
   healthy.set(failedCandidate.identity.tag, false);
   healthy.set(candidate.identity.tag, true);
   await client.stage(failedCandidate);
@@ -206,7 +194,7 @@ try {
   await client.prepareActivation(failedCandidate, false);
   await client.activate(failedCandidate);
   await waitFor(async () => (await client.status()).activation.state === "validating", "rollback candidate did not reach validation");
-  const rollbackUnusedPath = releaseTree(rollbackUnused);
+  const { path: rollbackUnusedPath } = await releaseTree("v0.0.5+build.8", "8");
   status = await activateResult(client, failedCandidate);
   assert.equal(status.activation.state, "rolled_back");
   assert.equal(status.activation.previousPath, candidatePath, "failed candidate was treated as the previous working release");
@@ -216,14 +204,14 @@ try {
   assert.equal(existsSync(rollbackUnusedPath), false, "rollback cleanup retained an unused older release");
   assert.equal(existsSync(referencedPath), true);
 
-  const cleanupCandidatePath = releaseTree(cleanupCandidate);
+  const { metadata: cleanupCandidate, path: cleanupCandidatePath } = await releaseTree("v0.1.0+build.9", "9");
   healthy.set(cleanupCandidate.identity.tag, false);
   await client.stage(cleanupCandidate);
   await waitFor(async () => (await client.status()).state === "staged", "cleanup-failure candidate was not staged");
   await client.prepareActivation(cleanupCandidate, false);
   await client.activate(cleanupCandidate);
   await waitFor(async () => (await client.status()).activation.state === "validating", "cleanup-failure candidate did not reach validation");
-  const cleanupUnusedPath = releaseTree(cleanupUnused);
+  const { metadata: cleanupUnused, path: cleanupUnusedPath } = await releaseTree("v0.0.6+build.10", "a");
   failCleanupAfterHealth = cleanupCandidate.identity.tag;
   healthy.set(cleanupCandidate.identity.tag, true);
   await waitFor(async () => (await client.status()).activation.state === "succeeded", "cleanup failure changed a healthy activation result");

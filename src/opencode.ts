@@ -48,7 +48,7 @@ const OUTCOME_CONFIRM_MS = 10_000;
 
 const PROGRESS_EVENT = /^session\.(step\.first-token|text\.|tool\.|reasoning\.)/u;
 
-// The installed client package is the source of truth; `scripts/release.ts` pins it to deploy/pins.env.
+// The installed client package is the source of truth; `scripts/build-release.ts` checks it against package.json and bun.lock.
 // The JSON import is inlined at compile time, so the binary never reads node_modules.
 const installedClientManifest = clientManifest as { name?: unknown; version?: unknown };
 export const openCodeClientVersion: string | null =

@@ -2,7 +2,6 @@ import "./isolate-opencode.ts";
 import { strict as assert } from "node:assert";
 import {
   chmodSync,
-  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -13,10 +12,12 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createApp } from "../src/app.ts";
 import { createPersistence } from "../src/persistence.ts";
-import { createReleaseMetadata, type ReleaseMetadata } from "../src/release.ts";
+import { buildReleaseFolder } from "../src/release-layout.ts";
+import type { ReleaseMetadata } from "../src/release.ts";
 import { createUpdateService } from "../src/update-discovery.ts";
 import { createUpdatePauseCoordinator, restoreUpdatePauseUntilUpdaterSettles } from "../src/update-pause.ts";
 import {
@@ -26,14 +27,16 @@ import {
   installShippedSupportServices,
   type UpdaterClient,
 } from "../src/updater.ts";
+import { checkActivationHealth } from "../src/updater-server.ts";
+import { fixtureMetadata, fixtureReleaseFolder, verifyBinary, verifyMetadata } from "./verify-binaries.ts";
 
-const root = mkdtempSync(join(process.env.TMPDIR ?? "/tmp/opencode", "atlas-issue59-"));
+// One real compiled Release (~100 MB) lives here, so stay off the small /tmp.
+const cacheRoot = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
+mkdirSync(cacheRoot, { recursive: true });
+const root = mkdtempSync(join(cacheRoot, "atlas-issue59-"));
 const key = "a".repeat(64);
-const metadata = (tag: string, character: string) => createReleaseMetadata(tag, character.repeat(40), {
-  bun: "1.3.14",
-  git: "2.55.0",
-  gh: "2.100.0",
-});
+// Stand-in Releases: builder-made folders whose `atlas` only reports its identity.
+const metadata = (tag: string, character: string) => fixtureMetadata(tag, character.repeat(40));
 const installed = metadata("v0.1.0+build.1", "1");
 
 const waitFor = async (predicate: () => boolean | Promise<boolean>, message: string) => {
@@ -50,26 +53,12 @@ type HostOptions = {
   candidateHealthy?: () => boolean;
   previousHealthy?: () => boolean;
   timeoutMs?: number;
-  hostRuntime?: () => { bun: string | null; git: string | null; gh: string | null };
+  hostRuntime?: () => { git: string | null; gh: string | null };
 };
 
-const releaseTree = (releasesRoot: string, release: ReleaseMetadata) => {
-  const path = join(releasesRoot, `atlas-${release.identity.tag}`);
-  mkdirSync(path, { recursive: true, mode: 0o755 });
-  writeFileSync(join(path, "RELEASE_METADATA.json"), `${JSON.stringify(release)}\n`);
-  writeFileSync(join(path, "complete.txt"), `${release.identity.tag}\n`);
-  for (const asset of [
-    "src/credential-server.ts",
-    "src/credentials.ts",
-    "src/updater-server.ts",
-    "src/updater.ts",
-    "src/release.ts",
-    "deploy/check-activation-health.sh",
-  ]) {
-    const target = join(path, asset);
-    mkdirSync(dirname(target), { recursive: true });
-    copyFileSync(join(import.meta.dir, "..", asset), target);
-  }
+const releaseTree = async (releasesRoot: string, release: ReleaseMetadata) => {
+  const { metadata: built, path } = await fixtureReleaseFolder(releasesRoot, release.identity.tag, release.identity.gitSha);
+  assert.deepEqual(built, release);
   return path;
 };
 
@@ -84,8 +73,8 @@ const createHost = async (name: string, candidate: ReleaseMetadata, options: Hos
   mkdirSync(join(hostRoot, "config"), { recursive: true, mode: 0o700 });
   writeFileSync(keyPath, `${key}\n`, { mode: 0o600 });
   chmodSync(keyPath, 0o600);
-  const previousPath = releaseTree(releasesRoot, installed);
-  const candidatePath = releaseTree(releasesRoot, candidate);
+  const previousPath = await releaseTree(releasesRoot, installed);
+  const candidatePath = await releaseTree(releasesRoot, candidate);
   symlinkSync(previousPath, currentPath, "dir");
   const dataPath = join(hostRoot, "shared-data.txt");
   writeFileSync(dataPath, "preserve me\n");
@@ -100,7 +89,7 @@ const createHost = async (name: string, candidate: ReleaseMetadata, options: Hos
     currentPath,
     activationTimeoutMs: options.timeoutMs ?? 25,
     activationPollMs: 2,
-    hostRuntime: options.hostRuntime ?? (() => ({ bun: "1.3.14", git: "2.55.0", gh: "2.100.0" })),
+    hostRuntime: options.hostRuntime ?? (() => ({ git: "2.55.0", gh: "2.100.0" })),
     controlAtlas: async (operation: "stop" | "start") => {
       controls.push(operation);
       if (operation === "stop") {
@@ -121,8 +110,8 @@ const createHost = async (name: string, candidate: ReleaseMetadata, options: Hos
       }
       return selected === previousPath && expected.identity.tag === installed.identity.tag && (options.previousHealthy?.() ?? true);
     },
-    updateSupportServices: (releasePath: string, release: ReleaseMetadata) => {
-      installShippedSupportServices(releasePath, release, supportRoot);
+    updateSupportServices: async (releasePath: string, release: ReleaseMetadata) => {
+      await installShippedSupportServices(releasePath, release, supportRoot);
     },
   };
   let service = createUpdaterService(serviceOptions);
@@ -320,8 +309,9 @@ try {
   await waitFor(() => app.updatePause.state() === "active", "successful activation did not release the update pause");
   assert.equal(realpathSync(webHost.currentPath), webHost.candidatePath);
   assert.equal(realpathSync(join(webHost.supportRoot, "current")), join(webHost.supportRoot, "releases", `atlas-${webCandidate.identity.tag}`), "successful activation must atomically select the candidate's shipped support services");
-  assert.equal(existsSync(join(webHost.supportRoot, "current", "atlas-updater", "updater-server.ts")), true);
-  assert.equal(existsSync(join(webHost.supportRoot, "current", "atlas-credentials", "credential-server.ts")), true);
+  // The surviving services run `<supportRoot>/current/atlas credentials|updater`.
+  assert.equal(readFileSync(join(webHost.supportRoot, "current", "atlas"), "utf8"), readFileSync(join(webHost.candidatePath, "atlas"), "utf8"));
+  assert.deepEqual(JSON.parse(readFileSync(join(webHost.supportRoot, "current", "RELEASE_METADATA.json"), "utf8")), webCandidate);
   assert.equal(lstatSync(join(webHost.supportRoot, "releases", `atlas-${webCandidate.identity.tag}`)).mode & 0o222, 0, "the selected support bundle must be immutable");
   assert.equal(readFileSync(webHost.dataPath, "utf8"), "preserve me\n");
   assert.deepEqual(openCode.counts(), { pauseCount: 1, resumeCount: 1, readinessQueries: 0 }, "activation must pause handoff without querying or operating OpenCode readiness");
@@ -354,12 +344,12 @@ try {
   let runtimesAvailable = true;
   const runtimeCandidate = metadata("v0.1.3+build.12", "c");
   const runtimeHost = await createHost("runtime-revalidation", runtimeCandidate, {
-    hostRuntime: () => ({ bun: runtimesAvailable ? "1.3.14" : "1.4.0", git: "2.55.0", gh: "2.100.0" }),
+    hostRuntime: () => ({ git: runtimesAvailable ? "2.100.1" : "2.54.9", gh: "2.100.0" }),
   });
   runtimesAvailable = false;
   await assert.rejects(runtimeHost.client().prepareActivation(runtimeCandidate, false), /rejected/, "activation must revalidate host runtimes after staging and immediately before the pause");
   const runtimeStatus = await runtimeHost.client().status();
-  assert.match(runtimeStatus.requirements?.unmet[0] ?? "", /Bun 1\.3\.14 is required; this host reports 1\.4\.0/);
+  assert.match(runtimeStatus.requirements?.unmet[0] ?? "", /Git 2\.55\.0 or newer is required; this host reports 2\.54\.9/);
   assert.deepEqual(runtimeHost.controls, [], "runtime drift must be recorded before Atlas is paused or stopped");
   runtimeHost.service().close();
 
@@ -409,7 +399,7 @@ try {
   await reopenedClient.prepareActivation(failedCandidate, true);
   await reopenedClient.abandonActivation(failedCandidate, "Explicit Retry was accepted for this regression check.");
   const laterCandidate = metadata("v0.3.1+build.9", "9");
-  releaseTree(join(root, "suppression", "releases"), laterCandidate);
+  await releaseTree(join(root, "suppression", "releases"), laterCandidate);
   await reopenedClient.stage(laterCandidate);
   await waitFor(async () => (await reopenedClient.status()).state === "staged", "later release was not staged");
   await reopenedClient.prepareActivation(laterCandidate, false);
@@ -443,7 +433,9 @@ try {
   assert.equal(interruptedHost.controls.filter((operation) => operation === "stop").length, 1, "updater restart must not replay a completed stop/select sequence");
   interruptedHost.service().close();
 
-  let healthMode: "healthy" | "wrong" | "unhealthy" = "healthy";
+  // Activation health (src/updater-server.ts#checkActivationHealth) against
+  // controlled responses: identity, storage, token, and no OpenCode gate.
+  let healthMode: "healthy" | "wrong" | "unhealthy" | "opencode" = "healthy";
   const healthServer = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -452,30 +444,78 @@ try {
       return Response.json({
         atlas: { process: true, release: healthMode === "wrong" ? installed.identity : webCandidate.identity },
         persistence: { healthy: healthMode !== "unhealthy" },
+        ...(healthMode === "opencode" ? { openCode: { ready: true } } : {}),
       });
     },
   });
-  const runHealth = async () => {
-    const child = Bun.spawn(["bash", join(import.meta.dir, "../deploy/check-activation-health.sh")], {
-      env: {
-        ...process.env,
-        ATLAS_SHARED_TOKEN: "secret",
-        ATLAS_HEALTH_URL: `http://127.0.0.1:${healthServer.port}/health?activation=1`,
-        ATLAS_EXPECTED_RELEASE_TAG: webCandidate.identity.tag,
-        ATLAS_EXPECTED_RELEASE_SHA: webCandidate.identity.gitSha,
-      },
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    return await child.exited;
-  };
-  assert.equal(await runHealth(), 0, "Atlas-only health must pass with OpenCode unavailable");
+  const runHealth = (token = "secret") => checkActivationHealth(webCandidate, { port: healthServer.port!, token });
+  assert.equal(await runHealth(), true, "Atlas-only health must pass with OpenCode unavailable");
+  assert.equal(await runHealth("wrong"), false, "a rejected token is not healthy");
   healthMode = "wrong";
-  assert.equal(await runHealth(), 1, "an old process response must not satisfy candidate identity health");
+  assert.equal(await runHealth(), false, "an old process response must not satisfy candidate identity health");
   healthMode = "unhealthy";
-  assert.equal(await runHealth(), 1, "unhealthy Atlas storage must fail activation health");
+  assert.equal(await runHealth(), false, "unhealthy Atlas storage must fail activation health");
+  healthMode = "opencode";
+  assert.equal(await runHealth(), false, "activation health must not mix in OpenCode readiness");
   await healthServer.stop(true);
+
+  // The same check against a real `atlas serve` from a builder-made Release folder.
+  const realTag = "v0.1.1+build.2";
+  const realSha = "2".repeat(40);
+  const realBinary = await verifyBinary(realTag, realSha);
+  const realMetadata = verifyMetadata(realBinary, realTag, realSha);
+  const realRelease = await buildReleaseFolder({ binaryPath: realBinary, metadata: realMetadata, releasesRoot: join(root, "real-releases") });
+  const freePort = () => {
+    const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+    const port = probe.port!;
+    probe.stop(true);
+    return port;
+  };
+  const port = freePort();
+  let webhookPort = freePort();
+  while (webhookPort === port) webhookPort = freePort();
+  const runRoot = join(root, "real-run");
+  mkdirSync(join(runRoot, "home"), { recursive: true, mode: 0o700 });
+  mkdirSync(join(runRoot, "sessions"), { recursive: true, mode: 0o700 });
+  chmodSync(runRoot, 0o700);
+  const server = Bun.spawn([join(realRelease, "atlas"), "serve"], {
+    cwd: realRelease,
+    env: {
+      PATH: "/usr/bin:/bin",
+      HOME: join(runRoot, "home"),
+      ATLAS_SHARED_TOKEN: "secret",
+      ATLAS_GITHUB_WEBHOOK_SECRET: "fixture-webhook-secret",
+      ATLAS_GITHUB_ORGANIZATION: "fixture-org",
+      ATLAS_GITHUB_INSTALLATION_ID: "1",
+      ATLAS_PORT: String(port),
+      ATLAS_WEBHOOK_PORT: String(webhookPort),
+      ATLAS_DATABASE_PATH: join(runRoot, "atlas.sqlite"),
+      ATLAS_SESSION_ROOT: join(runRoot, "sessions"),
+      ATLAS_GITHUB_ENV_PATH: join(runRoot, "github.env"),
+      ATLAS_CREDENTIAL_REGISTRY_PATH: join(runRoot, "session-scopes.json"),
+      ATLAS_SUPPLIER_SOCKET: join(runRoot, "supplier.sock"),
+      ATLAS_SUPPLIER_KEY_PATH: join(runRoot, "supplier.key"),
+      OPENCODE_SERVICE_FILE: join(runRoot, "missing-opencode-service.json"),
+    },
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  try {
+    let healthy = false;
+    for (let attempt = 0; attempt < 200 && !healthy; attempt += 1) {
+      healthy = await checkActivationHealth(realMetadata, { port, token: "secret" });
+      if (!healthy) await Bun.sleep(50);
+    }
+    assert.equal(healthy, true, "a real Release passes activation health for its own identity with OpenCode unavailable");
+    const wrongSha = { identity: { ...realMetadata.identity, gitSha: "f".repeat(40) } };
+    assert.equal(await checkActivationHealth(wrongSha, { port, token: "secret" }), false, "a running Release with a different SHA fails activation health");
+    assert.equal(await checkActivationHealth(installed, { port, token: "secret" }), false, "a running Release with a different tag fails activation health");
+    assert.equal(await checkActivationHealth(realMetadata, { port, token: "wrong" }), false, "activation health needs the shared token");
+  } finally {
+    server.kill("SIGTERM");
+    await server.exited;
+  }
 
   console.log("Issue #59 approval, activation, rollback, suppression, and restart checks passed");
 } finally {

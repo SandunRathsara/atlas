@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isNumericVersion, MINIMUM_HOST_TOOLS, type HostTools } from "./host-tools.ts";
 
 declare const releaseTagBrand: unique symbol;
 export type ReleaseTag = string & { readonly [releaseTagBrand]: true };
@@ -20,17 +21,31 @@ export type ReleaseIdentity = PublishedReleaseIdentity | {
   gitSha: null;
 };
 
+/** The one downloadable Release asset. */
+export const RELEASE_ASSET_NAME = "atlas-linux-x64";
+export const RELEASE_CHECKSUM_NAME = `${RELEASE_ASSET_NAME}.sha256`;
+/** Upper bound on the binary size Atlas accepts (also the download cap). */
+export const MAX_RELEASE_ASSET_BYTES = 1024 * 1024 * 1024;
+
+/**
+ * `atlas-release.json` (published next to the asset) and `RELEASE_METADATA.json`
+ * (inside each Release folder). Schema 2 describes one compiled binary.
+ */
 export type ReleaseMetadata = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   identity: PublishedReleaseIdentity;
-  artifact: {
-    name: string;
-    checksum: string;
+  asset: {
+    name: typeof RELEASE_ASSET_NAME;
+    checksum: typeof RELEASE_CHECKSUM_NAME;
+    sha256: string;
+    size: number;
     os: "linux";
     architecture: "x64";
-    format: "tar.gz";
   };
-  runtime: { bun: string; git: string; gh: string };
+  /** Lowest host git/gh versions this Release supports (numeric X.Y.Z). */
+  minimumHostTools: HostTools;
+  /** OpenCode client package compiled in. Diagnostic only; never a gate. */
+  openCodeClient: string;
   rollback: {
     codeOnlyCompatible: boolean;
     manualMaintenanceInstructions: string | null;
@@ -90,29 +105,42 @@ export const validateReleaseSequence = (candidateTag: string, previousTags: read
 export const createReleaseMetadata = (
   tag: string,
   gitSha: string,
-  runtime: ReleaseMetadata["runtime"],
+  asset: { sha256: string; size: number },
+  openCodeClient: string,
 ): ReleaseMetadata => {
   const parsed = parseReleaseTag(tag);
-  if (!/^[0-9a-f]{40}$/.test(gitSha)) throw new Error("Release Git SHA must be a full lowercase SHA-1");
-  if (Object.values(runtime).some((version) => !runtimeVersionPattern.test(version))) throw new Error("Release runtime versions must be present and safe");
-  const name = `atlas-linux-x64-${tag}.tar.gz`;
-  return {
-    schemaVersion: 1,
+  return assertReleaseMetadata({
+    schemaVersion: 2,
     identity: { published: true, tag: parsed.tag, semver: parsed.semver, build: parsed.build, gitSha },
-    artifact: { name, checksum: `${name}.sha256`, os: "linux", architecture: "x64", format: "tar.gz" },
-    runtime,
+    asset: {
+      name: RELEASE_ASSET_NAME,
+      checksum: RELEASE_CHECKSUM_NAME,
+      sha256: asset.sha256,
+      size: asset.size,
+      os: "linux",
+      architecture: "x64",
+    },
+    minimumHostTools: { ...MINIMUM_HOST_TOOLS },
+    openCodeClient,
     rollback: { codeOnlyCompatible: true, manualMaintenanceInstructions: null },
-  };
+  });
 };
 
 export const assertReleaseMetadata = (value: unknown): ReleaseMetadata => {
-  if (!value || typeof value !== "object") throw new Error("Release metadata must be an object");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Release metadata must be an object");
+  const schemaVersion = (value as { schemaVersion?: unknown }).schemaVersion;
+  if (schemaVersion === 1) {
+    throw new Error("Release metadata schema 1 (tarball Releases) is no longer supported; this Atlas only installs schema 2 single-binary Releases");
+  }
+  if (schemaVersion !== 2) {
+    throw new Error(`Release metadata schema ${JSON.stringify(schemaVersion ?? null)} is not supported; expected schema 2`);
+  }
   const metadata = value as Partial<ReleaseMetadata>;
   const identity = metadata.identity as Partial<PublishedReleaseIdentity> | undefined;
-  const artifact = metadata.artifact as Partial<ReleaseMetadata["artifact"]> | undefined;
-  const runtime = metadata.runtime as Partial<ReleaseMetadata["runtime"]> | undefined;
+  const asset = metadata.asset as Partial<ReleaseMetadata["asset"]> | undefined;
+  const hostTools = metadata.minimumHostTools as Partial<HostTools> | undefined;
   const rollback = metadata.rollback as Partial<ReleaseMetadata["rollback"]> | undefined;
-  if (metadata.schemaVersion !== 1 || identity?.published !== true || typeof identity.tag !== "string" ||
+  if (identity?.published !== true || typeof identity.tag !== "string" ||
       typeof identity.semver !== "string" || typeof identity.build !== "number" || typeof identity.gitSha !== "string") {
     throw new Error("Release metadata identity is invalid");
   }
@@ -120,15 +148,16 @@ export const assertReleaseMetadata = (value: unknown): ReleaseMetadata => {
   if (identity.semver !== parsed.semver || identity.build !== parsed.build || !/^[0-9a-f]{40}$/.test(identity.gitSha)) {
     throw new Error("Release metadata does not agree with its tag");
   }
-  const expectedName = `atlas-linux-x64-${identity.tag}.tar.gz`;
-  if (artifact?.name !== expectedName || artifact.checksum !== `${expectedName}.sha256` || artifact.os !== "linux" ||
-      artifact.architecture !== "x64" || artifact.format !== "tar.gz") {
-    throw new Error("Release artifact metadata is invalid");
+  if (asset?.name !== RELEASE_ASSET_NAME || asset.checksum !== RELEASE_CHECKSUM_NAME || asset.os !== "linux" ||
+      asset.architecture !== "x64" || typeof asset.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(asset.sha256) ||
+      typeof asset.size !== "number" || !Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > MAX_RELEASE_ASSET_BYTES) {
+    throw new Error("Release asset metadata is invalid");
   }
-  if (typeof runtime?.bun !== "string" || !runtimeVersionPattern.test(runtime.bun) ||
-      typeof runtime.git !== "string" || !runtimeVersionPattern.test(runtime.git) ||
-      typeof runtime.gh !== "string" || !runtimeVersionPattern.test(runtime.gh)) {
-    throw new Error("Release runtime metadata is invalid");
+  if (!hostTools || !isNumericVersion(hostTools.git) || !isNumericVersion(hostTools.gh) || Object.keys(hostTools).length !== 2) {
+    throw new Error("Release minimum host tool versions are invalid");
+  }
+  if (typeof metadata.openCodeClient !== "string" || !runtimeVersionPattern.test(metadata.openCodeClient)) {
+    throw new Error("Release OpenCode client version is invalid");
   }
   if (typeof rollback?.codeOnlyCompatible !== "boolean" ||
       (rollback.codeOnlyCompatible && rollback.manualMaintenanceInstructions !== null) ||
